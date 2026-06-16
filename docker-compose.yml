@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-health}
+      POSTGRES_USER: ${POSTGRES_USER:-health}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your env file}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  api:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?Set DOCKER_DATABASE_URL in your env file}
+      REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+    command: >
+      sh -c "uvicorn app.main:app
+      --host $${APP_HOST:-0.0.0.0}
+      --port $${APP_PORT:-8000}
+      $${UVICORN_RELOAD_FLAG:-}"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?Set DOCKER_DATABASE_URL in your env file}
+      REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  beat:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?Set DOCKER_DATABASE_URL in your env file}
+      REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  postgres_data:

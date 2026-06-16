@@ -1,0 +1,52 @@
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.ruff_cache
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging and build output
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# Test and coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local databases and runtime files
+*.sqlite
+*.sqlite3
+*.db
+*.log
+celerybeat-schedule
+celerybeat.pid
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
