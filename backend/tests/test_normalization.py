@@ -9,6 +9,7 @@ from app.models import (
     GoogleAccount,
     MetricInterval,
     MetricSample,
+    RawHealthRecord,
     SleepSession,
     User,
 )
@@ -126,3 +127,143 @@ def test_normalizes_sample_and_sleep(session) -> None:
     assert summary.heart_rate_variability == 56
     assert summary.sleep_minutes == 430
 
+
+def test_normalizes_reconciled_heart_rate_with_data_point_name(session) -> None:
+    account = _account(session)
+    data_point = {
+        "dataPointName": "users/me/dataTypes/heart-rate/dataPoints/reconciled-1",
+        "heartRate": {
+            "sampleTime": {
+                "physicalTime": "2026-06-15T12:00:00Z",
+                "civilTime": {"date": {"year": 2026, "month": 6, "day": 15}},
+            },
+            "beatsPerMinute": "74",
+        },
+    }
+
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="heart-rate",
+        data_point=data_point,
+    )
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="heart-rate",
+        data_point=data_point,
+    )
+    session.commit()
+
+    raw_records = session.scalars(select(RawHealthRecord)).all()
+    samples = session.scalars(select(MetricSample)).all()
+    assert len(raw_records) == 1
+    assert raw_records[0].source_record_id == data_point["dataPointName"]
+    assert len(samples) == 1
+    assert samples[0].metric == "heart_rate"
+    assert samples[0].value == 74
+
+
+def test_normalizes_daily_resting_heart_rate_date_sample(session) -> None:
+    account = _account(session)
+    data_point = {
+        "name": "users/me/dataTypes/daily-resting-heart-rate/dataPoints/2026-06-15",
+        "dailyRestingHeartRate": {
+            "date": {"year": 2026, "month": 6, "day": 15},
+            "beatsPerMinute": "57",
+        },
+    }
+
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="daily-resting-heart-rate",
+        data_point=data_point,
+    )
+    rebuild_daily_summaries(
+        session,
+        user_id=account.user_id,
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+    )
+    session.commit()
+
+    sample = session.scalar(select(MetricSample))
+    assert sample.metric == "resting_heart_rate"
+    assert sample.observed_at.date() == date(2026, 6, 15)
+    assert sample.civil_date == date(2026, 6, 15)
+    assert sample.value == 57
+
+    summary = session.scalar(select(DailySummary))
+    assert summary.resting_heart_rate == 57
+
+
+def test_normalizes_time_in_heart_rate_zone_interval_duration(session) -> None:
+    account = _account(session)
+    data_point = {
+        "name": "users/me/dataTypes/time-in-heart-rate-zone/dataPoints/1",
+        "timeInHeartRateZone": {
+            "interval": {
+                "startTime": "2026-06-15T08:00:00Z",
+                "endTime": "2026-06-15T08:20:00Z",
+                "civilStartTime": {"date": {"year": 2026, "month": 6, "day": 15}},
+            },
+            "heartRateZoneType": "VIGOROUS",
+        },
+    }
+
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="time-in-heart-rate-zone",
+        data_point=data_point,
+    )
+    session.commit()
+
+    interval = session.scalar(select(MetricInterval))
+    assert interval.metric == "time_in_heart_rate_zone"
+    assert interval.value == 1200
+    assert interval.unit == "seconds"
+
+
+def test_normalizes_daily_rollup_interval(session) -> None:
+    account = _account(session)
+    data_point = {
+        "name": "users/me/dataTypes/total-calories/dailyRollUp/2026-06-15",
+        "dataSource": {"platform": "GOOGLE_HEALTH_DAILY_ROLLUP"},
+        "totalCalories": {
+            "interval": {
+                "civilStartTime": {
+                    "date": {"year": 2026, "month": 6, "day": 15},
+                    "time": {},
+                },
+                "civilEndTime": {
+                    "date": {"year": 2026, "month": 6, "day": 15},
+                    "time": {"hours": 23, "minutes": 59, "seconds": 59},
+                },
+            },
+            "kcalSum": 2210.5,
+        },
+    }
+
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="total-calories",
+        data_point=data_point,
+    )
+    rebuild_daily_summaries(
+        session,
+        user_id=account.user_id,
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+    )
+    session.commit()
+
+    interval = session.scalar(select(MetricInterval))
+    assert interval.metric == "total_calories"
+    assert interval.civil_date == date(2026, 6, 15)
+    assert interval.value == 2210.5
+
+    summary = session.scalar(select(DailySummary))
+    assert summary.total_calories == 2210.5

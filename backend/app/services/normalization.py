@@ -6,8 +6,10 @@ from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.core.security import utcnow
 from app.google_health.data_types import DATA_TYPE_SPECS, DataTypeSpec
 from app.models import (
     GoogleAccount,
@@ -16,7 +18,10 @@ from app.models import (
     RawHealthRecord,
     SleepSession,
     Workout,
+    new_uuid,
 )
+
+HEART_RATE_BULK_BATCH_SIZE = 2000
 
 
 # take a data point, create the raw record and rebuild the normalised rows derived from it
@@ -29,7 +34,9 @@ def upsert_raw_and_normalized(
 ) -> RawHealthRecord:
     spec = DATA_TYPE_SPECS[data_type]
     raw_hash = _content_hash(data_point)
-    source_record_id = data_point.get("name") or f"{data_type}:{raw_hash}"
+    source_record_id = (
+        data_point.get("name") or data_point.get("dataPointName") or f"{data_type}:{raw_hash}"
+    )
     payload = data_point.get(spec.payload_key, {})
     source = data_point.get("dataSource", {})
     device = source.get("device") or {}
@@ -74,6 +81,126 @@ def upsert_raw_and_normalized(
         _normalize_workout(session, account, raw_record, payload)
     return raw_record
 
+
+def upsert_heart_rate_points_fast(
+    session: Session,
+    *,
+    account: GoogleAccount,
+    points: list[dict[str, Any]],
+) -> int:
+    bind = session.get_bind()
+    if bind.dialect.name != "postgresql":
+        for point in points:
+            upsert_raw_and_normalized(
+                session,
+                account=account,
+                data_type="heart-rate",
+                data_point=point,
+            )
+        return len(points)
+
+    spec = DATA_TYPE_SPECS["heart-rate"]
+    raw_rows: dict[str, dict[str, Any]] = {}
+    sample_rows_by_source: dict[str, dict[str, Any]] = {}
+
+    for point in points:
+        raw_hash = _content_hash(point)
+        source_record_id = (
+            point.get("name") or point.get("dataPointName") or f"heart-rate:{raw_hash}"
+        )
+        payload = point.get(spec.payload_key, {})
+        if not isinstance(payload, dict):
+            payload = {}
+        source = point.get("dataSource") or {}
+        if not isinstance(source, dict):
+            source = {}
+        device = source.get("device") or {}
+        if not isinstance(device, dict):
+            device = {}
+
+        start_time, end_time = _record_times(payload)
+        civil_date = _record_civil_date(payload) or (start_time.date() if start_time else None)
+        raw_rows[source_record_id] = {
+            "id": new_uuid(),
+            "user_id": account.user_id,
+            "google_account_id": account.id,
+            "data_type": "heart-rate",
+            "source_record_id": source_record_id,
+            "source_platform": source.get("platform"),
+            "source_device": device.get("displayName"),
+            "start_time": start_time,
+            "end_time": end_time,
+            "civil_date": civil_date,
+            "raw_json": point,
+            "content_hash": raw_hash,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }
+
+        observed_at = _sample_time(payload)
+        value = _extract_numeric_value(payload)
+        if observed_at is None or value is None:
+            continue
+        sample_rows_by_source[source_record_id] = {
+            "id": new_uuid(),
+            "user_id": account.user_id,
+            "metric": spec.metric,
+            "observed_at": observed_at,
+            "civil_date": civil_date,
+            "value": value,
+            "unit": spec.unit,
+            "source_platform": source.get("platform"),
+            "source_device": device.get("displayName"),
+            "created_at": utcnow(),
+        }
+
+    if not raw_rows:
+        return 0
+
+    raw_items = list(raw_rows.items())
+    for offset in range(0, len(raw_items), HEART_RATE_BULK_BATCH_SIZE):
+        raw_batch = dict(raw_items[offset : offset + HEART_RATE_BULK_BATCH_SIZE])
+        raw_insert = pg_insert(RawHealthRecord).values(list(raw_batch.values()))
+        raw_upsert = raw_insert.on_conflict_do_update(
+            constraint="uq_raw_record",
+            set_={
+                "source_platform": raw_insert.excluded.source_platform,
+                "source_device": raw_insert.excluded.source_device,
+                "start_time": raw_insert.excluded.start_time,
+                "end_time": raw_insert.excluded.end_time,
+                "civil_date": raw_insert.excluded.civil_date,
+                "raw_json": raw_insert.excluded.raw_json,
+                "content_hash": raw_insert.excluded.content_hash,
+                "updated_at": utcnow(),
+            },
+        ).returning(RawHealthRecord.source_record_id, RawHealthRecord.id)
+        raw_ids = dict(session.execute(raw_upsert).all())
+
+        sample_rows: list[dict[str, Any]] = []
+        for source_record_id in raw_batch:
+            row = sample_rows_by_source.get(source_record_id)
+            raw_record_id = raw_ids.get(source_record_id)
+            if row is None or raw_record_id is None:
+                continue
+            sample_rows.append({**row, "raw_record_id": raw_record_id})
+
+        if sample_rows:
+            sample_insert = pg_insert(MetricSample).values(sample_rows)
+            session.execute(
+                sample_insert.on_conflict_do_update(
+                    constraint="uq_metric_sample",
+                    set_={
+                        "civil_date": sample_insert.excluded.civil_date,
+                        "value": sample_insert.excluded.value,
+                        "unit": sample_insert.excluded.unit,
+                        "source_platform": sample_insert.excluded.source_platform,
+                        "source_device": sample_insert.excluded.source_device,
+                    },
+                )
+            )
+
+    return len(points)
+
 # delete previously generated normalised rows for this record
 def _replace_normalized(session: Session, raw_record_id: str) -> None:
     for model in (MetricInterval, MetricSample, SleepSession, Workout):
@@ -89,6 +216,8 @@ def _normalize_interval(
 ) -> None:
     start_time, end_time = _record_times(payload)
     value = _extract_numeric_value(payload)
+    if value is None and start_time is not None and end_time is not None:
+        value = max(0.0, (end_time - start_time).total_seconds())
     if start_time is None or end_time is None or value is None:
         return
     session.add(
@@ -192,19 +321,28 @@ def _content_hash(payload: dict[str, Any]) -> str:
 
 def _record_times(payload: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
     interval = payload.get("interval") or {}
-    return _parse_datetime(interval.get("startTime")), _parse_datetime(interval.get("endTime"))
+    start_time = _parse_datetime(interval.get("startTime"))
+    end_time = _parse_datetime(interval.get("endTime"))
+    if start_time is None:
+        start_time = _parse_civil_datetime(interval.get("civilStartTime"))
+    if end_time is None:
+        end_time = _parse_civil_datetime(interval.get("civilEndTime"))
+    return start_time, end_time
 
 
 def _sample_time(payload: dict[str, Any]) -> datetime | None:
     sample_time = payload.get("sampleTime") or payload.get("time") or {}
     if isinstance(sample_time, str):
         return _parse_datetime(sample_time)
-    return _parse_datetime(sample_time.get("physicalTime") or sample_time.get("time"))
+    parsed = _parse_datetime(sample_time.get("physicalTime") or sample_time.get("time"))
+    if parsed is not None:
+        return parsed
+    return _parse_civil_datetime(payload.get("civilTime") or payload.get("date"))
 
 
 def _record_civil_date(payload: dict[str, Any]) -> date | None:
     interval = payload.get("interval") or {}
-    for key in ("civilStartTime", "civilEndTime", "civilTime"):
+    for key in ("civilStartTime", "civilEndTime", "civilTime", "date"):
         value = interval.get(key) or payload.get(key)
         parsed = _parse_civil_date(value)
         if parsed:
@@ -232,6 +370,28 @@ def _parse_civil_date(value: dict[str, Any] | None) -> date | None:
         return None
 
 
+def _parse_civil_datetime(value: dict[str, Any] | None) -> datetime | None:
+    if not isinstance(value, dict):
+        return None
+    parsed_date = _parse_civil_date(value)
+    if parsed_date is None:
+        return None
+    time_value = value.get("time") or {}
+    if not isinstance(time_value, dict):
+        time_value = {}
+    try:
+        return datetime(
+            parsed_date.year,
+            parsed_date.month,
+            parsed_date.day,
+            int(time_value.get("hours") or 0),
+            int(time_value.get("minutes") or 0),
+            int(time_value.get("seconds") or 0),
+        )
+    except (TypeError, ValueError):
+        return datetime(parsed_date.year, parsed_date.month, parsed_date.day)
+
+
 def _extract_numeric_value(payload: dict[str, Any]) -> float | None:
     priority_keys = (
         "count",
@@ -246,10 +406,23 @@ def _extract_numeric_value(payload: dict[str, Any]) -> float | None:
         "avg",
         "milliseconds",
         "duration",
+        "durationSeconds",
+        "seconds",
         "calories",
         "kilocalories",
         "meters",
         "distanceMeters",
+        "beatsPerMinute",
+        "breathsPerMinute",
+        "heightMillimeters",
+        "weightKilograms",
+        "vo2MillilitersPerMinuteKilogram",
+        "millilitersPerMinuteKilogram",
+        "bloodGlucoseMilligramsPerDeciliter",
+        "minBeatsPerMinute",
+        "maxBeatsPerMinute",
+        "lowerBound",
+        "upperBound",
     )
     for key in priority_keys:
         if key in payload:
@@ -282,4 +455,3 @@ def _to_float(value: Any) -> float | None:
 def _to_int(value: Any) -> int | None:
     parsed = _to_float(value)
     return int(parsed) if parsed is not None else None
-

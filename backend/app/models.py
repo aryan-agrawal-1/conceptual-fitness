@@ -42,6 +42,14 @@ class SyncStatus(str, enum.Enum):
     failed = "failed"
 
 
+class ScoreStatus(str, enum.Enum):
+    waiting_for_sleep = "waiting_for_sleep"
+    in_progress = "in_progress"
+    scored = "scored"
+    stale = "stale"
+    missing_data = "missing_data"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -55,6 +63,31 @@ class User(Base):
     google_accounts: Mapped[list[GoogleAccount]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+
+    profile: Mapped[UserProfile | None] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_profiles_user_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    timezone: Mapped[str] = mapped_column(String(80), default="UTC")
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sex: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    height_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sleep_target_minutes: Mapped[int] = mapped_column(Integer, default=480)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    user: Mapped[User] = relationship(back_populates="profile")
 
 
 class GoogleAccount(Base):
@@ -238,6 +271,123 @@ class DailySummary(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
+
+class DailyBaseline(Base):
+    __tablename__ = "daily_baselines"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "baseline_date",
+            "metric",
+            "algorithm_version",
+            name="uq_daily_baseline_user_date_metric_version",
+        ),
+        Index("ix_daily_baselines_user_metric_date", "user_id", "metric", "baseline_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    baseline_date: Mapped[date] = mapped_column(Date, index=True)
+    metric: Mapped[str] = mapped_column(String(80))
+    algorithm_version: Mapped[str] = mapped_column(String(40))
+    window_days: Mapped[int] = mapped_column(Integer)
+    valid_day_count: Mapped[int] = mapped_column(Integer, default=0)
+    mean_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    median_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spread_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lower_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    upper_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence_phase: Mapped[str] = mapped_column(String(32), default="missing")
+    included_dates: Mapped[list[str]] = mapped_column(JSON, default=list)
+    exclusions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class DailyScore(Base):
+    __tablename__ = "daily_scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "score_date",
+            "score_type",
+            "algorithm_version",
+            name="uq_daily_score_user_date_type_version",
+        ),
+        Index("ix_daily_scores_user_type_date", "user_id", "score_type", "score_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    score_date: Mapped[date] = mapped_column(Date, index=True)
+    score_type: Mapped[str] = mapped_column(String(40))
+    algorithm_version: Mapped[str] = mapped_column(String(40))
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    value_unit: Mapped[str] = mapped_column(String(32))
+    status: Mapped[ScoreStatus] = mapped_column(
+        Enum(ScoreStatus), default=ScoreStatus.missing_data
+    )
+    confidence_phase: Mapped[str] = mapped_column(String(32), default="missing")
+    data_quality: Mapped[str] = mapped_column(String(32), default="missing")
+    components: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    reasons: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class StrainTarget(Base):
+    __tablename__ = "strain_targets"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "week_start_date",
+            "algorithm_version",
+            name="uq_strain_target_user_week_version",
+        ),
+        Index("ix_strain_targets_user_week", "user_id", "week_start_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    week_start_date: Mapped[date] = mapped_column(Date, index=True)
+    algorithm_version: Mapped[str] = mapped_column(String(40))
+    target_load_points: Mapped[float | None] = mapped_column(Float, nullable=True)
+    chronic_load_points: Mapped[float | None] = mapped_column(Float, nullable=True)
+    acute_load_points: Mapped[float | None] = mapped_column(Float, nullable=True)
+    progress_load_points: Mapped[float] = mapped_column(Float, default=0.0)
+    progress_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    load_band: Mapped[str] = mapped_column(String(32), default="unknown")
+    confidence_phase: Mapped[str] = mapped_column(String(32), default="missing")
+    components: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class DailyContext(Base):
+    __tablename__ = "daily_contexts"
+    __table_args__ = (
+        Index("ix_daily_contexts_user_date_type", "user_id", "context_date", "context_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    context_date: Mapped[date] = mapped_column(Date, index=True)
+    context_type: Mapped[str] = mapped_column(String(80))
+    source: Mapped[str] = mapped_column(String(32), default="manual")
+    severity: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
 # so i know where the last sync was
 class SyncCursor(Base):
     __tablename__ = "sync_cursors"
@@ -256,4 +406,3 @@ class SyncCursor(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
-

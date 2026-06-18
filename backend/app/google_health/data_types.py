@@ -18,6 +18,12 @@ class DataTypeSpec:
     unit: str
     filter_time_path: str
     prefer_reconcile: bool = False
+    prefer_daily_rollup: bool = False
+    supports_filter: bool = True
+    chunk_days: int | None = None
+    page_size: int | None = None
+    fail_sync_on_error: bool = True
+    resume_page_tokens: bool = True
 
     @property
     def list_filter_start(self) -> str:
@@ -36,6 +42,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="interval",
         unit="count",
         filter_time_path="steps.interval.civil_start_time",
+        page_size=10000,
     ),
     "distance": DataTypeSpec(
         data_type="distance",
@@ -44,6 +51,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="interval",
         unit="meters",
         filter_time_path="distance.interval.civil_start_time",
+        page_size=10000,
     ),
     "active-energy-burned": DataTypeSpec(
         data_type="active-energy-burned",
@@ -52,6 +60,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="interval",
         unit="kcal",
         filter_time_path="active_energy_burned.interval.civil_start_time",
+        page_size=10000,
     ),
     "total-calories": DataTypeSpec(
         data_type="total-calories",
@@ -60,6 +69,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="interval",
         unit="kcal",
         filter_time_path="total_calories.interval.civil_start_time",
+        prefer_daily_rollup=True,
     ),
     "heart-rate": DataTypeSpec(
         data_type="heart-rate",
@@ -68,6 +78,10 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="sample",
         unit="bpm",
         filter_time_path="heart_rate.sample_time.physical_time",
+        prefer_reconcile=True,
+        chunk_days=1,
+        page_size=10000,
+        fail_sync_on_error=False,
     ),
     "daily-resting-heart-rate": DataTypeSpec(
         data_type="daily-resting-heart-rate",
@@ -75,7 +89,8 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         metric="resting_heart_rate",
         storage="sample",
         unit="bpm",
-        filter_time_path="daily_resting_heart_rate.sample_time.physical_time",
+        filter_time_path="daily_resting_heart_rate.date",
+        page_size=10000,
     ),
     "heart-rate-variability": DataTypeSpec(
         data_type="heart-rate-variability",
@@ -84,6 +99,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="sample",
         unit="ms",
         filter_time_path="heart_rate_variability.sample_time.physical_time",
+        page_size=10000,
     ),
     "daily-heart-rate-variability": DataTypeSpec(
         data_type="daily-heart-rate-variability",
@@ -91,7 +107,29 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         metric="heart_rate_variability",
         storage="sample",
         unit="ms",
-        filter_time_path="daily_heart_rate_variability.sample_time.physical_time",
+        filter_time_path="daily_heart_rate_variability.date",
+        page_size=10000,
+    ),
+    "daily-heart-rate-zones": DataTypeSpec(
+        data_type="daily-heart-rate-zones",
+        payload_key="dailyHeartRateZones",
+        metric="daily_heart_rate_zones",
+        storage="raw",
+        unit="zones",
+        filter_time_path="daily_heart_rate_zones.date",
+        page_size=10000,
+        fail_sync_on_error=False,
+        resume_page_tokens=False,
+    ),
+    "time-in-heart-rate-zone": DataTypeSpec(
+        data_type="time-in-heart-rate-zone",
+        payload_key="timeInHeartRateZone",
+        metric="time_in_heart_rate_zone",
+        storage="interval",
+        unit="seconds",
+        filter_time_path="time_in_heart_rate_zone.interval.civil_start_time",
+        page_size=10000,
+        fail_sync_on_error=False,
     ),
     "oxygen-saturation": DataTypeSpec(
         data_type="oxygen-saturation",
@@ -100,6 +138,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="sample",
         unit="percent",
         filter_time_path="oxygen_saturation.sample_time.physical_time",
+        page_size=10000,
     ),
     "daily-oxygen-saturation": DataTypeSpec(
         data_type="daily-oxygen-saturation",
@@ -107,7 +146,8 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         metric="oxygen_saturation",
         storage="sample",
         unit="percent",
-        filter_time_path="daily_oxygen_saturation.sample_time.physical_time",
+        filter_time_path="daily_oxygen_saturation.date",
+        page_size=10000,
     ),
     "daily-respiratory-rate": DataTypeSpec(
         data_type="daily-respiratory-rate",
@@ -115,7 +155,8 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         metric="respiratory_rate",
         storage="sample",
         unit="breaths_per_min",
-        filter_time_path="daily_respiratory_rate.sample_time.physical_time",
+        filter_time_path="daily_respiratory_rate.date",
+        page_size=10000,
     ),
     "respiratory-rate-sleep-summary": DataTypeSpec(
         data_type="respiratory-rate-sleep-summary",
@@ -124,6 +165,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="sample",
         unit="breaths_per_min",
         filter_time_path="respiratory_rate_sleep_summary.sample_time.physical_time",
+        page_size=10000,
     ),
     "sleep": DataTypeSpec(
         data_type="sleep",
@@ -133,6 +175,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         unit="minutes",
         filter_time_path="sleep.interval.civil_end_time",
         prefer_reconcile=True,
+        page_size=25,
     ),
     "exercise": DataTypeSpec(
         data_type="exercise",
@@ -142,6 +185,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         unit="session",
         filter_time_path="exercise.interval.civil_start_time",
         prefer_reconcile=True,
+        page_size=25,
     ),
     "daily-vo2-max": DataTypeSpec(
         data_type="daily-vo2-max",
@@ -149,7 +193,58 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         metric="vo2_max",
         storage="sample",
         unit="ml_per_kg_min",
-        filter_time_path="daily_vo2_max.sample_time.physical_time",
+        filter_time_path="daily_vo2_max.date",
+        page_size=10000,
+    ),
+    "run-vo2-max": DataTypeSpec(
+        data_type="run-vo2-max",
+        payload_key="runVo2Max",
+        metric="run_vo2_max",
+        storage="sample",
+        unit="ml_per_kg_min",
+        filter_time_path="run_vo2_max.sample_time.physical_time",
+        page_size=10000,
+        fail_sync_on_error=False,
+    ),
+    "daily-sleep-temperature-derivations": DataTypeSpec(
+        data_type="daily-sleep-temperature-derivations",
+        payload_key="dailySleepTemperatureDerivations",
+        metric="sleep_temperature_derivation",
+        storage="raw",
+        unit="celsius",
+        filter_time_path="daily_sleep_temperature_derivations.date",
+        page_size=10000,
+        fail_sync_on_error=False,
+    ),
+    "active-zone-minutes": DataTypeSpec(
+        data_type="active-zone-minutes",
+        payload_key="activeZoneMinutes",
+        metric="active_zone_minutes",
+        storage="interval",
+        unit="minutes",
+        filter_time_path="active_zone_minutes.interval.civil_start_time",
+        page_size=10000,
+        fail_sync_on_error=False,
+    ),
+    "nutrition-log": DataTypeSpec(
+        data_type="nutrition-log",
+        payload_key="nutritionLog",
+        metric="nutrition_log",
+        storage="raw",
+        unit="log",
+        filter_time_path="nutrition_log.interval.civil_start_time",
+        page_size=10000,
+        fail_sync_on_error=False,
+    ),
+    "blood-glucose": DataTypeSpec(
+        data_type="blood-glucose",
+        payload_key="bloodGlucose",
+        metric="blood_glucose",
+        storage="sample",
+        unit="mg_dl",
+        filter_time_path="blood_glucose.sample_time.physical_time",
+        page_size=10000,
+        fail_sync_on_error=False,
     ),
     "weight": DataTypeSpec(
         data_type="weight",
@@ -158,6 +253,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="sample",
         unit="kg",
         filter_time_path="weight.sample_time.physical_time",
+        page_size=10000,
     ),
     "height": DataTypeSpec(
         data_type="height",
@@ -166,6 +262,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="sample",
         unit="meters",
         filter_time_path="height.sample_time.physical_time",
+        page_size=10000,
     ),
 }
 
@@ -179,6 +276,8 @@ MVP_SYNC_DATA_TYPES: tuple[str, ...] = (
     "daily-resting-heart-rate",
     "heart-rate-variability",
     "daily-heart-rate-variability",
+    "daily-heart-rate-zones",
+    "time-in-heart-rate-zone",
     "oxygen-saturation",
     "daily-oxygen-saturation",
     "daily-respiratory-rate",
@@ -186,8 +285,12 @@ MVP_SYNC_DATA_TYPES: tuple[str, ...] = (
     "sleep",
     "exercise",
     "daily-vo2-max",
+    "run-vo2-max",
+    "daily-sleep-temperature-derivations",
+    "active-zone-minutes",
+    "nutrition-log",
+    "blood-glucose",
 )
 
 
 WEARABLES_DATA_SOURCE_FAMILY = "users/me/dataSourceFamilies/google-wearables"
-

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.api.routes import auth, dashboard, health, metrics, sync
+from app.api.routes import auth, dashboard, health, metrics, scores, sync
 
 
 app = FastAPI(
@@ -17,3 +17,4 @@ app.include_router(auth.connections_router)
 app.include_router(sync.router)
 app.include_router(dashboard.router)
 app.include_router(metrics.router)
+app.include_router(scores.router)

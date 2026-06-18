@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from collections.abc import AsyncIterator
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -109,7 +110,9 @@ class GoogleHealthClient:
         start: date,
         end: date,
         window_size_days: int = 1,
+        page_size: int = 14,
     ) -> dict[str, Any]:
+        exclusive_end = end + timedelta(days=1)
         body = {
             "range": {
                 "start": {
@@ -117,11 +120,16 @@ class GoogleHealthClient:
                     "time": {"hours": 0, "minutes": 0, "seconds": 0, "nanos": 0},
                 },
                 "end": {
-                    "date": {"year": end.year, "month": end.month, "day": end.day},
-                    "time": {"hours": 23, "minutes": 59, "seconds": 59, "nanos": 0},
+                    "date": {
+                        "year": exclusive_end.year,
+                        "month": exclusive_end.month,
+                        "day": exclusive_end.day,
+                    },
+                    "time": {"hours": 0, "minutes": 0, "seconds": 0, "nanos": 0},
                 },
             },
             "windowSizeDays": window_size_days,
+            "pageSize": page_size,
         }
         return await self._post_json(
             f"/users/me/dataTypes/{data_type}/dataPoints:dailyRollUp",
@@ -134,11 +142,51 @@ class GoogleHealthClient:
         data_type: str,
         access_token: str,
         *,
-        filter_expr: str,
+        filter_expr: str | None = None,
         prefer_reconcile: bool = False,
+        page_size: int | None = None,
     ) -> list[dict[str, Any]]:
         data_points: list[dict[str, Any]] = []
-        page_token: str | None = None
+        async for page in self.iter_data_point_pages(
+            data_type,
+            access_token,
+            filter_expr=filter_expr,
+            prefer_reconcile=prefer_reconcile,
+            page_size=page_size,
+        ):
+            data_points.extend(page)
+        return data_points
+
+    async def iter_data_point_pages(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        filter_expr: str | None = None,
+        prefer_reconcile: bool = False,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        async for points, _next_page_token in self.iter_data_point_pages_with_tokens(
+            data_type,
+            access_token,
+            filter_expr=filter_expr,
+            prefer_reconcile=prefer_reconcile,
+            page_size=page_size,
+            page_token=page_token,
+        ):
+            yield points
+
+    async def iter_data_point_pages_with_tokens(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        filter_expr: str | None = None,
+        prefer_reconcile: bool = False,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> AsyncIterator[tuple[list[dict[str, Any]], str | None]]:
         while True:
             if prefer_reconcile:
                 payload = await self.reconcile_data_points(
@@ -146,6 +194,7 @@ class GoogleHealthClient:
                     access_token,
                     filter_expr=filter_expr,
                     page_token=page_token,
+                    page_size=page_size,
                 )
             else:
                 payload = await self.list_data_points(
@@ -153,16 +202,32 @@ class GoogleHealthClient:
                     access_token,
                     filter_expr=filter_expr,
                     page_token=page_token,
+                    page_size=page_size,
                 )
-            data_points.extend(payload.get("dataPoints", []))
-            page_token = payload.get("nextPageToken") or None
-            if not page_token:
-                return data_points
+            next_page_token = payload.get("nextPageToken") or None
+            yield payload.get("dataPoints", []), next_page_token
+            page_token = next_page_token
+            if not next_page_token:
+                return
             await asyncio.sleep(0.1)
 
     async def _post_form(self, url: str, data: dict[str, str]) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(url, data=data, headers={"Accept": "application/json"})
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+                response = await asyncio.wait_for(
+                    client.post(url, data=data, headers={"Accept": "application/json"}),
+                    timeout=self.timeout,
+                )
+        except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
+            raise GoogleHealthAPIError(
+                f"Google Health API request timed out after {self.timeout:g}s",
+                payload={"url": url, "timeout_seconds": self.timeout},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise GoogleHealthAPIError(
+                "Google Health API request failed before receiving a response",
+                payload={"url": url, "error": str(exc)},
+            ) from exc
         return self._handle_response(response)
 
     async def _get_json(
@@ -172,28 +237,58 @@ class GoogleHealthClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                f"{GOOGLE_HEALTH_API_BASE_URL}{path}",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-                params=params,
-            )
+        url = f"{GOOGLE_HEALTH_API_BASE_URL}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+                response = await asyncio.wait_for(
+                    client.get(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/json",
+                        },
+                        params=params,
+                    ),
+                    timeout=self.timeout,
+                )
+        except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
+            raise GoogleHealthAPIError(
+                f"Google Health API request timed out after {self.timeout:g}s",
+                payload={"path": path, "params": params, "timeout_seconds": self.timeout},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise GoogleHealthAPIError(
+                "Google Health API request failed before receiving a response",
+                payload={"path": path, "params": params, "error": str(exc)},
+            ) from exc
         return self._handle_response(response)
 
     async def _post_json(self, path: str, access_token: str, body: dict[str, Any]) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{GOOGLE_HEALTH_API_BASE_URL}{path}",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
+        url = f"{GOOGLE_HEALTH_API_BASE_URL}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+                response = await asyncio.wait_for(
+                    client.post(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/json",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    ),
+                    timeout=self.timeout,
+                )
+        except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
+            raise GoogleHealthAPIError(
+                f"Google Health API request timed out after {self.timeout:g}s",
+                payload={"path": path, "timeout_seconds": self.timeout},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise GoogleHealthAPIError(
+                "Google Health API request failed before receiving a response",
+                payload={"path": path, "error": str(exc)},
+            ) from exc
         return self._handle_response(response)
 
     def _handle_response(self, response: httpx.Response) -> dict[str, Any]:
