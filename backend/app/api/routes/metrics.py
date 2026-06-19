@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from statistics import mean
 from typing import Any
 
@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DbSession
 from app.models import (
     DailyBaseline,
+    DailyScore,
     DailySummary,
     MetricInterval,
     MetricSample,
@@ -21,8 +22,12 @@ from app.models import (
     Workout,
 )
 from app.services.interval_totals import interval_totals_by_date
-from app.services.health_dates import estimated_max_heart_rate, get_or_create_profile
-from app.services.scores import BASELINE_VERSION
+from app.services.health_dates import (
+    estimated_max_heart_rate,
+    get_or_create_profile,
+    timezone_for_profile,
+)
+from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION
 
 
 router = APIRouter(tags=["metrics"])
@@ -203,6 +208,41 @@ def metric_series(
 
 
 # All the sleep data
+@router.get("/sleep/detail")
+def sleep_detail(
+    session: DbSession,
+    user: CurrentUser,
+    start: date = Query(...),
+    end: date = Query(...),
+) -> dict[str, object]:
+    if end < start:
+        raise HTTPException(status_code=422, detail="end must be on or after start")
+
+    profile = get_or_create_profile(session, user.id)
+    sessions = _sleep_sessions_for_range(session, user.id, start, end)
+    main_by_date = _main_sleeps_by_date(sessions)
+    scores = _sleep_scores_by_date(session, user.id, start, end)
+    main_sleeps = [main_by_date[day] for day in _date_range(start, end) if day in main_by_date]
+    current = main_sleeps[-1] if main_sleeps else None
+    previous = main_sleeps[-2] if len(main_sleeps) >= 2 else None
+    current_score = scores.get(current.civil_date) if current and current.civil_date else None
+    series = [_sleep_series_point(day, profile, main_by_date.get(day), scores.get(day)) for day in _date_range(start, end)]
+
+    return {
+        "range": {"start": start, "end": end},
+        "current": _sleep_session_payload(profile, current, include_stages=True),
+        "previous": _sleep_session_payload(profile, previous),
+        "score": _sleep_score_payload(current_score),
+        "consistency": _sleep_consistency_payload(current_score),
+        "trend": _sleep_trend_payload(current, previous, series),
+        "series": series,
+        "sessions": [
+            _sleep_session_payload(profile, item)
+            for item in sessions
+        ],
+    }
+
+
 @router.get("/sleep")
 def sleep_sessions(
     session: DbSession,
@@ -232,6 +272,298 @@ def sleep_sessions(
         }
         for item in sessions
     ]
+
+
+def _sleep_sessions_for_range(
+    session: DbSession,
+    user_id: str,
+    start: date,
+    end: date,
+) -> list[SleepSession]:
+    return session.scalars(
+        select(SleepSession)
+        .where(
+            SleepSession.user_id == user_id,
+            SleepSession.civil_date >= start,
+            SleepSession.civil_date <= end,
+        )
+        .order_by(SleepSession.start_time)
+    ).all()
+
+
+def _main_sleeps_by_date(sessions: list[SleepSession]) -> dict[date, SleepSession]:
+    grouped: dict[date, list[SleepSession]] = defaultdict(list)
+    for item in sessions:
+        if item.civil_date:
+            grouped[item.civil_date].append(item)
+    return {day: _main_sleep_from_sessions(items) for day, items in grouped.items()}
+
+
+def _main_sleep_from_sessions(sessions: list[SleepSession]) -> SleepSession:
+    mains = [item for item in sessions if item.is_main_sleep]
+    candidates = mains or sessions
+    return max(candidates, key=_sleep_selection_minutes)
+
+
+def _sleep_selection_minutes(sleep: SleepSession) -> int:
+    return sleep.minutes_asleep or _time_in_bed_minutes(sleep) or 0
+
+
+def _sleep_scores_by_date(
+    session: DbSession,
+    user_id: str,
+    start: date,
+    end: date,
+) -> dict[date, DailyScore]:
+    scores = session.scalars(
+        select(DailyScore).where(
+            DailyScore.user_id == user_id,
+            DailyScore.score_type == "sleep",
+            DailyScore.algorithm_version == SLEEP_SCORE_VERSION,
+            DailyScore.score_date >= start,
+            DailyScore.score_date <= end,
+        )
+    ).all()
+    return {score.score_date: score for score in scores}
+
+
+def _sleep_session_payload(
+    profile: UserProfile,
+    sleep: SleepSession | None,
+    *,
+    include_stages: bool = False,
+) -> dict[str, object] | None:
+    if sleep is None:
+        return None
+    payload: dict[str, object] = {
+        "id": sleep.id,
+        "date": sleep.civil_date,
+        "start_time": sleep.start_time,
+        "end_time": sleep.end_time,
+        "bedtime": _local_clock_time(profile, sleep.start_time),
+        "wake_time": _local_clock_time(profile, sleep.end_time),
+        "duration_minutes": sleep.minutes_asleep,
+        "minutes_asleep": sleep.minutes_asleep,
+        "time_in_bed_minutes": _time_in_bed_minutes(sleep),
+        "minutes_awake": sleep.minutes_awake,
+        "sleep_efficiency": _sleep_efficiency(sleep),
+        "is_main_sleep": sleep.is_main_sleep,
+        "stages_summary": _sleep_stages_summary(sleep),
+    }
+    if include_stages:
+        payload["stages"] = sleep.stages
+    return payload
+
+
+def _sleep_series_point(
+    day: date,
+    profile: UserProfile,
+    sleep: SleepSession | None,
+    score: DailyScore | None,
+) -> dict[str, object]:
+    return {
+        "date": day,
+        "sleep_session_id": sleep.id if sleep else None,
+        "bedtime": _local_clock_time(profile, sleep.start_time) if sleep else None,
+        "wake_time": _local_clock_time(profile, sleep.end_time) if sleep else None,
+        "duration_minutes": sleep.minutes_asleep if sleep else None,
+        "time_in_bed_minutes": _time_in_bed_minutes(sleep) if sleep else None,
+        "minutes_awake": sleep.minutes_awake if sleep else None,
+        "sleep_efficiency": _sleep_efficiency(sleep) if sleep else None,
+        "score": _rounded(score.value) if score and score.value is not None else None,
+        "score_status": score.status.value if score else None,
+        "data_quality": score.data_quality if score else ("weak" if sleep else "missing"),
+    }
+
+
+def _sleep_score_payload(score: DailyScore | None) -> dict[str, object] | None:
+    if score is None:
+        return None
+    return {
+        "date": score.score_date,
+        "value": _rounded(score.value),
+        "unit": score.value_unit,
+        "status": score.status.value,
+        "confidence_phase": score.confidence_phase,
+        "data_quality": score.data_quality,
+        "components": score.components,
+        "inputs": score.inputs,
+        "reasons": score.reasons,
+        "computed_at": score.computed_at,
+    }
+
+
+def _sleep_consistency_payload(score: DailyScore | None) -> dict[str, object] | None:
+    if score is None:
+        return None
+    regularity = score.components.get("regularity")
+    if not isinstance(regularity, dict):
+        return None
+    value = regularity.get("score")
+    numeric_score = float(value) if isinstance(value, int | float) else None
+    return {
+        "source": "sleep_score.regularity",
+        "score": _rounded(numeric_score),
+        "status": _consistency_status(numeric_score),
+        "details": regularity,
+    }
+
+
+def _consistency_status(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    if value >= 80:
+        return "consistent"
+    if value >= 60:
+        return "variable"
+    return "irregular"
+
+
+def _sleep_trend_payload(
+    current: SleepSession | None,
+    previous: SleepSession | None,
+    series: list[dict[str, object]],
+) -> dict[str, object]:
+    durations = [
+        float(point["duration_minutes"])
+        for point in series
+        if point["duration_minutes"] is not None
+    ]
+    efficiencies = [
+        float(point["sleep_efficiency"])
+        for point in series
+        if point["sleep_efficiency"] is not None
+    ]
+    scores = [
+        float(point["score"])
+        for point in series
+        if point["score"] is not None
+    ]
+    current_duration = current.minutes_asleep if current else None
+    previous_duration = previous.minutes_asleep if previous else None
+    duration_change = (
+        current_duration - previous_duration
+        if current_duration is not None and previous_duration is not None
+        else None
+    )
+    return {
+        "duration_change_minutes": duration_change,
+        "window_average_duration_minutes": _rounded(mean(durations)) if durations else None,
+        "window_average_efficiency": _rounded(mean(efficiencies)) if efficiencies else None,
+        "window_average_score": _rounded(mean(scores)) if scores else None,
+    }
+
+
+def _time_in_bed_minutes(sleep: SleepSession) -> int | None:
+    if sleep.minutes_in_sleep_period is not None:
+        return sleep.minutes_in_sleep_period
+    return int((sleep.end_time - sleep.start_time).total_seconds() / 60)
+
+
+def _sleep_efficiency(sleep: SleepSession) -> float | None:
+    if sleep.minutes_asleep is None:
+        return None
+    period = _time_in_bed_minutes(sleep)
+    if not period or period <= 0:
+        return None
+    return round(sleep.minutes_asleep / period, 3)
+
+
+SLEEP_STAGE_ORDER = ("AWAKE", "LIGHT", "DEEP", "REM")
+
+
+def _sleep_stages_summary(sleep: SleepSession) -> list[dict[str, object]]:
+    from_timeline = _stage_summary_from_timeline(sleep.stages)
+    if from_timeline:
+        return from_timeline
+    return _deduped_provider_stage_summary(sleep.stages_summary)
+
+
+def _stage_summary_from_timeline(stages: list[dict[str, Any]]) -> list[dict[str, object]]:
+    totals: dict[str, float] = defaultdict(float)
+    counts: dict[str, int] = defaultdict(int)
+    for stage in stages:
+        stage_type = stage.get("type") or stage.get("stage")
+        start_time = _parse_stage_datetime(stage.get("startTime"))
+        end_time = _parse_stage_datetime(stage.get("endTime"))
+        if not stage_type or start_time is None or end_time is None:
+            continue
+        minutes = max(0.0, (end_time - start_time).total_seconds() / 60)
+        if minutes <= 0:
+            continue
+        key = str(stage_type).upper()
+        totals[key] += minutes
+        counts[key] += 1
+    return _stage_summary_payloads(totals, counts)
+
+
+def _deduped_provider_stage_summary(items: list[dict[str, Any]]) -> list[dict[str, object]]:
+    seen: set[tuple[str, str, str]] = set()
+    totals: dict[str, float] = defaultdict(float)
+    counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        stage_type = item.get("type") or item.get("stage")
+        if not stage_type:
+            continue
+        key = str(stage_type).upper()
+        minutes = _float_from_stage_value(item.get("minutes"))
+        count = int(_float_from_stage_value(item.get("count")) or 0)
+        dedupe_key = (key, str(item.get("minutes")), str(item.get("count")))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        totals[key] += minutes or 0
+        counts[key] += count
+    return _stage_summary_payloads(totals, counts)
+
+
+def _stage_summary_payloads(
+    totals: dict[str, float],
+    counts: dict[str, int],
+) -> list[dict[str, object]]:
+    ordered = [stage for stage in SLEEP_STAGE_ORDER if stage in totals]
+    ordered.extend(sorted(stage for stage in totals if stage not in SLEEP_STAGE_ORDER))
+    return [
+        {
+            "type": stage,
+            "minutes": int(round(totals[stage])),
+            "count": counts[stage],
+        }
+        for stage in ordered
+    ]
+
+
+def _parse_stage_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _float_from_stage_value(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _local_clock_time(profile: UserProfile, value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(timezone_for_profile(profile)).strftime("%H:%M")
+
+
+def _date_range(start: date, end: date) -> list[date]:
+    days: list[date] = []
+    current = start
+    while current <= end:
+        days.append(current)
+        current = date.fromordinal(current.toordinal() + 1)
+    return days
 
 
 def _daily_summaries_by_date(
