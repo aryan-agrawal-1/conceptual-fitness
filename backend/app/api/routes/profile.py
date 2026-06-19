@@ -22,6 +22,7 @@ class ProfilePayload(BaseModel):
     sex: str | None
     height_cm: float | None
     weight_kg: float | None
+    bmi: float | None
     fitness_goal: str | None
     sleep_target_minutes: int
 
@@ -84,6 +85,7 @@ def _profile_payload(profile: UserProfile) -> ProfilePayload:
         sex=profile.sex,
         height_cm=profile.height_cm,
         weight_kg=profile.weight_kg,
+        bmi=_bmi(profile.height_cm, profile.weight_kg),
         fitness_goal=profile.fitness_goal,
         sleep_target_minutes=profile.sleep_target_minutes,
     )
@@ -94,3 +96,10 @@ def _clean_string(value: str) -> str | None:
     if not cleaned:
         raise HTTPException(status_code=422, detail="String fields cannot be blank")
     return cleaned
+
+
+def _bmi(height_cm: float | None, weight_kg: float | None) -> float | None:
+    if height_cm is None or weight_kg is None or height_cm <= 0:
+        return None
+    height_m = height_cm / 100
+    return round(weight_kg / (height_m * height_m), 1)

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.security import encrypt_secret
 from app.google_health.client import GoogleHealthAPIError
-from app.google_health.data_types import DATA_TYPE_SPECS
+from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
 from app.models import (
     ConnectionStatus,
     GoogleAccount,
@@ -186,6 +186,8 @@ def test_sync_specs_follow_google_page_size_limits() -> None:
     assert DATA_TYPE_SPECS["steps"].page_size == 10000
     assert DATA_TYPE_SPECS["sleep"].page_size == 25
     assert DATA_TYPE_SPECS["exercise"].page_size == 25
+    assert "weight" in MVP_SYNC_DATA_TYPES
+    assert "height" in MVP_SYNC_DATA_TYPES
 
 
 @pytest.mark.asyncio

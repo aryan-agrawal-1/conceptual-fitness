@@ -247,6 +247,7 @@ def _normalize_sample(
     value = _extract_numeric_value(payload)
     if observed_at is None or value is None:
         return
+    value = _normalize_sample_value(spec, payload, value)
     session.add(
         MetricSample(
             user_id=account.user_id,
@@ -260,6 +261,14 @@ def _normalize_sample(
             source_device=raw_record.source_device,
         )
     )
+
+
+def _normalize_sample_value(spec: DataTypeSpec, payload: dict[str, Any], value: float) -> float:
+    if spec.metric == "height" and "heightMillimeters" in payload and "meters" not in payload:
+        return value / 1000
+    if spec.metric == "weight" and "weightGrams" in payload and "weightKilograms" not in payload:
+        return value / 1000
+    return value
 
 
 def _normalize_sleep(
@@ -411,11 +420,13 @@ def _extract_numeric_value(payload: dict[str, Any]) -> float | None:
         "calories",
         "kilocalories",
         "meters",
+        "heightMeters",
         "distanceMeters",
         "beatsPerMinute",
         "breathsPerMinute",
         "heightMillimeters",
         "weightKilograms",
+        "weightGrams",
         "vo2MillilitersPerMinuteKilogram",
         "millilitersPerMinuteKilogram",
         "bloodGlucoseMilligramsPerDeciliter",

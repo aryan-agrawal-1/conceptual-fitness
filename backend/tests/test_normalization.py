@@ -12,6 +12,7 @@ from app.models import (
     RawHealthRecord,
     SleepSession,
     User,
+    UserProfile,
 )
 from app.services.normalization import upsert_raw_and_normalized
 from app.services.summaries import rebuild_daily_summaries
@@ -267,3 +268,50 @@ def test_normalizes_daily_rollup_interval(session) -> None:
 
     summary = session.scalar(select(DailySummary))
     assert summary.total_calories == 2210.5
+
+
+def test_normalizes_body_metrics_and_updates_profile(session) -> None:
+    account = _account(session)
+    session.add(UserProfile(user_id=account.user_id, timezone="UTC", sleep_target_minutes=480))
+    height_point = {
+        "name": "users/me/dataTypes/height/dataPoints/1",
+        "dataSource": {"platform": "FITBIT"},
+        "height": {
+            "sampleTime": {
+                "physicalTime": "2026-06-15T08:00:00Z",
+                "civilTime": {"date": {"year": 2026, "month": 6, "day": 15}},
+            },
+            "heightMillimeters": "1810",
+        },
+    }
+    weight_point = {
+        "name": "users/me/dataTypes/weight/dataPoints/1",
+        "dataSource": {"platform": "FITBIT"},
+        "weight": {
+            "sampleTime": {
+                "physicalTime": "2026-06-15T08:05:00Z",
+                "civilTime": {"date": {"year": 2026, "month": 6, "day": 15}},
+            },
+            "weightKilograms": "78.5",
+        },
+    }
+
+    upsert_raw_and_normalized(session, account=account, data_type="height", data_point=height_point)
+    upsert_raw_and_normalized(session, account=account, data_type="weight", data_point=weight_point)
+    rebuild_daily_summaries(
+        session,
+        user_id=account.user_id,
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+    )
+    session.commit()
+
+    samples = session.scalars(select(MetricSample).order_by(MetricSample.metric)).all()
+    assert [(sample.metric, sample.value, sample.unit) for sample in samples] == [
+        ("height", 1.81, "meters"),
+        ("weight", 78.5, "kg"),
+    ]
+
+    profile = session.scalar(select(UserProfile).where(UserProfile.user_id == account.user_id))
+    assert profile.height_cm == 181
+    assert profile.weight_kg == 78.5

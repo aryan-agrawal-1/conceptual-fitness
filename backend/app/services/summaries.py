@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import DailySummary, MetricInterval, MetricSample, SleepSession, Workout
+from app.services.health_dates import get_or_create_profile
 
 
 def rebuild_daily_summaries(
@@ -84,6 +85,7 @@ def rebuild_daily_summaries(
         summary.data_quality = _data_quality(summary)
         session.add(summary)
 
+    _update_profile_body_metrics(session, user_id=user_id, end=end)
     session.flush()
     return summaries
 
@@ -153,3 +155,33 @@ def _data_quality(summary: DailySummary) -> str:
         return "weak"
     return "missing"
 
+
+def _update_profile_body_metrics(session: Session, *, user_id: str, end: date) -> None:
+    profile = get_or_create_profile(session, user_id)
+    latest_weight = _latest_sample_at_or_before(session, user_id=user_id, metric="weight", end=end)
+    latest_height = _latest_sample_at_or_before(session, user_id=user_id, metric="height", end=end)
+    if latest_weight is not None:
+        profile.weight_kg = latest_weight.value
+    if latest_height is not None:
+        profile.height_cm = latest_height.value * 100
+    if latest_weight is not None or latest_height is not None:
+        session.add(profile)
+
+
+def _latest_sample_at_or_before(
+    session: Session,
+    *,
+    user_id: str,
+    metric: str,
+    end: date,
+) -> MetricSample | None:
+    return session.scalar(
+        select(MetricSample)
+        .where(
+            MetricSample.user_id == user_id,
+            MetricSample.metric == metric,
+            MetricSample.civil_date <= end,
+        )
+        .order_by(MetricSample.observed_at.desc())
+        .limit(1)
+    )

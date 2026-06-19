@@ -290,6 +290,8 @@ MVP_SYNC_DATA_TYPES: tuple[str, ...] = (
     "active-zone-minutes",
     "nutrition-log",
     "blood-glucose",
+    "weight",
+    "height",
 )
 
 
