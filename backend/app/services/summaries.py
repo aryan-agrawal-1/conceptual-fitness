@@ -6,8 +6,9 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DailySummary, MetricInterval, MetricSample, SleepSession, Workout
+from app.models import DailySummary, MetricSample, SleepSession, Workout
 from app.services.health_dates import get_or_create_profile
+from app.services.interval_totals import interval_totals_by_date
 
 
 def rebuild_daily_summaries(
@@ -21,17 +22,18 @@ def rebuild_daily_summaries(
     summaries = [_get_or_create_summary(session, user_id, day) for day in dates]
     by_date = {summary.summary_date: summary for summary in summaries}
 
-    intervals = session.scalars(
-        select(MetricInterval).where(
-            MetricInterval.user_id == user_id,
-            MetricInterval.civil_date >= start,
-            MetricInterval.civil_date <= end,
-        )
-    ).all()
-    interval_totals: dict[date, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    for interval in intervals:
-        if interval.civil_date:
-            interval_totals[interval.civil_date][interval.metric] += interval.value
+    interval_totals = interval_totals_by_date(
+        session,
+        user_id=user_id,
+        metrics={
+            "steps",
+            "active_calories",
+            "total_calories",
+            "distance",
+        },
+        start=start,
+        end=end,
+    )
 
     samples = session.scalars(
         select(MetricSample).where(

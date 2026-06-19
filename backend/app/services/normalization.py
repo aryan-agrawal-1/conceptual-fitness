@@ -37,16 +37,17 @@ def upsert_raw_and_normalized(
     source_record_id = (
         data_point.get("name") or data_point.get("dataPointName") or f"{data_type}:{raw_hash}"
     )
+    legacy_source_record_id = f"{data_type}:{raw_hash}"
     payload = data_point.get(spec.payload_key, {})
     source = data_point.get("dataSource", {})
     device = source.get("device") or {}
 
-    raw_record = session.scalar(
-        select(RawHealthRecord).where(
-            RawHealthRecord.google_account_id == account.id,
-            RawHealthRecord.data_type == data_type,
-            RawHealthRecord.source_record_id == source_record_id,
-        )
+    raw_record = _find_raw_record(
+        session,
+        account=account,
+        data_type=data_type,
+        source_record_id=source_record_id,
+        legacy_source_record_id=legacy_source_record_id,
     )
     if raw_record is None:
         raw_record = RawHealthRecord(
@@ -60,6 +61,7 @@ def upsert_raw_and_normalized(
     else:
         raw_record.raw_json = data_point
         raw_record.content_hash = raw_hash
+        raw_record.source_record_id = source_record_id
 
     raw_record.source_platform = source.get("platform")
     raw_record.source_device = device.get("displayName")
@@ -80,6 +82,32 @@ def upsert_raw_and_normalized(
     elif spec.storage == "workout":
         _normalize_workout(session, account, raw_record, payload)
     return raw_record
+
+
+def _find_raw_record(
+    session: Session,
+    *,
+    account: GoogleAccount,
+    data_type: str,
+    source_record_id: str,
+    legacy_source_record_id: str,
+) -> RawHealthRecord | None:
+    raw_record = session.scalar(
+        select(RawHealthRecord).where(
+            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.data_type == data_type,
+            RawHealthRecord.source_record_id == source_record_id,
+        )
+    )
+    if raw_record is not None or source_record_id == legacy_source_record_id:
+        return raw_record
+    return session.scalar(
+        select(RawHealthRecord).where(
+            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.data_type == data_type,
+            RawHealthRecord.source_record_id == legacy_source_record_id,
+        )
+    )
 
 
 def upsert_heart_rate_points_fast(
@@ -220,6 +248,7 @@ def _normalize_interval(
         value = max(0.0, (end_time - start_time).total_seconds())
     if start_time is None or end_time is None or value is None:
         return
+    value = _normalize_interval_value(spec, payload, value)
     session.add(
         MetricInterval(
             user_id=account.user_id,
@@ -234,6 +263,12 @@ def _normalize_interval(
             source_device=raw_record.source_device,
         )
     )
+
+
+def _normalize_interval_value(spec: DataTypeSpec, payload: dict[str, Any], value: float) -> float:
+    if spec.metric == "distance" and "millimeters" in payload and "meters" not in payload:
+        return value / 1000
+    return value
 
 
 def _normalize_sample(

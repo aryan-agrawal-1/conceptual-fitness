@@ -17,6 +17,7 @@ from app.models import (
     SleepSession,
     Workout,
 )
+from app.services.interval_totals import interval_totals_by_date
 from app.services.scores import BASELINE_VERSION
 
 
@@ -311,19 +312,18 @@ def _interval_totals_by_date(
 ) -> dict[date, float]:
     if interval_metric is None:
         return {}
-    intervals = session.scalars(
-        select(MetricInterval).where(
-            MetricInterval.user_id == user_id,
-            MetricInterval.metric == interval_metric,
-            MetricInterval.civil_date >= start,
-            MetricInterval.civil_date <= end,
-        )
-    ).all()
-    totals: dict[date, float] = defaultdict(float)
-    for interval in intervals:
-        if interval.civil_date:
-            totals[interval.civil_date] += interval.value
-    return totals
+    totals = interval_totals_by_date(
+        session,
+        user_id=user_id,
+        metrics={interval_metric},
+        start=start,
+        end=end,
+    )
+    return {
+        day: metric_totals[interval_metric]
+        for day, metric_totals in totals.items()
+        if interval_metric in metric_totals
+    }
 
 
 def _baselines_by_date(

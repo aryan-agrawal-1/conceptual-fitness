@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import DailyBaseline, DailySummary, MetricSample, User
+from app.models import DailyBaseline, DailySummary, MetricInterval, MetricSample, User
 from app.services.scores import BASELINE_VERSION
 
 
@@ -116,6 +116,46 @@ def test_heart_rate_metric_detail_aggregates_daily_samples(session) -> None:
             "comparison": "unknown",
         }
     ]
+
+
+def test_metric_detail_prefers_fitbit_activity_interval_totals(session) -> None:
+    user = _user(session)
+    day = date(2026, 6, 19)
+    session.add(
+        MetricInterval(
+            user_id=user.id,
+            metric="distance",
+            start_time=_dt(day, 8),
+            end_time=_dt(day, 8, 30),
+            civil_date=day,
+            value=1609.344,
+            unit="meters",
+            source_platform="FITBIT",
+        )
+    )
+    session.add(
+        MetricInterval(
+            user_id=user.id,
+            metric="distance",
+            start_time=_dt(day, 9),
+            end_time=_dt(day, 9, 30),
+            civil_date=day,
+            value=3218.688,
+            unit="meters",
+            source_platform="HEALTH_KIT",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/distance/detail",
+        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["current"] == {"date": "2026-06-19", "value": 1609.34, "unit": "meters"}
+    assert payload["series"][0]["value"] == 1609.34
 
 
 def test_metric_detail_handles_missing_data_and_unknown_metric(session) -> None:

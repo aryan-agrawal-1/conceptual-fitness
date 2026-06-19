@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 
@@ -14,7 +14,7 @@ from app.models import (
     User,
     UserProfile,
 )
-from app.services.normalization import upsert_raw_and_normalized
+from app.services.normalization import _content_hash, upsert_raw_and_normalized
 from app.services.summaries import rebuild_daily_summaries
 
 
@@ -127,6 +127,49 @@ def test_normalizes_sample_and_sleep(session) -> None:
     summary = session.scalar(select(DailySummary))
     assert summary.heart_rate_variability == 56
     assert summary.sleep_minutes == 430
+
+
+def test_upsert_merges_legacy_hash_record_when_data_point_name_exists(session) -> None:
+    account = _account(session)
+    data_point = {
+        "dataPointName": "users/me/dataTypes/sleep/dataPoints/legacy-1",
+        "sleep": {
+            "interval": {
+                "startTime": "2026-06-14T22:30:00Z",
+                "endTime": "2026-06-15T06:30:00Z",
+                "civilEndTime": {"date": {"year": 2026, "month": 6, "day": 15}},
+            },
+            "summary": {
+                "minutesAsleep": "430",
+                "minutesAwake": "50",
+                "minutesInSleepPeriod": "480",
+            },
+            "metadata": {},
+            "stages": [],
+        },
+    }
+    raw_hash = _content_hash(data_point)
+    session.add(
+        RawHealthRecord(
+            user_id=account.user_id,
+            google_account_id=account.id,
+            data_type="sleep",
+            source_record_id=f"sleep:{raw_hash}",
+            raw_json=data_point,
+            content_hash=raw_hash,
+        )
+    )
+    session.flush()
+
+    upsert_raw_and_normalized(session, account=account, data_type="sleep", data_point=data_point)
+    session.commit()
+
+    raw_records = session.scalars(select(RawHealthRecord)).all()
+    sleeps = session.scalars(select(SleepSession)).all()
+    assert len(raw_records) == 1
+    assert raw_records[0].source_record_id == data_point["dataPointName"]
+    assert len(sleeps) == 1
+    assert sleeps[0].minutes_asleep == 430
 
 
 def test_normalizes_reconciled_heart_rate_with_data_point_name(session) -> None:
@@ -268,6 +311,91 @@ def test_normalizes_daily_rollup_interval(session) -> None:
 
     summary = session.scalar(select(DailySummary))
     assert summary.total_calories == 2210.5
+
+
+def test_normalizes_distance_millimeters_to_meters(session) -> None:
+    account = _account(session)
+    data_point = {
+        "name": "users/me/dataTypes/distance/dataPoints/1",
+        "dataSource": {"platform": "HEALTH_KIT"},
+        "distance": {
+            "interval": {
+                "startTime": "2026-06-15T08:00:00Z",
+                "endTime": "2026-06-15T08:05:00Z",
+                "civilStartTime": {"date": {"year": 2026, "month": 6, "day": 15}},
+            },
+            "millimeters": "123456",
+        },
+    }
+
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="distance",
+        data_point=data_point,
+    )
+    rebuild_daily_summaries(
+        session,
+        user_id=account.user_id,
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+    )
+    session.commit()
+
+    interval = session.scalar(select(MetricInterval))
+    assert interval.metric == "distance"
+    assert interval.value == 123.456
+    assert interval.unit == "meters"
+
+    summary = session.scalar(select(DailySummary))
+    assert summary.distance_meters == 123.456
+
+
+def test_daily_summary_prefers_fitbit_activity_totals(session) -> None:
+    account = _account(session)
+    observed_at = datetime(2026, 6, 15, 8, tzinfo=UTC)
+    for metric, unit, fitbit_value, healthkit_value in (
+        ("steps", "count", 1200, 800),
+        ("distance", "meters", 1500, 1000),
+        ("active_calories", "kcal", 220, 110),
+    ):
+        session.add(
+            MetricInterval(
+                user_id=account.user_id,
+                metric=metric,
+                start_time=observed_at,
+                end_time=observed_at,
+                civil_date=date(2026, 6, 15),
+                value=fitbit_value,
+                unit=unit,
+                source_platform="FITBIT",
+            )
+        )
+        session.add(
+            MetricInterval(
+                user_id=account.user_id,
+                metric=metric,
+                start_time=observed_at,
+                end_time=observed_at,
+                civil_date=date(2026, 6, 15),
+                value=healthkit_value,
+                unit=unit,
+                source_platform="HEALTH_KIT",
+            )
+        )
+
+    rebuild_daily_summaries(
+        session,
+        user_id=account.user_id,
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+    )
+    session.commit()
+
+    summary = session.scalar(select(DailySummary))
+    assert summary.steps == 1200
+    assert summary.distance_meters == 1500
+    assert summary.active_calories == 220
 
 
 def test_normalizes_body_metrics_and_updates_profile(session) -> None:
