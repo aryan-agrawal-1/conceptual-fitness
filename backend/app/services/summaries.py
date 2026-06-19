@@ -6,9 +6,15 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DailySummary, MetricSample, SleepSession, Workout
+from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession, Workout
 from app.services.health_dates import get_or_create_profile
 from app.services.interval_totals import interval_totals_by_date
+
+PREFERRED_SAMPLE_DATA_TYPES: dict[str, str] = {
+    "heart_rate_variability": "daily-heart-rate-variability",
+    "oxygen_saturation": "daily-oxygen-saturation",
+    "respiratory_rate": "daily-respiratory-rate",
+}
 
 
 def rebuild_daily_summaries(
@@ -43,9 +49,15 @@ def rebuild_daily_summaries(
         )
     ).all()
     sample_values: dict[date, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    preferred_sample_values: dict[date, dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     for sample in samples:
-        if sample.civil_date:
-            sample_values[sample.civil_date][sample.metric].append(sample.value)
+        if sample.civil_date is None:
+            continue
+        sample_values[sample.civil_date][sample.metric].append(sample.value)
+        if _is_preferred_sample(session, sample):
+            preferred_sample_values[sample.civil_date][sample.metric].append(sample.value)
 
     sleeps = session.scalars(
         select(SleepSession).where(
@@ -74,14 +86,19 @@ def rebuild_daily_summaries(
     for day, summary in by_date.items():
         totals = interval_totals[day]
         values = sample_values[day]
+        preferred_values = preferred_sample_values[day]
         summary.steps = _optional_int(totals.get("steps"))
         summary.active_calories = _optional_float(totals.get("active_calories"))
         summary.total_calories = _optional_float(totals.get("total_calories"))
         summary.distance_meters = _optional_float(totals.get("distance"))
         summary.resting_heart_rate = _mean(values.get("resting_heart_rate"))
-        summary.heart_rate_variability = _mean(values.get("heart_rate_variability"))
-        summary.oxygen_saturation = _mean(values.get("oxygen_saturation"))
-        summary.respiratory_rate = _mean(values.get("respiratory_rate"))
+        summary.heart_rate_variability = _preferred_mean(
+            preferred_values,
+            values,
+            "heart_rate_variability",
+        )
+        summary.oxygen_saturation = _preferred_mean(preferred_values, values, "oxygen_saturation")
+        summary.respiratory_rate = _preferred_mean(preferred_values, values, "respiratory_rate")
         summary.sleep_minutes = sleep_minutes.get(day) or None
         summary.workout_count = workout_counts.get(day, 0)
         summary.data_quality = _data_quality(summary)
@@ -120,6 +137,22 @@ def _mean(values: list[float] | None) -> float | None:
     if not values:
         return None
     return sum(values) / len(values)
+
+
+def _preferred_mean(
+    preferred_values: dict[str, list[float]],
+    values: dict[str, list[float]],
+    metric: str,
+) -> float | None:
+    return _mean(preferred_values.get(metric)) or _mean(values.get(metric))
+
+
+def _is_preferred_sample(session: Session, sample: MetricSample) -> bool:
+    preferred_data_type = PREFERRED_SAMPLE_DATA_TYPES.get(sample.metric)
+    if preferred_data_type is None or sample.raw_record_id is None:
+        return False
+    raw_record = session.get(RawHealthRecord, sample.raw_record_id)
+    return raw_record is not None and raw_record.data_type == preferred_data_type
 
 
 def _optional_int(value: float | None) -> int | None:

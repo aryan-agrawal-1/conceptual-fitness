@@ -10,7 +10,11 @@ from app.core.security import decrypt_secret, utcnow
 from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
 from app.models import ConnectionStatus, GoogleAccount, SyncCursor, SyncStatus
-from app.services.normalization import upsert_heart_rate_points_fast, upsert_raw_and_normalized
+from app.services.normalization import (
+    _record_civil_date,
+    upsert_heart_rate_points_fast,
+    upsert_raw_and_normalized,
+)
 from app.services.scores import rebuild_derived_scores
 from app.services.summaries import rebuild_daily_summaries
 
@@ -157,7 +161,14 @@ async def _sync_data_type(
             )
             points = _rollup_data_points(data_type, spec.payload_key, payload)
             records_seen += len(points)
-            records_stored += _store_points(session, account, data_type, points)
+            records_stored += _store_points(
+                session,
+                account,
+                data_type,
+                points,
+                start=chunk_start,
+                end=chunk_end,
+            )
             cursor.last_successful_start = start
             cursor.last_successful_end = chunk_end
             cursor.last_page_token = None
@@ -195,7 +206,14 @@ async def _sync_data_type(
             page_token=page_token,
         ):
             records_seen += len(points)
-            records_stored += _store_points(session, account, data_type, points)
+            records_stored += _store_points(
+                session,
+                account,
+                data_type,
+                points,
+                start=chunk_start,
+                end=chunk_end,
+            )
             cursor.last_successful_start = chunk_start
             cursor.last_successful_end = chunk_end
             cursor.last_page_token = next_page_token
@@ -216,7 +234,11 @@ def _store_points(
     account: GoogleAccount,
     data_type: str,
     points: list[dict[str, object]],
+    *,
+    start: date,
+    end: date,
 ) -> int:
+    points = _points_in_range(data_type, points, start=start, end=end)
     if data_type == "heart-rate":
         return upsert_heart_rate_points_fast(
             session,
@@ -231,6 +253,24 @@ def _store_points(
             data_point=point,
         )
     return len(points)
+
+
+def _points_in_range(
+    data_type: str,
+    points: list[dict[str, object]],
+    *,
+    start: date,
+    end: date,
+) -> list[dict[str, object]]:
+    spec = DATA_TYPE_SPECS[data_type]
+    filtered: list[dict[str, object]] = []
+    for point in points:
+        payload = point.get(spec.payload_key)
+        point_date = _record_civil_date(payload) if isinstance(payload, dict) else None
+        if point_date is not None and not start <= point_date <= end:
+            continue
+        filtered.append(point)
+    return filtered
 
 
 def _resume_page_token(

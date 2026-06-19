@@ -13,6 +13,7 @@ from app.models import (
     GoogleAccount,
     MetricInterval,
     MetricSample,
+    RawHealthRecord,
     SyncCursor,
     SyncStatus,
     User,
@@ -180,6 +181,36 @@ class FakeResumeGoogleHealthClient:
         yield [], None
 
 
+class FakeOutOfRangeDailyZonesClient:
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, str]:
+        return {"access_token": "access-token"}
+
+    async def iter_data_point_pages_with_tokens(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        filter_expr: str | None = None,
+        prefer_reconcile: bool = False,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ):
+        yield [
+            {
+                "dailyHeartRateZones": {
+                    "date": {"year": 2026, "month": 6, "day": 18},
+                    "heartRateZones": [{"heartRateZoneType": "LIGHT"}],
+                },
+            },
+            {
+                "dailyHeartRateZones": {
+                    "date": {"year": 9997, "month": 8, "day": 20},
+                    "heartRateZones": [{"heartRateZoneType": "LIGHT"}],
+                },
+            },
+        ], None
+
+
 def test_sync_specs_follow_google_page_size_limits() -> None:
     assert DATA_TYPE_SPECS["heart-rate"].page_size == 10000
     assert DATA_TYPE_SPECS["time-in-heart-rate-zone"].page_size == 10000
@@ -308,6 +339,26 @@ async def test_daily_zone_sync_ignores_saved_page_token(session) -> None:
         'daily_heart_rate_zones.date >= "2026-06-05" '
         'AND daily_heart_rate_zones.date < "2026-06-19"'
     ]
+
+
+@pytest.mark.asyncio
+async def test_sync_discards_daily_points_outside_requested_range(session) -> None:
+    account = _connected_account(session)
+
+    result = await sync_google_account_range(
+        session,
+        account=account,
+        start=date(2026, 6, 18),
+        end=date(2026, 6, 18),
+        data_types=("daily-heart-rate-zones",),
+        client=FakeOutOfRangeDailyZonesClient(),
+    )
+
+    assert result.records_seen == 2
+    assert result.records_stored == 1
+    raw_records = session.scalars(select(RawHealthRecord)).all()
+    assert len(raw_records) == 1
+    assert raw_records[0].civil_date == date(2026, 6, 18)
 
 
 @pytest.mark.asyncio

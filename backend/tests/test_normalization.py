@@ -398,6 +398,59 @@ def test_daily_summary_prefers_fitbit_activity_totals(session) -> None:
     assert summary.active_calories == 220
 
 
+def test_daily_summary_prefers_daily_derived_samples(session) -> None:
+    account = _account(session)
+    day = date(2026, 6, 15)
+    raw_daily = RawHealthRecord(
+        user_id=account.user_id,
+        google_account_id=account.id,
+        data_type="daily-oxygen-saturation",
+        source_record_id="daily-spo2-1",
+        civil_date=day,
+        raw_json={},
+        content_hash="daily-spo2-1",
+    )
+    raw_intraday = RawHealthRecord(
+        user_id=account.user_id,
+        google_account_id=account.id,
+        data_type="oxygen-saturation",
+        source_record_id="spo2-1",
+        civil_date=day,
+        raw_json={},
+        content_hash="spo2-1",
+    )
+    session.add_all([raw_daily, raw_intraday])
+    session.flush()
+    session.add(
+        MetricSample(
+            user_id=account.user_id,
+            raw_record_id=raw_intraday.id,
+            metric="oxygen_saturation",
+            observed_at=datetime(2026, 6, 15, 1, tzinfo=UTC),
+            civil_date=day,
+            value=50,
+            unit="percent",
+        )
+    )
+    session.add(
+        MetricSample(
+            user_id=account.user_id,
+            raw_record_id=raw_daily.id,
+            metric="oxygen_saturation",
+            observed_at=datetime(2026, 6, 15, tzinfo=UTC),
+            civil_date=day,
+            value=96.4,
+            unit="percent",
+        )
+    )
+
+    rebuild_daily_summaries(session, user_id=account.user_id, start=day, end=day)
+    session.commit()
+
+    summary = session.scalar(select(DailySummary))
+    assert summary.oxygen_saturation == 96.4
+
+
 def test_normalizes_body_metrics_and_updates_profile(session) -> None:
     account = _account(session)
     session.add(UserProfile(user_id=account.user_id, timezone="UTC", sleep_target_minutes=480))
