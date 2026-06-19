@@ -81,6 +81,7 @@ class UserProfile(Base):
     sex: Mapped[str | None] = mapped_column(String(32), nullable=True)
     height_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
     weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fitness_goal: Mapped[str | None] = mapped_column(String(80), nullable=True)
     sleep_target_minutes: Mapped[int] = mapped_column(Integer, default=480)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
