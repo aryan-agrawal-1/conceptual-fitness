@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from statistics import mean
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
@@ -14,10 +15,13 @@ from app.models import (
     DailySummary,
     MetricInterval,
     MetricSample,
+    RawHealthRecord,
     SleepSession,
+    UserProfile,
     Workout,
 )
 from app.services.interval_totals import interval_totals_by_date
+from app.services.health_dates import estimated_max_heart_rate, get_or_create_profile
 from app.services.scores import BASELINE_VERSION
 
 
@@ -494,14 +498,493 @@ def workouts(
         )
         .order_by(Workout.start_time)
     ).all()
+    profile = get_or_create_profile(session, user.id)
     return [
-        {
-            "workout_type": item.workout_type,
-            "start_time": item.start_time,
-            "end_time": item.end_time,
-            "date": item.civil_date,
-            "duration_seconds": item.duration_seconds,
-            "raw_summary": item.raw_summary,
-        }
+        _workout_summary_payload(session, user.id, profile, item)
         for item in items
     ]
+
+
+@router.get("/workouts/{workout_id}")
+def workout_detail(
+    session: DbSession,
+    user: CurrentUser,
+    workout_id: str,
+) -> dict[str, object]:
+    workout = session.get(Workout, workout_id)
+    if workout is None or workout.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Workout not found")
+
+    profile = get_or_create_profile(session, user.id)
+    samples = _workout_heart_rate_samples(session, user.id, workout)
+    payload = _workout_summary_payload(session, user.id, profile, workout, samples=samples)
+    payload["heart_rate_samples"] = [
+        {
+            "observed_at": sample.observed_at,
+            "value": sample.value,
+            "unit": sample.unit,
+            "source_platform": sample.source_platform,
+            "source_device": sample.source_device,
+        }
+        for sample in samples
+    ]
+    payload["raw_summary"] = workout.raw_summary
+    return payload
+
+
+def _workout_summary_payload(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    workout: Workout,
+    *,
+    samples: list[MetricSample] | None = None,
+) -> dict[str, object]:
+    hr_samples = (
+        samples
+        if samples is not None
+        else _workout_heart_rate_samples(session, user_id, workout)
+    )
+    hr_values = [sample.value for sample in hr_samples]
+    zones, zone_source = _workout_zones(session, user_id, profile, workout, hr_samples)
+    distance = _workout_distance_from_raw(workout.raw_summary)
+    active_calories = _workout_calories_from_raw(workout.raw_summary)
+    if distance is None:
+        distance = _workout_metric_total(session, user_id, workout, "distance")
+    if active_calories is None:
+        active_calories = _workout_metric_total(session, user_id, workout, "active_calories")
+
+    return {
+        "id": workout.id,
+        "workout_type": workout.workout_type,
+        "start_time": workout.start_time,
+        "end_time": workout.end_time,
+        "date": workout.civil_date,
+        "duration_seconds": workout.duration_seconds,
+        "distance_meters": _rounded(distance),
+        "active_calories": _rounded(active_calories),
+        "heart_rate": {
+            "average_bpm": _rounded(mean(hr_values)) if hr_values else None,
+            "min_bpm": _rounded(min(hr_values)) if hr_values else None,
+            "max_bpm": _rounded(max(hr_values)) if hr_values else None,
+            "sample_count": len(hr_values),
+        },
+        "heart_rate_zones": zones,
+        "zone_source": zone_source,
+        "intensity": _workout_intensity(zones),
+    }
+
+
+WORKOUT_DISTANCE_KEYS = {
+    "distanceMeters",
+    "distance_meters",
+    "distanceInMeters",
+    "meters",
+}
+WORKOUT_DISTANCE_MILLIMETER_KEYS = {
+    "distanceMillimeters",
+    "distance_millimeters",
+    "millimeters",
+}
+WORKOUT_CALORIE_KEYS = {
+    "activeCalories",
+    "active_calories",
+    "caloriesKcal",
+    "calories",
+    "kilocalories",
+    "kcal",
+}
+
+ZONE_ORDER = ("zone_1", "zone_2", "zone_3", "zone_4")
+SOURCE_ZONE_MAP = {
+    "OUT_OF_RANGE": "zone_1",
+    "BELOW_DEFAULT_ZONE_1": "zone_1",
+    "LIGHT": "zone_1",
+    "FAT_BURN": "zone_2",
+    "MODERATE": "zone_2",
+    "CARDIO": "zone_3",
+    "VIGOROUS": "zone_3",
+    "PEAK": "zone_4",
+    "MAXIMUM": "zone_4",
+}
+
+
+def _workout_heart_rate_samples(
+    session: DbSession,
+    user_id: str,
+    workout: Workout,
+) -> list[MetricSample]:
+    return session.scalars(
+        select(MetricSample)
+        .where(
+            MetricSample.user_id == user_id,
+            MetricSample.metric == "heart_rate",
+            MetricSample.observed_at >= workout.start_time,
+            MetricSample.observed_at <= workout.end_time,
+        )
+        .order_by(MetricSample.observed_at)
+    ).all()
+
+
+def _workout_metric_total(
+    session: DbSession,
+    user_id: str,
+    workout: Workout,
+    metric: str,
+) -> float | None:
+    intervals = session.scalars(
+        select(MetricInterval).where(
+            MetricInterval.user_id == user_id,
+            MetricInterval.metric == metric,
+            MetricInterval.end_time > workout.start_time,
+            MetricInterval.start_time < workout.end_time,
+        )
+    ).all()
+    total = 0.0
+    for interval in intervals:
+        overlap = _overlap_seconds(
+            interval.start_time,
+            interval.end_time,
+            workout.start_time,
+            workout.end_time,
+        )
+        interval_seconds = max(0.0, (interval.end_time - interval.start_time).total_seconds())
+        if overlap <= 0 or interval_seconds <= 0:
+            continue
+        total += interval.value * min(1.0, overlap / interval_seconds)
+    return total if total > 0 else None
+
+
+def _workout_zones(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    workout: Workout,
+    samples: list[MetricSample],
+) -> tuple[list[dict[str, object]], str]:
+    provider_zones = _provider_zone_payloads(workout.raw_summary)
+    if provider_zones:
+        return provider_zones, "provider_workout_summary"
+
+    interval_zones = _zone_interval_payloads(session, user_id, workout)
+    if interval_zones:
+        return interval_zones, "time_in_heart_rate_zone"
+
+    inferred_zones = _inferred_zone_payloads(session, user_id, profile, workout, samples)
+    if inferred_zones:
+        return inferred_zones, "heart_rate_reserve_inferred"
+
+    return _empty_zone_payloads("missing"), "missing"
+
+
+def _provider_zone_payloads(raw_summary: dict[str, Any]) -> list[dict[str, object]]:
+    zones = _extract_zone_summaries(raw_summary)
+    totals = _empty_zone_totals()
+    sources: dict[str, set[str]] = defaultdict(set)
+    for index, zone in enumerate(zones):
+        seconds = _zone_seconds(zone)
+        if seconds is None:
+            continue
+        source_zone = _source_zone_name(zone) or f"zone_{index + 1}"
+        app_zone = _app_zone_from_source(source_zone) or f"zone_{min(index + 1, 4)}"
+        totals[app_zone] += seconds
+        sources[app_zone].add(source_zone)
+    return _zone_payloads_from_totals(totals, "provider_workout_summary", sources)
+
+
+def _zone_interval_payloads(
+    session: DbSession,
+    user_id: str,
+    workout: Workout,
+) -> list[dict[str, object]]:
+    rows = session.execute(
+        select(MetricInterval, RawHealthRecord)
+        .join(RawHealthRecord, MetricInterval.raw_record_id == RawHealthRecord.id)
+        .where(
+            MetricInterval.user_id == user_id,
+            MetricInterval.metric == "time_in_heart_rate_zone",
+            MetricInterval.end_time > workout.start_time,
+            MetricInterval.start_time < workout.end_time,
+        )
+    ).all()
+    totals = _empty_zone_totals()
+    sources: dict[str, set[str]] = defaultdict(set)
+    for interval, raw_record in rows:
+        payload = raw_record.raw_json.get("timeInHeartRateZone") or {}
+        if not isinstance(payload, dict):
+            continue
+        source_zone = str(payload.get("heartRateZoneType") or "")
+        app_zone = _app_zone_from_source(source_zone)
+        if app_zone is None:
+            continue
+        overlap = _overlap_seconds(
+            interval.start_time,
+            interval.end_time,
+            workout.start_time,
+            workout.end_time,
+        )
+        if overlap <= 0:
+            continue
+        totals[app_zone] += overlap
+        sources[app_zone].add(source_zone)
+    return _zone_payloads_from_totals(totals, "time_in_heart_rate_zone", sources)
+
+
+def _inferred_zone_payloads(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    workout: Workout,
+    samples: list[MetricSample],
+) -> list[dict[str, object]]:
+    if len(samples) < 2:
+        return []
+    resting_hr = _resting_heart_rate_for_day(session, user_id, workout.civil_date)
+    max_hr, max_hr_source = estimated_max_heart_rate(profile, workout.civil_date or date.today())
+    if resting_hr is None or max_hr is None or max_hr <= resting_hr:
+        return []
+
+    totals = _empty_zone_totals()
+    for current, following in zip(samples, samples[1:]):
+        seconds = min(
+            120.0,
+            max(0.0, (following.observed_at - current.observed_at).total_seconds()),
+        )
+        if seconds <= 0:
+            continue
+        reserve_fraction = (current.value - resting_hr) / (max_hr - resting_hr)
+        totals[_zone_from_hrr_fraction(reserve_fraction)] += seconds
+
+    payloads = _zone_payloads_from_totals(totals, "heart_rate_reserve_inferred", defaultdict(set))
+    if not any(payload["seconds"] for payload in payloads):
+        return []
+    for payload in payloads:
+        payload["thresholds"] = _zone_thresholds(resting_hr, max_hr)
+        payload["max_heart_rate"] = _rounded(max_hr)
+        payload["max_heart_rate_source"] = max_hr_source
+        payload["resting_heart_rate"] = _rounded(resting_hr)
+    return payloads
+
+
+def _resting_heart_rate_for_day(
+    session: DbSession,
+    user_id: str,
+    day: date | None,
+) -> float | None:
+    if day is None:
+        return None
+    summary = session.scalar(
+        select(DailySummary).where(
+            DailySummary.user_id == user_id,
+            DailySummary.summary_date == day,
+        )
+    )
+    if summary and summary.resting_heart_rate is not None:
+        return float(summary.resting_heart_rate)
+    samples = session.scalars(
+        select(MetricSample).where(
+            MetricSample.user_id == user_id,
+            MetricSample.metric == "resting_heart_rate",
+            MetricSample.civil_date == day,
+        )
+    ).all()
+    if samples:
+        return mean(sample.value for sample in samples)
+    return None
+
+
+def _zone_from_hrr_fraction(value: float) -> str:
+    if value < 0.60:
+        return "zone_1"
+    if value < 0.70:
+        return "zone_2"
+    if value < 0.85:
+        return "zone_3"
+    return "zone_4"
+
+
+def _zone_thresholds(resting_hr: float, max_hr: float) -> dict[str, dict[str, float | None]]:
+    reserve = max_hr - resting_hr
+    return {
+        "zone_1": {"min_bpm": None, "max_bpm": _rounded(resting_hr + reserve * 0.60)},
+        "zone_2": {
+            "min_bpm": _rounded(resting_hr + reserve * 0.60),
+            "max_bpm": _rounded(resting_hr + reserve * 0.70),
+        },
+        "zone_3": {
+            "min_bpm": _rounded(resting_hr + reserve * 0.70),
+            "max_bpm": _rounded(resting_hr + reserve * 0.85),
+        },
+        "zone_4": {"min_bpm": _rounded(resting_hr + reserve * 0.85), "max_bpm": None},
+    }
+
+
+def _zone_payloads_from_totals(
+    totals: dict[str, float],
+    source: str,
+    source_zones: dict[str, set[str]],
+) -> list[dict[str, object]]:
+    if not any(totals.values()):
+        return []
+    return [
+        {
+            "zone": zone,
+            "seconds": int(round(totals[zone])),
+            "minutes": _rounded(totals[zone] / 60),
+            "source": source,
+            "source_zones": sorted(source_zones.get(zone, set())),
+        }
+        for zone in ZONE_ORDER
+    ]
+
+
+def _empty_zone_payloads(source: str) -> list[dict[str, object]]:
+    return [
+        {"zone": zone, "seconds": 0, "minutes": 0.0, "source": source, "source_zones": []}
+        for zone in ZONE_ORDER
+    ]
+
+
+def _empty_zone_totals() -> dict[str, float]:
+    return {zone: 0.0 for zone in ZONE_ORDER}
+
+
+def _workout_intensity(zones: list[dict[str, object]]) -> str:
+    seconds_by_zone = {str(zone["zone"]): int(zone["seconds"]) for zone in zones}
+    if not seconds_by_zone or sum(seconds_by_zone.values()) == 0:
+        return "unknown"
+    dominant = max(ZONE_ORDER, key=lambda zone: seconds_by_zone.get(zone, 0))
+    return {
+        "zone_1": "light",
+        "zone_2": "moderate",
+        "zone_3": "vigorous",
+        "zone_4": "peak",
+    }[dominant]
+
+
+def _overlap_seconds(
+    start_a: datetime,
+    end_a: datetime,
+    start_b: datetime,
+    end_b: datetime,
+) -> float:
+    return max(0.0, (min(end_a, end_b) - max(start_a, start_b)).total_seconds())
+
+
+def _extract_zone_summaries(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        zones: list[dict[str, Any]] = []
+        for item in payload:
+            zones.extend(_extract_zone_summaries(item))
+        return zones
+    if not isinstance(payload, dict):
+        return []
+    durations = payload.get("heartRateZoneDurations")
+    if isinstance(durations, dict):
+        return _zone_duration_summaries(durations)
+    for key in ("heartRateZones", "heart_rate_zones", "heartRateZoneSummaries", "zones"):
+        value = payload.get(key)
+        if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+            return value
+    zones = []
+    for value in payload.values():
+        zones.extend(_extract_zone_summaries(value))
+    return zones
+
+
+def _zone_duration_summaries(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    mapping = {
+        "lightTime": "LIGHT",
+        "moderateTime": "MODERATE",
+        "vigorousTime": "VIGOROUS",
+        "peakTime": "PEAK",
+    }
+    return [
+        {"heartRateZoneType": zone, "seconds": value}
+        for key, zone in mapping.items()
+        if (value := payload.get(key)) is not None
+    ]
+
+
+def _zone_seconds(zone: dict[str, Any]) -> float | None:
+    for key in ("seconds", "durationSeconds"):
+        value = _duration_seconds(zone.get(key))
+        if value is not None:
+            return value
+    for key in ("minutes", "minute", "durationMinutes"):
+        value = _to_float(zone.get(key))
+        if value is not None:
+            return value * 60
+    return None
+
+
+def _source_zone_name(zone: dict[str, Any]) -> str | None:
+    for key in ("heartRateZoneType", "zone", "name", "type"):
+        value = zone.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _app_zone_from_source(source_zone: str) -> str | None:
+    normalized = source_zone.strip().upper().replace(" ", "_").replace("-", "_")
+    if normalized in {"ZONE_1", "1"}:
+        return "zone_1"
+    if normalized in {"ZONE_2", "2"}:
+        return "zone_2"
+    if normalized in {"ZONE_3", "3"}:
+        return "zone_3"
+    if normalized in {"ZONE_4", "4"}:
+        return "zone_4"
+    return SOURCE_ZONE_MAP.get(normalized)
+
+
+def _workout_distance_from_raw(payload: dict[str, Any]) -> float | None:
+    meters = _first_numeric(payload, WORKOUT_DISTANCE_KEYS)
+    if meters is not None:
+        return meters
+    millimeters = _first_numeric(payload, WORKOUT_DISTANCE_MILLIMETER_KEYS)
+    return None if millimeters is None else millimeters / 1000
+
+
+def _workout_calories_from_raw(payload: dict[str, Any]) -> float | None:
+    return _first_numeric(payload, WORKOUT_CALORIE_KEYS)
+
+
+def _first_numeric(payload: Any, keys: set[str]) -> float | None:
+    if isinstance(payload, list):
+        for item in payload:
+            value = _first_numeric(item, keys)
+            if value is not None:
+                return value
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key, value in payload.items():
+        if key in keys:
+            parsed = _to_float(value)
+            if parsed is not None:
+                return parsed
+        parsed = _first_numeric(value, keys)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _duration_seconds(value: Any) -> float | None:
+    parsed = _to_float(value)
+    if parsed is not None:
+        return parsed
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if stripped.endswith("s"):
+        return _to_float(stripped[:-1])
+    return None
