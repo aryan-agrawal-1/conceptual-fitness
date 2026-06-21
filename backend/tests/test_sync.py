@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.api.routes import sync as sync_routes
 from app.core.security import encrypt_secret
 from app.google_health.client import GoogleHealthAPIError
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
+from app.main import app
 from app.models import (
     ConnectionStatus,
     GoogleAccount,
@@ -18,7 +21,15 @@ from app.models import (
     SyncStatus,
     User,
 )
-from app.services.sync import run_initial_backfill, sync_google_account_range
+from app.services import sync as sync_service
+from app.services.sync import (
+    SyncResult,
+    SyncWindow,
+    run_initial_backfill,
+    sync_google_account_range,
+    sync_window_from_cursors,
+)
+from app.tasks import sync as sync_tasks
 
 
 def _connected_account(session) -> GoogleAccount:
@@ -36,6 +47,30 @@ def _connected_account(session) -> GoogleAccount:
     session.add(account)
     session.flush()
     return account
+
+
+class FixedDate(date):
+    @classmethod
+    def today(cls) -> date:
+        return cls(2026, 6, 21)
+
+
+def _add_success_cursors(
+    session,
+    account: GoogleAccount,
+    cursor_dates: dict[str, date],
+) -> None:
+    for data_type, cursor_end in cursor_dates.items():
+        session.add(
+            SyncCursor(
+                google_account_id=account.id,
+                data_type=data_type,
+                status=SyncStatus.succeeded,
+                last_successful_start=cursor_end,
+                last_successful_end=cursor_end,
+            )
+        )
+    session.commit()
 
 
 class FakePagedGoogleHealthClient:
@@ -219,6 +254,87 @@ def test_sync_specs_follow_google_page_size_limits() -> None:
     assert DATA_TYPE_SPECS["exercise"].page_size == 25
     assert "weight" in MVP_SYNC_DATA_TYPES
     assert "height" in MVP_SYNC_DATA_TYPES
+
+
+def test_sync_window_uses_initial_backfill_when_no_cursors(session) -> None:
+    account = _connected_account(session)
+
+    window = sync_window_from_cursors(
+        session,
+        account=account,
+        data_types=("steps", "sleep"),
+        today=date(2026, 6, 21),
+    )
+
+    assert window.start == date(2026, 6, 8)
+    assert window.end == date(2026, 6, 21)
+    assert window.is_initial_backfill is True
+
+
+def test_sync_window_uses_oldest_cursor_with_overlap(session) -> None:
+    account = _connected_account(session)
+    _add_success_cursors(
+        session,
+        account,
+        {
+            "steps": date(2026, 6, 20),
+            "sleep": date(2026, 6, 18),
+        },
+    )
+
+    window = sync_window_from_cursors(
+        session,
+        account=account,
+        data_types=("steps", "sleep"),
+        today=date(2026, 6, 21),
+    )
+
+    assert window.start == date(2026, 6, 17)
+    assert window.end == date(2026, 6, 21)
+    assert window.is_initial_backfill is False
+
+
+def test_sync_window_covers_initial_range_for_missing_requested_type(session) -> None:
+    account = _connected_account(session)
+    _add_success_cursors(session, account, {"steps": date(2026, 6, 20)})
+
+    window = sync_window_from_cursors(
+        session,
+        account=account,
+        data_types=("steps", "sleep"),
+        today=date(2026, 6, 21),
+    )
+
+    assert window.start == date(2026, 6, 8)
+    assert window.end == date(2026, 6, 21)
+    assert window.is_initial_backfill is True
+
+
+def test_sync_window_does_not_initial_backfill_for_known_failed_type(session) -> None:
+    account = _connected_account(session)
+    _add_success_cursors(session, account, {"steps": date(2026, 6, 20)})
+    session.add(
+        SyncCursor(
+            google_account_id=account.id,
+            data_type="nutrition-log",
+            status=SyncStatus.failed,
+            last_successful_start=None,
+            last_successful_end=None,
+            last_error="missing scope",
+        )
+    )
+    session.commit()
+
+    window = sync_window_from_cursors(
+        session,
+        account=account,
+        data_types=("steps", "nutrition-log"),
+        today=date(2026, 6, 21),
+    )
+
+    assert window.start == date(2026, 6, 19)
+    assert window.end == date(2026, 6, 21)
+    assert window.is_initial_backfill is False
 
 
 @pytest.mark.asyncio
@@ -432,7 +548,175 @@ async def test_initial_backfill_is_limited_to_fourteen_days(session, monkeypatch
         return None
 
     monkeypatch.setattr("app.services.sync.sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_service, "date", FixedDate)
 
     await run_initial_backfill(session, account=account)
 
     assert captured["end"] - captured["start"] == timedelta(days=13)
+
+
+@pytest.mark.asyncio
+async def test_initial_backfill_uses_cursor_window_when_account_was_already_synced(
+    session,
+    monkeypatch,
+) -> None:
+    account = _connected_account(session)
+    _add_success_cursors(
+        session,
+        account,
+        {data_type: date(2026, 6, 20) for data_type in MVP_SYNC_DATA_TYPES},
+    )
+    captured: dict[str, date] = {}
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start: date,
+        end: date,
+        data_types=None,
+        client=None,
+    ):
+        captured["start"] = start
+        captured["end"] = end
+        return None
+
+    monkeypatch.setattr("app.services.sync.sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_service, "date", FixedDate)
+
+    await run_initial_backfill(session, account=account)
+
+    assert captured["start"] == date(2026, 6, 19)
+    assert captured["end"] == date(2026, 6, 21)
+
+
+def test_sync_all_connected_accounts_uses_cursor_window(session, monkeypatch) -> None:
+    account = _connected_account(session)
+    _add_success_cursors(
+        session,
+        account,
+        {data_type: date(2026, 6, 20) for data_type in MVP_SYNC_DATA_TYPES},
+    )
+    captured: dict[str, date] = {}
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start: date,
+        end: date,
+        data_types=None,
+        client=None,
+    ):
+        captured["start"] = start
+        captured["end"] = end
+        return None
+
+    monkeypatch.setattr(sync_tasks, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_tasks, "date", FixedDate)
+
+    result = sync_tasks.sync_all_connected_accounts()
+
+    assert result["synced"] == [account.id]
+    assert result["failed"] == {}
+    assert captured["start"] == date(2026, 6, 19)
+    assert captured["end"] == date(2026, 6, 21)
+    assert result["ranges"][account.id] == {
+        "start": "2026-06-19",
+        "end": "2026-06-21",
+        "is_initial_backfill": False,
+    }
+
+
+def test_manual_sync_without_dates_uses_cursor_window(session, monkeypatch) -> None:
+    account = _connected_account(session)
+    session.commit()
+    captured: dict[str, object] = {}
+
+    def fake_sync_window_from_cursors(
+        session,
+        *,
+        account,
+        data_types,
+        today,
+    ):
+        captured["window_data_types"] = data_types
+        return SyncWindow(
+            start=date(2026, 6, 17),
+            end=date(2026, 6, 21),
+            is_initial_backfill=False,
+        )
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start: date,
+        end: date,
+        data_types,
+        client=None,
+    ):
+        captured["start"] = start
+        captured["end"] = end
+        captured["data_types"] = data_types
+        return SyncResult(
+            google_account_id=account.id,
+            start=start,
+            end=end,
+            records_seen=0,
+            records_stored=0,
+            data_types=list(data_types),
+        )
+
+    monkeypatch.setattr(sync_routes, "sync_window_from_cursors", fake_sync_window_from_cursors)
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/sync/manual?account_id={account.id}&data_type=steps&data_type=sleep"
+    )
+
+    assert response.status_code == 200
+    assert captured["start"] == date(2026, 6, 17)
+    assert captured["end"] == date(2026, 6, 21)
+    assert captured["data_types"] == ("steps", "sleep")
+    assert captured["window_data_types"] == ("steps", "sleep")
+    assert response.json()["start"] == "2026-06-17"
+    assert response.json()["end"] == "2026-06-21"
+
+
+def test_manual_sync_with_explicit_dates_keeps_requested_range(session, monkeypatch) -> None:
+    account = _connected_account(session)
+    session.commit()
+    captured: dict[str, object] = {}
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start: date,
+        end: date,
+        data_types,
+        client=None,
+    ):
+        captured["start"] = start
+        captured["end"] = end
+        return SyncResult(
+            google_account_id=account.id,
+            start=start,
+            end=end,
+            records_seen=0,
+            records_stored=0,
+            data_types=list(data_types),
+        )
+
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/sync/manual?account_id={account.id}&start=2026-06-01&end=2026-06-03"
+    )
+
+    assert response.status_code == 200
+    assert captured["start"] == date(2026, 6, 1)
+    assert captured["end"] == date(2026, 6, 3)

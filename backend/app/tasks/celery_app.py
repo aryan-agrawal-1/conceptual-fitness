@@ -17,7 +17,7 @@ celery_app = Celery(
 
 celery_app.conf.timezone = settings.celery_timezone
 celery_app.conf.beat_schedule = {
-    "sync-google-health-every-six-hours": {
+    "sync-google-health-hourly": {
         "task": "app.tasks.sync.sync_all_connected_accounts",
         "schedule": crontab(minute=settings.celery_sync_minute, hour=settings.celery_sync_hour),
     }

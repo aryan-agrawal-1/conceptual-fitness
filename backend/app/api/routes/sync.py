@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.api.deps import DbSession
 from app.google_health.data_types import MVP_SYNC_DATA_TYPES
 from app.models import GoogleAccount, SyncCursor
-from app.services.sync import sync_google_account_range
+from app.services.sync import sync_google_account_range, sync_window_from_cursors
 
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -27,9 +27,19 @@ async def manual_sync(
     if account is None:
         raise HTTPException(status_code=404, detail="Google account not found")
     today = date.today()
-    start_date = start or today - timedelta(days=1)
-    end_date = end or today
     requested_types = tuple(data_type or MVP_SYNC_DATA_TYPES)
+    if start is None and end is None:
+        window = sync_window_from_cursors(
+            session,
+            account=account,
+            data_types=requested_types,
+            today=today,
+        )
+        start_date = window.start
+        end_date = window.end
+    else:
+        start_date = start or today - timedelta(days=1)
+        end_date = end or today
     try:
         result = await sync_google_account_range(
             session,
@@ -69,4 +79,3 @@ def sync_status(session: DbSession, account_id: str | None = Query(default=None)
         }
         for cursor in cursors
     ]
-

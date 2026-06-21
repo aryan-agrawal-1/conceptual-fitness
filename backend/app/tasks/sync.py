@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models import ConnectionStatus, GoogleAccount
-from app.services.sync import run_initial_backfill, sync_google_account_range
+from app.services.sync import run_initial_backfill, sync_google_account_range, sync_window_from_cursors
 from app.tasks.celery_app import celery_app
 
 # hand work to celery to backfill data
@@ -36,26 +36,30 @@ def initial_backfill(account_id: str) -> dict[str, object]:
 
 @celery_app.task(name="app.tasks.sync.sync_all_connected_accounts")
 def sync_all_connected_accounts() -> dict[str, object]:
-    today = date.today()
-    start = today - timedelta(days=2)
     synced: list[str] = []
     failed: dict[str, str] = {}
+    ranges: dict[str, dict[str, object]] = {}
     with SessionLocal() as session:
         accounts = session.scalars(
             select(GoogleAccount).where(GoogleAccount.status == ConnectionStatus.connected)
         ).all()
         for account in accounts:
             try:
+                window = sync_window_from_cursors(session, account=account, today=date.today())
                 asyncio.run(
                     sync_google_account_range(
                         session,
                         account=account,
-                        start=start,
-                        end=today,
+                        start=window.start,
+                        end=window.end,
                     )
                 )
                 synced.append(account.id)
+                ranges[account.id] = {
+                    "start": window.start.isoformat(),
+                    "end": window.end.isoformat(),
+                    "is_initial_backfill": window.is_initial_backfill,
+                }
             except Exception as exc:
                 failed[account.id] = str(exc)
-    return {"synced": synced, "failed": failed}
-
+    return {"synced": synced, "failed": failed, "ranges": ranges}

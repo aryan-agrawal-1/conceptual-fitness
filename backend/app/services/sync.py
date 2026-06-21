@@ -32,6 +32,56 @@ class SyncResult:
     data_types: list[str]
 
 
+@dataclass(frozen=True)
+class SyncWindow:
+    start: date
+    end: date
+    is_initial_backfill: bool
+
+
+def sync_window_from_cursors(
+    session: Session,
+    *,
+    account: GoogleAccount,
+    data_types: tuple[str, ...] = MVP_SYNC_DATA_TYPES,
+    today: date | None = None,
+    overlap_days: int = 1,
+) -> SyncWindow:
+    if not data_types:
+        raise ValueError("At least one data type is required to choose a sync window")
+
+    end = today or date.today()
+    initial_start = end - timedelta(days=INITIAL_BACKFILL_DAYS - 1)
+    cursors = session.scalars(
+        select(SyncCursor).where(
+            SyncCursor.google_account_id == account.id,
+            SyncCursor.data_type.in_(data_types),
+        )
+    ).all()
+    cursor_by_type = {cursor.data_type: cursor for cursor in cursors}
+    last_successful_by_type = {
+        cursor.data_type: cursor.last_successful_end
+        for cursor in cursors
+        if cursor.last_successful_end is not None
+    }
+    if not last_successful_by_type:
+        return SyncWindow(start=initial_start, end=end, is_initial_backfill=True)
+
+    start_candidates = [
+        cursor_end - timedelta(days=overlap_days)
+        for cursor_end in last_successful_by_type.values()
+    ]
+    missing_data_type = any(data_type not in cursor_by_type for data_type in data_types)
+    if missing_data_type:
+        start_candidates.append(initial_start)
+
+    return SyncWindow(
+        start=min(start_candidates),
+        end=end,
+        is_initial_backfill=missing_data_type,
+    )
+
+
 async def sync_google_account_range(
     session: Session,
     *,
@@ -125,12 +175,12 @@ async def run_initial_backfill(
     account: GoogleAccount,
     client: GoogleHealthClient | None = None,
 ) -> SyncResult:
-    today = date.today()
+    window = sync_window_from_cursors(session, account=account)
     return await sync_google_account_range(
         session,
         account=account,
-        start=today - timedelta(days=INITIAL_BACKFILL_DAYS - 1),
-        end=today,
+        start=window.start,
+        end=window.end,
         client=client,
     )
 

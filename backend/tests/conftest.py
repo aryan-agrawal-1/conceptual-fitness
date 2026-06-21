@@ -30,7 +30,7 @@ os.environ.update(
         "TOKEN_ENCRYPTION_KEY": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
         "SESSION_SECRET_KEY": "test-session-secret",
         "CELERY_TIMEZONE": "UTC",
-        "CELERY_SYNC_HOUR": "*/6",
+        "CELERY_SYNC_HOUR": "*",
         "CELERY_SYNC_MINUTE": "0",
     }
 )

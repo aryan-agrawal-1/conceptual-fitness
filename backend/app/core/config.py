@@ -103,7 +103,7 @@ def get_settings() -> Settings:
         token_encryption_key=_get(env, "TOKEN_ENCRYPTION_KEY"),
         session_secret_key=_get(env, "SESSION_SECRET_KEY"),
         celery_timezone=_get(env, "CELERY_TIMEZONE", "UTC"),
-        celery_sync_hour=_get(env, "CELERY_SYNC_HOUR", "*/6"),
+        celery_sync_hour=_get(env, "CELERY_SYNC_HOUR", "*"),
         celery_sync_minute=_get(env, "CELERY_SYNC_MINUTE", "0"),
         google_health_scopes=_parse_scopes(env.get("GOOGLE_HEALTH_SCOPES")),
     )
