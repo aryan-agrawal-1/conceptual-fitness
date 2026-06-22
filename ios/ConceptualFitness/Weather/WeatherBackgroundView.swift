@@ -8,38 +8,47 @@ struct WeatherBackgroundView: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: reduceMotion ? 1 / 10 : 1 / 30)) { timeline in
+            let appearanceDate = debugOptions.useWeatherDateForTime ? weather.date : timeline.date
+            let animationDate = timeline.date
             let state = WeatherRenderState(
                 weather: weather,
-                date: timeline.date,
+                date: appearanceDate,
                 reduceMotion: reduceMotion,
                 debugOptions: debugOptions
             )
 
             ZStack {
-                SkyLayer(state: state, date: timeline.date)
+                SkyLayer(state: state, date: animationDate)
                 SunMoonGlowLayer(state: state)
-                CloudFieldLayer(kind: .distant, state: state, date: timeline.date)
-                CloudFieldLayer(kind: .back, state: state, date: timeline.date)
-                CloudFieldLayer(kind: .mid, state: state, date: timeline.date)
-                CloudFieldLayer(kind: .front, state: state, date: timeline.date)
-                FogMistLayer(state: state, date: timeline.date)
-                PrecipitationLayer(depth: .back, state: state, date: timeline.date)
-                PrecipitationLayer(depth: .front, state: state, date: timeline.date)
-                ForegroundAtmosphereLayer(state: state, date: timeline.date)
-                LightningLayer(state: state, date: timeline.date)
+                LightShaftLayer(state: state, date: animationDate)
+                CirrusVeilLayer(state: state, date: animationDate)
+                CloudFieldLayer(kind: .distant, state: state, date: animationDate)
+                CloudFieldLayer(kind: .back, state: state, date: animationDate)
+                CloudFieldLayer(kind: .mid, state: state, date: animationDate)
+                CloudFieldLayer(kind: .front, state: state, date: animationDate)
+                FogMistLayer(state: state, date: animationDate)
+                PrecipitationLayer(depth: .back, state: state, date: animationDate)
+                PrecipitationLayer(depth: .front, state: state, date: animationDate)
+                ForegroundAtmosphereLayer(state: state, date: animationDate)
+                LightningLayer(state: state, date: animationDate)
             }
             .compositingGroup()
             .overlay(alignment: .bottom) {
+                let bottomColor = state.bottomAtmosphereColor.color
+                let appBackgroundColor = Color(red: 0.98, green: 0.98, blue: 0.95)
+                let midOpacity = state.isNight ? 0.24 : (state.rainAmount > 0.05 || state.stormIntensity > 0.05 ? 0.30 : 0.50)
+                let endOpacity = state.isNight ? 0.98 : (state.rainAmount > 0.05 || state.stormIntensity > 0.05 ? 0.94 : 0.98)
+
                 LinearGradient(
                     colors: [
                         .clear,
-                        Color(red: 0.97, green: 0.98, blue: 0.96).opacity(0.50),
-                        Color.white.opacity(0.94)
+                        bottomColor.opacity(midOpacity),
+                        appBackgroundColor.opacity(endOpacity)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: 190)
+                .frame(height: 240)
                 .allowsHitTesting(false)
             }
         }
@@ -48,11 +57,12 @@ struct WeatherBackgroundView: View {
 }
 
 struct WeatherDebugOptions: Equatable {
-    var animationSpeedMultiplier: Double = 1
+    var animationSpeedMultiplier: Double = 1.8
     var showLayerDebugOutlines = false
     var forceRainVisible = false
     var forceSunVisible = false
     var forceCloudsVisible = false
+    var useWeatherDateForTime = false
 
     static let live = WeatherDebugOptions()
 }
@@ -75,9 +85,9 @@ private enum CloudLayerKind {
     var baseSpeed: Double {
         switch self {
         case .distant: 4
-        case .back: -7
+        case .back: 7
         case .mid: 11
-        case .front: -16
+        case .front: 16
         }
     }
 
@@ -199,11 +209,34 @@ private struct SunMoonGlowLayer: View {
             let force = state.debugOptions.forceSunVisible ? 1.55 : 1
             let radius = base * (state.isNight ? 0.34 : 0.48) * force
             let coreRadius = base * (state.isNight ? 0.16 : 0.22) * force
-            let outerOpacity = (state.isNight ? 0.24 : 0.44 + state.goldenHourProgress * 0.22) * force
-            let innerOpacity = (state.isNight ? 0.18 : 0.36 + state.goldenHourProgress * 0.28) * force
+            let outerOpacity = (state.isNight ? 0.24 : 0.36 + state.goldenHourProgress * 0.16) * state.sunVisibility * force
+            let innerOpacity = (state.isNight ? 0.18 : 0.34 + state.goldenHourProgress * 0.22) * state.sunVisibility * force
             let color = state.sunMoonColor.color
+            let discSize = base * (state.isNight ? 0.10 : 0.055) * force
+            let rayOpacity = state.isNight ? 0 : (0.52 + state.goldenHourProgress * 0.18) * state.sunVisibility * force
+            let flareOpacity = state.isNight ? 0 : (0.38 + state.goldenHourProgress * 0.14) * state.sunVisibility * force
 
             ZStack {
+                if !state.isNight {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color.white.opacity(flareOpacity * 0.22),
+                                    color.opacity(flareOpacity * 0.10),
+                                    .clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: radius * 1.35
+                            )
+                        )
+                        .frame(width: radius * 2.7, height: radius * 2.7)
+                        .position(center)
+                        .blur(radius: base * 0.026)
+                        .blendMode(.screen)
+                }
+
                 Circle()
                     .fill(
                         RadialGradient(
@@ -231,9 +264,204 @@ private struct SunMoonGlowLayer: View {
                     .position(center)
                     .blur(radius: base * 0.018)
                     .blendMode(.screen)
+
+                ForEach(0..<8, id: \.self) { index in
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [.clear, color.opacity(rayOpacity * 0.86), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: discSize * 0.17, height: discSize * (3.1 + Double(index % 2) * 0.9))
+                        .position(center)
+                        .rotationEffect(.degrees(Double(index) * 22.5))
+                        .blur(radius: discSize * 0.10)
+                        .blendMode(.screen)
+                }
+
+                ForEach(0..<4, id: \.self) { index in
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [.clear, Color.white.opacity(rayOpacity * 0.46), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: discSize * 0.08, height: discSize * 6.6)
+                        .position(center)
+                        .rotationEffect(.degrees(45 + Double(index) * 90))
+                        .blur(radius: discSize * 0.06)
+                        .blendMode(.screen)
+                }
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(state.isNight ? 0.50 : 0.96),
+                                color.opacity(state.isNight ? 0.30 : 0.72),
+                                .clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: discSize * 0.72
+                        )
+                    )
+                    .frame(width: discSize, height: discSize)
+                    .position(center)
+                    .blur(radius: state.isNight ? discSize * 0.05 : discSize * 0.02)
+                    .blendMode(.screen)
+
+                if !state.isNight {
+                    LensFlareChain(center: center, size: size, color: color, opacity: flareOpacity)
+                }
             }
             .allowsHitTesting(false)
         }
+    }
+}
+
+private struct LensFlareChain: View {
+    let center: CGPoint
+    let size: CGSize
+    let color: Color
+    let opacity: Double
+
+    var body: some View {
+        let target = CGPoint(x: size.width * 0.54, y: size.height * 0.58)
+        let dx = target.x - center.x
+        let dy = target.y - center.y
+
+        ZStack {
+            Circle()
+                .trim(from: 0.55, to: 0.86)
+                .stroke(
+                    AngularGradient(
+                        colors: [
+                            Color.red.opacity(opacity * 0.00),
+                            Color.yellow.opacity(opacity * 0.18),
+                            Color.green.opacity(opacity * 0.13),
+                            Color.cyan.opacity(opacity * 0.18),
+                            Color.blue.opacity(opacity * 0.10),
+                            Color.red.opacity(opacity * 0.00)
+                        ],
+                        center: .center
+                    ),
+                    style: StrokeStyle(lineWidth: min(size.width, size.height) * 0.015, lineCap: .round)
+                )
+                .frame(width: min(size.width, size.height) * 0.88, height: min(size.width, size.height) * 0.88)
+                .position(x: center.x + dx * 0.28, y: center.y + dy * 0.28)
+                .blur(radius: min(size.width, size.height) * 0.012)
+                .blendMode(.screen)
+
+            ForEach(0..<6, id: \.self) { index in
+                let t = Double(index + 1) / 6.7
+                let flareSize = min(size.width, size.height) * (0.035 + WeatherSeed.value(Double(index), 0.43) * 0.055)
+                let x = center.x + dx * CGFloat(t)
+                let y = center.y + dy * CGFloat(t)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [color.opacity(opacity * (0.34 - t * 0.13)), .clear],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: flareSize
+                        )
+                    )
+                    .frame(width: flareSize * 2.2, height: flareSize * 2.2)
+                    .position(x: x, y: y)
+                    .blur(radius: flareSize * 0.18)
+                    .blendMode(.screen)
+            }
+
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(opacity * 0.16), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(width: min(size.width, size.height) * 0.82, height: min(size.width, size.height) * 0.045)
+                .position(x: center.x + dx * 0.34, y: center.y + dy * 0.34)
+                .rotationEffect(.degrees(61))
+                .blur(radius: min(size.width, size.height) * 0.018)
+                .blendMode(.screen)
+        }
+    }
+}
+
+private struct LightShaftLayer: View {
+    let state: WeatherRenderState
+    let date: Date
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let center = state.sunMoonPosition(in: size)
+            let amount = state.lightShaftOpacity
+            let time = state.motionTime(date, scale: 0.018)
+
+            Canvas(opaque: false) { context, size in
+                guard amount > 0.01 else { return }
+                var context = context
+
+                for index in 0..<5 {
+                    let seed = Double(index)
+                    let width = size.width * (0.12 + WeatherSeed.value(seed, 0.2) * 0.11)
+                    let length = size.height * (0.82 + WeatherSeed.value(seed, 0.3) * 0.42)
+                    let x = center.x + CGFloat((Double(index) - 2.0) * 38 + sin(time + seed) * 14)
+                    let y = center.y + length * 0.44
+                    let rect = CGRect(x: x - width / 2, y: y - length / 2, width: width, height: length)
+                    let path = Path(ellipseIn: rect)
+                    context.addFilter(.blur(radius: 28 + WeatherSeed.value(seed, 0.7) * 18))
+                    context.fill(path, with: .color(Color.white.opacity(amount * (0.055 + WeatherSeed.value(seed, 0.5) * 0.032))))
+                    context.addFilter(.blur(radius: 0))
+                }
+            }
+            .blendMode(.screen)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct CirrusVeilLayer: View {
+    let state: WeatherRenderState
+    let date: Date
+
+    var body: some View {
+        Canvas(opaque: false) { context, size in
+            let amount = state.cirrusOpacity
+            guard amount > 0.01 else { return }
+            var context = context
+            let time = state.motionTime(date, scale: 0.050)
+
+            for index in 0..<16 {
+                let seed = Double(index + 2400)
+                let length = size.width * (0.32 + WeatherSeed.value(seed, 0.12) * 0.54)
+                let thickness = size.height * (0.006 + WeatherSeed.value(seed, 0.21) * 0.014)
+                let rawX = WeatherSeed.value(seed, 0.34) * (size.width + length) + time * (8 + state.windSpeed * 0.9)
+                let x = wrapped(rawX, size.width + length) - length * 0.46
+                let y = size.height * (0.07 + WeatherSeed.value(seed, 0.67) * 0.33)
+                let rect = CGRect(x: x, y: y, width: length, height: thickness)
+                let opacity = amount * (0.08 + WeatherSeed.value(seed, 0.44) * 0.10)
+                context.addFilter(.blur(radius: 5 + WeatherSeed.value(seed, 0.83) * 10))
+                context.fill(Path(roundedRect: rect, cornerRadius: thickness), with: .color(Color.white.opacity(opacity)))
+                context.addFilter(.blur(radius: 0))
+            }
+        }
+        .blendMode(.screen)
+        .drawingGroup()
+        .allowsHitTesting(false)
+    }
+
+    private func wrapped(_ value: Double, _ length: CGFloat) -> CGFloat {
+        let length = Double(length)
+        let wrapped = value.truncatingRemainder(dividingBy: length)
+        return CGFloat(wrapped < 0 ? wrapped + length : wrapped)
     }
 }
 
@@ -247,7 +475,6 @@ private struct CloudFieldLayer: View {
             let size = proxy.size
             let opacity = layerOpacity
             let count = bankCount
-            let laneWidth = size.width * 1.95
             let drift = state.motionTime(date, scale: 1) * (kind.baseSpeed + state.windSpeed * 0.65)
 
             ZStack {
@@ -256,7 +483,7 @@ private struct CloudFieldLayer: View {
                     let variant = variant(for: index)
                     let bankWidth = size.width * widthScale(for: variant, seed: seed)
                     let bankHeight = bankWidth / variant.aspect
-                    let x = wrappedX(seed: seed, width: laneWidth, drift: drift) - bankWidth * 0.30
+                    let x = wrappedX(seed: seed, screenWidth: size.width, bankWidth: bankWidth, drift: drift)
                     let y = size.height * interpolatedY(seed: seed)
                     let bankOpacity = opacity * (0.62 + seeded(seed, 0.44) * 0.34)
 
@@ -271,7 +498,7 @@ private struct CloudFieldLayer: View {
                     .position(x: x, y: y)
                     .blur(radius: variant.baseBlur + CGFloat((1 - kind.depth) * 6))
                     .shadow(color: shadowColor.opacity(bankOpacity * 0.55), radius: 12 + kind.depth * 10, x: 0, y: 10 + kind.depth * 8)
-                    .opacity(bankOpacity)
+                    .opacity((bankOpacity * 1.65).clamped(to: 0...0.92))
                 }
             }
             .drawingGroup()
@@ -292,10 +519,10 @@ private struct CloudFieldLayer: View {
         let boost = state.debugOptions.forceCloudsVisible ? 0.58 : 0
         let base = state.cloudOpacity + boost
         switch kind {
-        case .distant: return (base * 0.40 + state.fogAmount * 0.10).clamped(to: 0...0.48)
-        case .back: return (base * 0.48).clamped(to: 0...0.56)
-        case .mid: return (base * 0.52).clamped(to: 0...0.62)
-        case .front: return (base * max(0.12, state.cloudDensity - 0.26)).clamped(to: 0...0.58)
+        case .distant: return (base * 0.46 + state.fogAmount * 0.10).clamped(to: 0...0.54)
+        case .back: return (base * 0.58).clamped(to: 0...0.64)
+        case .mid: return (base * 0.66).clamped(to: 0...0.72)
+        case .front: return (base * max(0.18, state.cloudDensity - 0.22)).clamped(to: 0...0.64)
         }
     }
 
@@ -336,10 +563,11 @@ private struct CloudFieldLayer: View {
         kind.yRange.lowerBound + (kind.yRange.upperBound - kind.yRange.lowerBound) * seeded(seed, 0.82)
     }
 
-    private func wrappedX(seed: Double, width: CGFloat, drift: Double) -> CGFloat {
-        let raw = seeded(seed, 0.71) * width + drift
-        let wrapped = raw.truncatingRemainder(dividingBy: width)
-        return CGFloat(wrapped < 0 ? wrapped + width : wrapped) - width * 0.22
+    private func wrappedX(seed: Double, screenWidth: CGFloat, bankWidth: CGFloat, drift: Double) -> CGFloat {
+        let travelWidth = screenWidth + bankWidth * 2.4
+        let raw = seeded(seed, 0.71) * travelWidth + drift
+        let wrapped = raw.truncatingRemainder(dividingBy: travelWidth)
+        return CGFloat(wrapped < 0 ? wrapped + travelWidth : wrapped) - bankWidth * 1.2
     }
 
     private func seeded(_ seed: Double, _ salt: Double) -> Double {
@@ -363,21 +591,41 @@ struct CloudBank: View {
                 ForEach(specs.indices, id: \.self) { index in
                     CloudLobe(spec: specs[index])
                         .fill(shadowFill)
-                        .offset(x: 0, y: size.height * (0.06 + Double(index % 3) * 0.006))
+                        .offset(x: size.width * -0.010, y: size.height * (0.10 + Double(index % 3) * 0.012))
                 }
 
                 CloudBaseShape(variant: variant)
                     .fill(shadowFill)
-                    .offset(y: size.height * 0.08)
+                    .offset(y: size.height * 0.10)
+                    .blur(radius: size.height * 0.035)
+
+                ForEach(specs.indices, id: \.self) { index in
+                    CloudLobe(spec: specs[index].scaled(width: 1.18, height: 1.04, dy: size.height * 0.015))
+                        .fill(midFill(for: index))
+                        .blur(radius: size.height * 0.018)
+                }
+
+                CloudBaseShape(variant: variant)
+                    .fill(midBaseFill)
+                    .offset(y: size.height * 0.04)
+                    .blur(radius: size.height * 0.018)
 
                 ForEach(specs.indices, id: \.self) { index in
                     CloudLobe(spec: specs[index])
                         .fill(highlightFill(for: index))
+                        .offset(x: size.width * 0.012, y: size.height * -0.020)
+                        .blur(radius: size.height * 0.010)
                 }
 
                 CloudBaseShape(variant: variant)
                     .fill(baseFill)
                     .offset(y: size.height * 0.02)
+
+                CloudTextureLayer(variant: variant, seed: seed, night: night)
+                    .opacity(night ? 0.62 : 0.78)
+                    .mask {
+                        CloudCompositeMask(variant: variant, specs: specs)
+                    }
 
                 if showDebugOutlines {
                     CloudBaseShape(variant: variant)
@@ -393,15 +641,24 @@ struct CloudBank: View {
     }
 
     private var baseFill: Color {
-        night ? Color(red: 0.70, green: 0.76, blue: 0.90).opacity(0.58) : Color.white.opacity(0.76)
+        night ? Color(red: 0.70, green: 0.76, blue: 0.90).opacity(0.50) : Color.white.opacity(0.62)
+    }
+
+    private var midBaseFill: Color {
+        night ? Color(red: 0.48, green: 0.55, blue: 0.72).opacity(0.34) : Color(red: 0.80, green: 0.85, blue: 0.88).opacity(0.32)
     }
 
     private var shadowFill: Color {
-        night ? Color(red: 0.20, green: 0.25, blue: 0.40).opacity(0.32) : Color(red: 0.48, green: 0.57, blue: 0.65).opacity(0.30)
+        night ? Color(red: 0.15, green: 0.19, blue: 0.31).opacity(0.38) : Color(red: 0.42, green: 0.51, blue: 0.60).opacity(0.36)
+    }
+
+    private func midFill(for index: Int) -> Color {
+        let variance = 0.28 + WeatherSeed.value(seed + Double(index), 0.36) * 0.24
+        return (night ? Color(red: 0.50, green: 0.57, blue: 0.74) : Color(red: 0.82, green: 0.87, blue: 0.90)).opacity(variance)
     }
 
     private func highlightFill(for index: Int) -> Color {
-        let variance = 0.52 + WeatherSeed.value(seed + Double(index), 0.52) * 0.30
+        let variance = 0.34 + WeatherSeed.value(seed + Double(index), 0.52) * 0.34
         return (night ? Color(red: 0.78, green: 0.83, blue: 0.96) : Color.white).opacity(variance)
     }
 
@@ -450,6 +707,77 @@ struct CloudLobe: Shape {
 struct CloudLobeSpec {
     let center: CGPoint
     let size: CGSize
+
+    func scaled(width: Double, height: Double, dy: CGFloat = 0) -> CloudLobeSpec {
+        CloudLobeSpec(
+            center: CGPoint(x: center.x, y: center.y + dy),
+            size: CGSize(width: size.width * CGFloat(width), height: size.height * CGFloat(height))
+        )
+    }
+}
+
+private struct CloudCompositeMask: View {
+    let variant: CloudVariant
+    let specs: [CloudLobeSpec]
+
+    var body: some View {
+        ZStack {
+            ForEach(specs.indices, id: \.self) { index in
+                CloudLobe(spec: specs[index].scaled(width: 1.18, height: 1.10))
+                    .fill(.white)
+            }
+            CloudBaseShape(variant: variant)
+                .fill(.white)
+                .offset(y: 8)
+        }
+    }
+}
+
+private struct CloudTextureLayer: View {
+    let variant: CloudVariant
+    let seed: Double
+    let night: Bool
+
+    var body: some View {
+        Canvas(opaque: false) { context, size in
+            var context = context
+            let count = variant == .distantStrip || variant == .wispy ? 24 : 38
+
+            for index in 0..<count {
+                let localSeed = seed + Double(index) * 9.17
+                let x = size.width * WeatherSeed.value(localSeed, 0.13)
+                let y = size.height * (0.22 + WeatherSeed.value(localSeed, 0.24) * 0.56)
+                let w = size.width * (0.10 + WeatherSeed.value(localSeed, 0.35) * 0.28)
+                let h = size.height * (0.05 + WeatherSeed.value(localSeed, 0.46) * 0.16)
+                let rect = CGRect(x: x - w / 2, y: y - h / 2, width: w, height: h)
+                let bright = WeatherSeed.value(localSeed, 0.57) > 0.42
+                let color = bright
+                    ? Color.white.opacity(night ? 0.09 : 0.16)
+                    : Color(red: 0.30, green: 0.38, blue: 0.48).opacity(night ? 0.12 : 0.09)
+
+                context.addFilter(.blur(radius: 4 + WeatherSeed.value(localSeed, 0.68) * 11))
+                context.fill(Path(ellipseIn: rect), with: .color(color))
+                context.addFilter(.blur(radius: 0))
+            }
+
+            for index in 0..<7 {
+                let localSeed = seed + Double(index) * 21.0
+                let y = size.height * (0.62 + WeatherSeed.value(localSeed, 0.18) * 0.20)
+                let h = size.height * (0.03 + WeatherSeed.value(localSeed, 0.40) * 0.05)
+                let rect = CGRect(
+                    x: size.width * (WeatherSeed.value(localSeed, 0.29) * 0.35),
+                    y: y,
+                    width: size.width * (0.34 + WeatherSeed.value(localSeed, 0.51) * 0.42),
+                    height: h
+                )
+                context.addFilter(.blur(radius: 7))
+                context.fill(Path(roundedRect: rect, cornerRadius: h), with: .color(Color(red: 0.20, green: 0.29, blue: 0.38).opacity(night ? 0.12 : 0.10)))
+                context.addFilter(.blur(radius: 0))
+            }
+        }
+        .blendMode(.softLight)
+        .drawingGroup()
+    }
 }
 
 private struct CloudBaseShape: Shape {
@@ -492,7 +820,7 @@ private struct FogMistLayer: View {
             let time = state.motionTime(date, scale: 0.055)
             for layer in 0..<5 {
                 let depth = Double(layer) / 4
-                let speed = (12 + depth * 18 + state.windSpeed * 1.2) * (layer.isMultiple(of: 2) ? 1 : -1)
+                let speed = 12 + depth * 18 + state.windSpeed * 1.2
                 let offset = CGFloat(sin(time * (0.25 + depth * 0.08) + depth * 4) * 28 + time * speed.truncatingRemainder(dividingBy: 28))
                 let height = CGFloat(44 + depth * 34)
                 let y = size.height * (0.34 + depth * 0.12)
@@ -562,9 +890,9 @@ private struct PrecipitationLayer: View {
             let wobble = sin(time * (0.36 + WeatherSeed.value(seed, 0.41) * 0.44) + seed) * (10 + layerDepth * 18)
             let x = wrapped(WeatherSeed.value(seed, 0.17) * (size.width + 70) + wobble + time * state.windSpeed * 2.0, size.width + 70) - 35
             let y = wrapped(WeatherSeed.value(seed, 0.91) * (size.height + 80) + time * speed, size.height + 80) - 40
-            let radius = (foreground ? 1.6 : 0.9) + WeatherSeed.value(seed, 0.5) * (foreground ? 3.4 : 2.0)
-            context.addFilter(.blur(radius: 0.35 + layerDepth * 0.55))
-            context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: radius, height: radius)), with: .color(Color.white.opacity((0.26 + layerDepth * 0.38) * amount)))
+            let flakeSize = (foreground ? 2.6 : 1.6) + WeatherSeed.value(seed, 0.5) * (foreground ? 5.4 : 3.2)
+            context.addFilter(.blur(radius: 0.25 + layerDepth * 0.42))
+            context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: flakeSize, height: flakeSize)), with: .color(Color.white.opacity((0.44 + layerDepth * 0.46) * amount)))
             context.addFilter(.blur(radius: 0))
         }
     }
@@ -614,10 +942,12 @@ private struct LightningLayer: View {
         Canvas(opaque: false) { context, size in
             guard state.stormIntensity > 0.05, !state.reduceMotion else { return }
             let time = state.motionTime(date, scale: 1)
-            let cycle = (time + 1.7).truncatingRemainder(dividingBy: 8.7)
-            guard cycle < 0.10 + state.stormIntensity * 0.05 else { return }
+            let cycle = (time + 1.7).truncatingRemainder(dividingBy: 4.8)
+            let isFlash = cycle < 0.16 + state.stormIntensity * 0.08
             var context = context
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white.opacity(0.13 + state.stormIntensity * 0.18)))
+            if isFlash {
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white.opacity(0.18 + state.stormIntensity * 0.24)))
+            }
 
             var bolt = Path()
             let origin = CGPoint(x: size.width * (0.56 + WeatherSeed.value(cycle, 0.2) * 0.28), y: -8)
@@ -627,8 +957,19 @@ private struct LightningLayer: View {
             bolt.addLine(to: CGPoint(x: origin.x - 38, y: size.height * 0.30))
             bolt.addLine(to: CGPoint(x: origin.x - 24, y: size.height * 0.29))
             bolt.addLine(to: CGPoint(x: origin.x - 66, y: size.height * 0.48))
-            context.addFilter(.blur(radius: 0.7))
-            context.stroke(bolt, with: .color(.white.opacity(0.58)), style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+
+            context.addFilter(.blur(radius: isFlash ? 0.7 : 1.4))
+            context.stroke(
+                bolt,
+                with: .color(.white.opacity(isFlash ? 0.78 : 0.16 * state.stormIntensity)),
+                style: StrokeStyle(lineWidth: isFlash ? 1.45 : 0.85, lineCap: .round, lineJoin: .round)
+            )
+            context.addFilter(.blur(radius: isFlash ? 2.2 : 3.0))
+            context.stroke(
+                bolt,
+                with: .color(Color(red: 0.62, green: 0.88, blue: 1.0).opacity(isFlash ? 0.30 : 0.11 * state.stormIntensity)),
+                style: StrokeStyle(lineWidth: isFlash ? 4.2 : 2.5, lineCap: .round, lineJoin: .round)
+            )
             context.addFilter(.blur(radius: 0))
         }
     }
@@ -648,6 +989,10 @@ struct WeatherRenderState {
     let stormIntensity: Double
     let isNight: Bool
     let windSpeed: Double
+    let sunVisibility: Double
+    let cirrusOpacity: Double
+    let lightShaftOpacity: Double
+    let bottomAtmosphereColor: RGBColor
     let reduceMotion: Bool
     let movementScale: Double
     let debugOptions: WeatherDebugOptions
@@ -659,7 +1004,7 @@ struct WeatherRenderState {
         let normalizedPrecip = weather.precipitationIntensity.clamped(to: 0...5) / 5
         let thunder = code.contains("thunder") || code.contains("storm") || code.contains("hurricane")
         let snow = code.contains("snow") || code.contains("sleet") || code.contains("flurr") || code.contains("wintry")
-        let rain = code.contains("rain") || code.contains("drizzle") || code.contains("shower") || normalizedPrecip > 0.03 || debugOptions.forceRainVisible
+        let rain = code.contains("rain") || code.contains("drizzle") || code.contains("shower") || thunder || normalizedPrecip > 0.03 || debugOptions.forceRainVisible
         let fog = code.contains("fog") || code.contains("haze") || code.contains("smok") || code.contains("dust")
         let golden = Self.goldenProgress(weather: weather, date: date)
         let nightAmount = 1 - weather.daylightBlend
@@ -679,9 +1024,9 @@ struct WeatherRenderState {
         skyPalette = base.sky
         horizonPalette = base.horizon
         cloudDensity = max(debugOptions.forceCloudsVisible ? 0.72 : 0, max(cloud, fog ? 0.74 : 0))
-        cloudOpacity = (0.10 + cloud * 0.62 + (rain ? 0.12 : 0) + (fog ? 0.16 : 0) + (debugOptions.forceCloudsVisible ? 0.32 : 0)).clamped(to: 0...0.88)
+        cloudOpacity = (0.12 + cloud * 0.68 + (rain ? 0.16 : 0) + (fog ? 0.16 : 0) + (debugOptions.forceCloudsVisible ? 0.32 : 0)).clamped(to: 0...0.92)
         rainAmount = rain && !snow ? max(normalizedPrecip, debugOptions.forceRainVisible ? 0.72 : 0.24) : 0
-        snowAmount = snow ? max(normalizedPrecip, 0.34) : 0
+        snowAmount = snow ? max(normalizedPrecip, 0.52) : 0
         fogAmount = ((fog ? 0.62 : 0) + overcast * 0.14 + (rain ? 0.14 : 0) + (snow ? 0.08 : 0)).clamped(to: 0...0.78)
         starOpacity = (!weather.isDay ? (1 - cloud * 0.72) : 0) * (1 - golden * 0.82) * (1 - storm * 0.8)
         sunMoonProgress = Self.sunProgress(weather: weather, date: date)
@@ -689,6 +1034,14 @@ struct WeatherRenderState {
         stormIntensity = storm
         isNight = nightAmount > 0.55 && golden < 0.35
         windSpeed = (weather.windSpeed ?? 2.5).clamped(to: 0...18)
+        sunVisibility = debugOptions.forceSunVisible
+            ? 1
+            : (1 - cloud * 0.78 - normalizedPrecip * 0.42 - storm * 0.72).clamped(to: 0.08...1)
+        cirrusOpacity = ((weather.isDay ? 0.38 : 0.14) * (1 - overcast * 0.68) + cloud * 0.12 + (debugOptions.forceCloudsVisible ? 0.16 : 0)).clamped(to: 0...0.52)
+        lightShaftOpacity = ((weather.isDay ? 0.44 : 0) * sunVisibility * (0.35 + cloud * 0.72) * (1 - storm * 0.45)).clamped(to: 0...0.42)
+        bottomAtmosphereColor = isNight
+            ? RGBColor(0.04, 0.05, 0.10)
+            : rain || thunder ? RGBColor(0.58, 0.64, 0.66) : RGBColor(0.97, 0.98, 0.96)
         self.reduceMotion = reduceMotion
         movementScale = reduceMotion ? 0.08 : debugOptions.animationSpeedMultiplier.clamped(to: 0...12)
         self.debugOptions = debugOptions
@@ -827,7 +1180,9 @@ struct RGBColor: Equatable {
 
 enum WeatherDebugCondition: String, CaseIterable, Identifiable {
     case clear
+    case mostlySunny
     case partlyCloudy
+    case mostlyCloudy
     case cloudy
     case rain
     case heavyRain
@@ -844,14 +1199,38 @@ enum WeatherDebugCondition: String, CaseIterable, Identifiable {
     }
 }
 
+private enum WeatherDebugPreset: String, CaseIterable, Identifiable {
+    case sanFranciscoHero
+    case sunnyLens
+    case fastClouds
+    case rainLock
+    case snowDrift
+    case stormCeiling
+    case duskClouds
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sanFranciscoHero: "SF hero"
+        case .sunnyLens: "Sunny lens"
+        case .fastClouds: "Fast clouds"
+        case .rainLock: "Rain lock"
+        case .snowDrift: "Snow"
+        case .stormCeiling: "Storm"
+        case .duskClouds: "Dusk"
+        }
+    }
+}
+
 struct WeatherBackgroundDebugControlsView: View {
-    @State private var cloudCover = 0.28
+    @State private var cloudCover = 0.62
     @State private var precipitation = 0.0
     @State private var isDay = true
-    @State private var condition = WeatherDebugCondition.clear
-    @State private var timeOfDay = 0.50
-    @State private var windSpeed = 4.0
-    @State private var animationSpeedMultiplier = 1.0
+    @State private var condition = WeatherDebugCondition.mostlyCloudy
+    @State private var timeOfDay = 0.58
+    @State private var windSpeed = 5.2
+    @State private var animationSpeedMultiplier = 2.2
     @State private var showLayerDebugOutlines = false
     @State private var forceRainVisible = false
     @State private var forceSunVisible = false
@@ -938,6 +1317,24 @@ struct WeatherBackgroundDebugControlsView: View {
                     VStack(spacing: 14) {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
+                                ForEach(WeatherDebugPreset.allCases) { preset in
+                                    Button {
+                                        apply(preset)
+                                    } label: {
+                                        Text(preset.title)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 7)
+                                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
                                 ForEach(WeatherDebugCondition.allCases) { item in
                                     Button {
                                         condition = item
@@ -1008,7 +1405,8 @@ struct WeatherBackgroundDebugControlsView: View {
             showLayerDebugOutlines: showLayerDebugOutlines,
             forceRainVisible: forceRainVisible,
             forceSunVisible: forceSunVisible,
-            forceCloudsVisible: forceCloudsVisible
+            forceCloudsVisible: forceCloudsVisible,
+            useWeatherDateForTime: true
         )
     }
 
@@ -1017,7 +1415,7 @@ struct WeatherBackgroundDebugControlsView: View {
         return WeatherData(
             weatherCode: condition.weatherCode,
             cloudCover: cloudCover,
-            precipitationIntensity: condition == .heavyRain ? max(precipitation, 1.0) : precipitation,
+            precipitationIntensity: effectivePrecipitation,
             isDay: isDay,
             sunrise: sunrise,
             sunset: sunset,
@@ -1025,6 +1423,103 @@ struct WeatherBackgroundDebugControlsView: View {
             locationName: "Preview",
             windSpeed: windSpeed
         )
+    }
+
+    private func apply(_ preset: WeatherDebugPreset) {
+        showLayerDebugOutlines = false
+
+        switch preset {
+        case .sanFranciscoHero:
+            condition = .mostlyCloudy
+            cloudCover = 0.62
+            precipitation = 0
+            isDay = true
+            timeOfDay = 0.58
+            windSpeed = 5.2
+            animationSpeedMultiplier = 2.2
+            forceRainVisible = false
+            forceSunVisible = false
+            forceCloudsVisible = false
+        case .sunnyLens:
+            condition = .mostlySunny
+            cloudCover = 0.12
+            precipitation = 0
+            isDay = true
+            timeOfDay = 0.26
+            windSpeed = 2.6
+            animationSpeedMultiplier = 1.8
+            forceRainVisible = false
+            forceSunVisible = true
+            forceCloudsVisible = false
+        case .fastClouds:
+            condition = .partlyCloudy
+            cloudCover = 0.42
+            precipitation = 0
+            isDay = true
+            timeOfDay = 0.52
+            windSpeed = 9.5
+            animationSpeedMultiplier = 3.1
+            forceRainVisible = false
+            forceSunVisible = false
+            forceCloudsVisible = true
+        case .rainLock:
+            condition = .rain
+            cloudCover = 0.78
+            precipitation = 1.25
+            isDay = true
+            timeOfDay = 0.62
+            windSpeed = 7.4
+            animationSpeedMultiplier = 2.4
+            forceRainVisible = true
+            forceSunVisible = false
+            forceCloudsVisible = false
+        case .snowDrift:
+            condition = .snow
+            cloudCover = 0.72
+            precipitation = 1.1
+            isDay = true
+            timeOfDay = 0.50
+            windSpeed = 3.4
+            animationSpeedMultiplier = 2.0
+            forceRainVisible = false
+            forceSunVisible = false
+            forceCloudsVisible = true
+        case .stormCeiling:
+            condition = .thunderstorms
+            cloudCover = 0.92
+            precipitation = 3.4
+            isDay = true
+            timeOfDay = 0.54
+            windSpeed = 10.5
+            animationSpeedMultiplier = 2.8
+            forceRainVisible = true
+            forceSunVisible = false
+            forceCloudsVisible = false
+        case .duskClouds:
+            condition = .partlyCloudy
+            cloudCover = 0.48
+            precipitation = 0
+            isDay = true
+            timeOfDay = 0.93
+            windSpeed = 4.8
+            animationSpeedMultiplier = 2.0
+            forceRainVisible = false
+            forceSunVisible = false
+            forceCloudsVisible = true
+        }
+    }
+
+    private var effectivePrecipitation: Double {
+        switch condition {
+        case .heavyRain:
+            max(precipitation, 1.0)
+        case .snow:
+            max(precipitation, 0.9)
+        case .thunderstorms:
+            max(precipitation, 2.0)
+        default:
+            precipitation
+        }
     }
 }
 

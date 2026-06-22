@@ -3,20 +3,25 @@ import SwiftUI
 struct WeatherStatusChip: View {
     let title: String
     let systemImage: String
+    @Binding var isPresented: Bool
 
     var body: some View {
-        HStack(spacing: 7) {
+        Button {
+            isPresented = true
+        } label: {
             Image(systemName: systemImage)
-                .font(.caption.weight(.bold))
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary.opacity(0.76))
+                .frame(width: 38, height: 38)
+                .glassSurface(cornerRadius: 19, interactive: true)
         }
-        .foregroundStyle(.primary.opacity(0.76))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassSurface(cornerRadius: 18)
-        .frame(maxWidth: 172, alignment: .trailing)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show current location")
+        .alert("Your location", isPresented: $isPresented) {
+            Button("Done", role: .cancel) {}
+        } message: {
+            Text(title)
+        }
     }
 }
 

@@ -9,6 +9,7 @@ struct DashboardView: View {
     @State private var loadState: DashboardLoadState = .loading
     @State private var weather = WeatherData.fallback
     @State private var weatherStatus = "Weather preview"
+    @State private var showsLocation = false
     #if DEBUG
     @State private var showsWeatherLab = false
     #endif
@@ -71,30 +72,35 @@ struct DashboardView: View {
     private var hero: some View {
         ZStack(alignment: .top) {
             WeatherBackgroundView(weather: weather)
-                .frame(height: 520)
+                .frame(height: 560)
 
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(greeting)
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
-                            .foregroundStyle(heroTextColor)
-
-                        Text("Your daily brief")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(heroTextColor.opacity(0.78))
-                    }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(greeting)
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .foregroundStyle(heroTextColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     Spacer()
 
                     WeatherStatusChip(
                         title: weather.locationName ?? weatherStatus,
-                        systemImage: locationProvider.location == nil ? "location.slash" : "location.fill"
+                        systemImage: locationProvider.location == nil ? "location.slash" : "location.fill",
+                        isPresented: $showsLocation
                     )
                 }
-                .padding(.top, 66)
+                .padding(.top, 54)
 
-                Spacer(minLength: 88)
+                Text(heroBriefText)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(heroTextColor.opacity(0.78))
+                    .lineLimit(7)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer(minLength: 28)
 
                 switch loadState {
                 case .loaded(let data):
@@ -102,12 +108,12 @@ struct DashboardView: View {
                 case .loading:
                     DailyBriefSkeleton()
                 case .failed:
-                    DailyBriefCard(data: .sample)
+                    DailyBriefCard(data: previewData)
                 }
             }
             .padding(.horizontal, 20)
         }
-        .frame(height: 520)
+        .frame(height: 560)
     }
 
     @ViewBuilder
@@ -130,9 +136,27 @@ struct DashboardView: View {
             .glassSurface(cornerRadius: 20)
             .padding(.horizontal, 20)
 
-            dashboardSections(data: .sample)
+            dashboardSections(data: previewData)
         case .loaded(let data):
             dashboardSections(data: data)
+        }
+    }
+
+    private var previewData: DashboardData {
+        DashboardData.preview(
+            dailyBrief: insightProvider.fallbackDailyBrief(for: .sample),
+            insight: insightProvider.shortInsight(for: .sample)
+        )
+    }
+
+    private var heroBriefText: String {
+        switch loadState {
+        case .loaded(let data):
+            return data.dailyBrief
+        case .loading:
+            return "Preparing your daily brief..."
+        case .failed:
+            return previewData.dailyBrief
         }
     }
 
@@ -160,13 +184,15 @@ struct DashboardView: View {
         loadState = .loading
         do {
             let bundle = try await client.loadDashboard()
-            let insight = await insightProvider.summary(for: bundle.snapshot)
+            let dailyBrief = await insightProvider.dailyBrief(for: bundle.snapshot)
+            let insight = insightProvider.shortInsight(for: bundle.snapshot)
             loadState = .loaded(
                 DashboardData(
                     snapshot: bundle.snapshot,
                     metricSummaries: bundle.metricSummaries,
                     workouts: bundle.recentWorkouts,
                     vo2Max: bundle.vo2Max,
+                    dailyBrief: dailyBrief,
                     insight: insight
                 )
             )

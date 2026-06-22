@@ -305,6 +305,19 @@ struct AuthGateView: View {
     @ObservedObject var authStore: AuthStore
 
     var body: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-skipAuthForWeatherDebug") {
+            AppShellView(authStore: authStore)
+        } else {
+            authContent
+        }
+        #else
+        authContent
+        #endif
+    }
+
+    @ViewBuilder
+    private var authContent: some View {
         switch authStore.state {
         case .checking:
             ProgressView()

@@ -175,15 +175,21 @@ struct DashboardData {
     let metricSummaries: [String: MetricDashboardSummary]
     let workouts: [WorkoutSummary]
     let vo2Max: VO2MaxDetail?
+    let dailyBrief: String
     let insight: String
 
-    static let sample = DashboardData(
-        snapshot: .sample,
-        metricSummaries: [:],
-        workouts: WorkoutSummary.samples,
-        vo2Max: VO2MaxDetail(current: MetricPoint(value: 48.2, date: "2026-06-22"), dataQuality: "strong"),
-        insight: "Recovery supports a controlled push today. Keep strain near target."
-    )
+    static let sample = preview()
+
+    static func preview(dailyBrief: String? = nil, insight: String? = nil) -> DashboardData {
+        DashboardData(
+            snapshot: .sample,
+            metricSummaries: [:],
+            workouts: WorkoutSummary.samples,
+            vo2Max: VO2MaxDetail(current: MetricPoint(value: 48.2, date: "2026-06-22"), dataQuality: "strong"),
+            dailyBrief: dailyBrief ?? "Recovery looks strong after 7 hours 48 minutes of sleep last night, with readiness and sleep both in a good range. Use today for a purposeful push if it fits your plan: build strain steadily, warm up properly, and stop short of turning a good recovery day into unnecessary fatigue. Keep the evening calm so the sleep win carries forward.",
+            insight: insight ?? "Strong recovery supports a purposeful push today. Build strain steadily."
+        )
+    }
 }
 
 extension DashboardSnapshot {
