@@ -12,6 +12,8 @@ from app.models import (
     GoogleAccount,
     MetricSample,
     SleepSession,
+    SyncCursor,
+    SyncStatus,
     User,
     UserProfile,
     Workout,
@@ -334,3 +336,56 @@ def test_scores_api_rebuild_and_history(session) -> None:
     dashboard = client.get("/dashboard/today", params={"user_id": user.id})
     assert dashboard.status_code == 200
     assert set(dashboard.json()["scores"]) == {"sleep", "readiness", "strain"}
+
+
+def test_dashboard_bundle_returns_frontend_dashboard_payload(session) -> None:
+    user = _user_with_profile(session)
+    day = date.today()
+    _add_sleep(session, user, day)
+    _add_summary(session, user, day)
+    _add_hr_workout(session, user, day)
+    session.add(
+        MetricSample(
+            user_id=user.id,
+            metric="vo2_max",
+            observed_at=_dt(day, 7, 30),
+            civil_date=day,
+            value=48.2,
+            unit="ml_per_kg_min",
+        )
+    )
+    account = session.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id))
+    session.add(
+        SyncCursor(
+            google_account_id=account.id,
+            data_type="daily-summary",
+            status=SyncStatus.succeeded,
+            last_successful_start=day,
+            last_successful_end=day,
+        )
+    )
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    session.commit()
+
+    response = TestClient(app).get(
+        "/dashboard/bundle",
+        params={"user_id": user.id, "date": day.isoformat(), "metrics_window_days": 1},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_id"] == user.id
+    assert payload["date"] == day.isoformat()
+    assert payload["profile"]["timezone"] == "UTC"
+    assert len(payload["connections"]["google_health"]) == 1
+    assert payload["sync_status"][0]["status"] == "succeeded"
+    assert payload["snapshot"]["metrics"]["heart_rate_variability"] == 58.0
+    assert set(payload["snapshot"]["scores"]) == {"sleep", "readiness", "strain"}
+    assert payload["recent_workouts"][0]["workout_type"] == "running"
+    assert payload["vo2_max"]["current"] == {
+        "date": day.isoformat(),
+        "value": 48.2,
+        "unit": "ml_per_kg_min",
+    }
+    assert payload["metric_summaries"]["steps"]["current"]["value"] == 6500.0
+    assert payload["data_quality"]["sections"]["sync"] == "strong"

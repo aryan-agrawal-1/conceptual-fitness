@@ -150,6 +150,124 @@ def metric_detail(
     }
 
 
+DEFAULT_DASHBOARD_METRICS = (
+    "heart_rate_variability",
+    "resting_heart_rate",
+    "oxygen_saturation",
+    "respiratory_rate",
+    "vo2_max",
+    "sleep",
+    "steps",
+    "active_calories",
+    "distance",
+)
+
+
+@router.get("/metrics/dashboard-summary")
+def metrics_dashboard_summary(
+    session: DbSession,
+    user: CurrentUser,
+    metrics: str | None = Query(
+        default=None,
+        description="Comma-separated metric keys. Defaults to the dashboard card metrics.",
+    ),
+    date: date | None = Query(default=None),
+    window_days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, object]:
+    profile = get_or_create_profile(session, user.id)
+    end = date or datetime.now(timezone_for_profile(profile)).date()
+    metric_names = _parse_dashboard_metric_names(metrics)
+    return {
+        "user_id": user.id,
+        "date": end,
+        "window_days": window_days,
+        "metrics": dashboard_metric_summaries(
+            session,
+            user_id=user.id,
+            metric_names=metric_names,
+            end=end,
+            window_days=window_days,
+        ),
+    }
+
+
+def dashboard_metric_summaries(
+    session: DbSession,
+    *,
+    user_id: str,
+    metric_names: list[str],
+    end: date,
+    window_days: int,
+) -> dict[str, object]:
+    start = date.fromordinal(end.toordinal() - window_days + 1)
+    summaries = _daily_summaries_by_date(session, user_id, start, end)
+    payload: dict[str, object] = {}
+    for metric_name in metric_names:
+        if metric_name == "sleep":
+            payload[metric_name] = _sleep_dashboard_summary(session, user_id, start, end)
+            continue
+
+        config = METRIC_DETAIL_CONFIGS.get(metric_name)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Unknown metric: {metric_name}")
+        points = _daily_metric_points(session, user_id, config, start, end, summaries)
+        baselines = _baselines_by_date(session, user_id, config, start, end)
+        populated = [point for point in points if point["value"] is not None]
+        current = populated[-1] if populated else None
+        previous = populated[-2] if len(populated) >= 2 else None
+        payload[metric_name] = {
+            "metric": metric_name,
+            "unit": config.unit,
+            "current": _compact_point(current),
+            "previous": _compact_point(previous),
+            "trend": _trend_payload(current, previous, populated),
+            "baseline": _baseline_payload(current, _baseline_for_point(current, baselines)),
+            "data_quality": current["data_quality"] if current else "missing",
+            "higher_is_better": config.higher_is_better,
+        }
+    return payload
+
+
+def _parse_dashboard_metric_names(metrics: str | None) -> list[str]:
+    if metrics is None:
+        return list(DEFAULT_DASHBOARD_METRICS)
+    names = [item.strip() for item in metrics.split(",") if item.strip()]
+    return names or list(DEFAULT_DASHBOARD_METRICS)
+
+
+def _sleep_dashboard_summary(
+    session: DbSession,
+    user_id: str,
+    start: date,
+    end: date,
+) -> dict[str, object]:
+    sessions = _sleep_sessions_for_range(session, user_id, start, end)
+    main_by_date = _main_sleeps_by_date(sessions)
+    scores = _sleep_scores_by_date(session, user_id, start, end)
+    points = [
+        {
+            "date": day,
+            "value": main_by_date[day].minutes_asleep,
+            "unit": "minutes",
+            "data_quality": scores[day].data_quality if day in scores else "weak",
+        }
+        for day in _date_range(start, end)
+        if day in main_by_date and main_by_date[day].minutes_asleep is not None
+    ]
+    current = points[-1] if points else None
+    previous = points[-2] if len(points) >= 2 else None
+    return {
+        "metric": "sleep",
+        "unit": "minutes",
+        "current": _compact_point(current),
+        "previous": _compact_point(previous),
+        "trend": _trend_payload(current, previous, points),
+        "baseline": None,
+        "data_quality": current["data_quality"] if current else "missing",
+        "higher_is_better": True,
+    }
+
+
 # returns time series data for a metric (like for a hr graph)
 @router.get("/metrics/{metric}")
 def metric_series(

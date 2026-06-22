@@ -80,6 +80,62 @@ def test_metric_detail_returns_daily_points_trend_and_baseline(session) -> None:
     assert {point["comparison"] for point in payload["series"]} == {"normal"}
 
 
+def test_metrics_dashboard_summary_batches_metric_cards(session) -> None:
+    user = _user(session)
+    start = date(2026, 6, 17)
+    days = [start + timedelta(days=offset) for offset in range(3)]
+    for offset, day in enumerate(days):
+        session.add(
+            DailySummary(
+                user_id=user.id,
+                summary_date=day,
+                steps=7000 + offset * 500,
+                heart_rate_variability=50 + offset * 4,
+                data_quality="strong",
+            )
+        )
+        session.add(
+            DailyBaseline(
+                user_id=user.id,
+                baseline_date=day,
+                metric="heart_rate_variability",
+                algorithm_version=BASELINE_VERSION,
+                window_days=28,
+                valid_day_count=20,
+                mean_value=52.0,
+                median_value=52.0,
+                spread_value=3.0,
+                lower_bound=46.0,
+                upper_bound=58.0,
+                confidence_phase="personalized",
+            )
+        )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/dashboard-summary",
+        params={
+            "user_id": user.id,
+            "metrics": "heart_rate_variability,steps",
+            "date": days[-1].isoformat(),
+            "window_days": 3,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["date"] == "2026-06-19"
+    assert set(payload["metrics"]) == {"heart_rate_variability", "steps"}
+    assert payload["metrics"]["heart_rate_variability"]["current"] == {
+        "date": "2026-06-19",
+        "value": 58.0,
+        "unit": "ms",
+    }
+    assert payload["metrics"]["heart_rate_variability"]["baseline"]["comparison"] == "normal"
+    assert payload["metrics"]["heart_rate_variability"]["trend"]["absolute_change"] == 4.0
+    assert payload["metrics"]["steps"]["current"]["value"] == 8000.0
+
+
 def test_heart_rate_metric_detail_aggregates_daily_samples(session) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
