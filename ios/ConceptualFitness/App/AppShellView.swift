@@ -1,12 +1,13 @@
 import SwiftUI
 
 struct AppShellView: View {
+    @ObservedObject var authStore: AuthStore
+
     @State private var selectedTab: AppTab = .dashboard
     @State private var dashboardPath: [AppRoute] = []
     @State private var fitnessPath: [AppRoute] = []
     @State private var insightsPath: [AppRoute] = []
 
-    private let dashboardClient = DashboardAPIClient()
     private let weatherProvider = WeatherProvider()
     private let locationProvider = LocationProvider()
     private let insightProvider = DailyInsightProvider()
@@ -15,7 +16,7 @@ struct AppShellView: View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $dashboardPath) {
                 DashboardView(
-                    client: dashboardClient,
+                    client: DashboardAPIClient(authStore: authStore),
                     weatherProvider: weatherProvider,
                     locationProvider: locationProvider,
                     insightProvider: insightProvider
@@ -49,6 +50,10 @@ struct AppShellView: View {
         }
         .tint(.blue)
     }
+}
+
+#Preview {
+    AppShellView(authStore: AuthStore())
 }
 
 private extension View {

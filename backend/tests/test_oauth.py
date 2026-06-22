@@ -28,15 +28,19 @@ class FakeGoogleHealthClient:
             "healthUserId": "google-health-id",
         }
 
+    async def get_userinfo(self, access_token: str) -> dict[str, object]:
+        assert access_token == "access-token"
+        return {"email": "person@example.com", "email_verified": True}
+
 
 def test_create_authorization_url_persists_state(session) -> None:
-    url = create_authorization_url(session)
+    url = create_authorization_url(session, device_id="test-device-id-000000000000")
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
 
     assert parsed.netloc == "accounts.google.com"
     assert query["client_id"] == ["test-client-id.apps.googleusercontent.com"]
-    assert query["redirect_uri"] == ["http://localhost:8000/auth/google-health/callback"]
+    assert query["redirect_uri"] == ["http://localhost:8000/auth/google/callback"]
     assert query["access_type"] == ["offline"]
     assert query["prompt"] == ["consent"]
     assert "state" in query
@@ -44,19 +48,21 @@ def test_create_authorization_url_persists_state(session) -> None:
     states = session.scalars(select(OAuthState)).all()
     assert len(states) == 1
     assert states[0].consumed_at is None
+    assert states[0].device_id_hash is not None
 
 
 @pytest.mark.asyncio
 async def test_complete_oauth_creates_user_and_google_account(session) -> None:
-    url = create_authorization_url(session)
+    url = create_authorization_url(session, device_id="test-device-id-000000000000")
     state = parse_qs(urlparse(url).query)["state"][0]
 
-    account = await complete_google_health_oauth(
+    completion = await complete_google_health_oauth(
         session,
         code="auth-code",
         state=state,
         client=FakeGoogleHealthClient(),
     )
+    account = completion.account
 
     saved = session.get(GoogleAccount, account.id)
     assert saved is not None
@@ -65,7 +71,7 @@ async def test_complete_oauth_creates_user_and_google_account(session) -> None:
     assert saved.legacy_user_id == "fitbit-legacy-id"
     assert saved.granted_scopes == ["scope-a", "scope-b"]
     assert decrypt_secret(saved.encrypted_refresh_token) == "refresh-token"
+    assert saved.user.email == "person@example.com"
 
     oauth_state = session.scalar(select(OAuthState))
     assert oauth_state.consumed_at is not None
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from dataclasses import dataclass
 from urllib.parse import urlencode
 
 from sqlalchemy import select
@@ -18,6 +19,7 @@ from app.core.security import (
 from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import GOOGLE_OAUTH_AUTHORIZE_URL
 from app.models import ConnectionStatus, GoogleAccount, OAuthState, User
+from app.services.app_auth import device_id_digest
 
 
 class OAuthConfigurationError(RuntimeError):
@@ -28,11 +30,17 @@ class OAuthStateError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class GoogleOAuthCompletion:
+    account: GoogleAccount
+    device_id_hash: str
+
+
 # authorisation for google
 def create_authorization_url(
     session: Session,
     *,
-    user_id: str | None = None,
+    device_id: str,
     redirect_after: str | None = None,
 ) -> str:
     settings = get_settings()
@@ -43,7 +51,7 @@ def create_authorization_url(
     state = generate_state_token()
     oauth_state = OAuthState(
         state_hash=state_digest(state),
-        user_id=user_id,
+        device_id_hash=device_id_digest(device_id),
         redirect_after=redirect_after,
         scopes=list(settings.google_health_scopes),
         expires_at=expires_in(15),
@@ -91,7 +99,7 @@ async def complete_google_health_oauth(
     code: str,
     state: str,
     client: GoogleHealthClient | None = None,
-) -> GoogleAccount:
+) -> GoogleOAuthCompletion:
     settings = get_settings()
     oauth_state = consume_oauth_state(session, state)
     google_client = client or GoogleHealthClient(settings)
@@ -105,13 +113,25 @@ async def complete_google_health_oauth(
     identity = await google_client.get_identity(access_token)
     health_user_id = identity.get("healthUserId")
     legacy_user_id = identity.get("legacyUserId")
+    try:
+        userinfo = await google_client.get_userinfo(access_token)
+    except Exception:
+        userinfo = {}
+    email = userinfo.get("email") if userinfo.get("email_verified", True) else None
 
     account = _find_existing_google_account(session, health_user_id, legacy_user_id)
     if account is None:
-        user = _get_or_create_user(session, oauth_state.user_id)
+        user = _get_or_create_user(session)
         account = GoogleAccount(user_id=user.id)
     elif account.status == ConnectionStatus.disconnected:
         account.connected_at = utcnow()
+        user = account.user
+    else:
+        user = account.user
+
+    if email and user.email != email:
+        user.email = str(email)
+        session.add(user)
 
     account.health_user_id = health_user_id
     account.legacy_user_id = legacy_user_id
@@ -129,7 +149,13 @@ async def complete_google_health_oauth(
     session.add(account)
     session.commit()
     session.refresh(account)
-    return account
+    return GoogleOAuthCompletion(account=account, device_id_hash=device_hash_for_state(oauth_state))
+
+
+def device_hash_for_state(oauth_state: OAuthState) -> str:
+    if not oauth_state.device_id_hash:
+        raise OAuthStateError("OAuth state is missing device binding")
+    return oauth_state.device_id_hash
 
 
 def _find_existing_google_account(
@@ -148,11 +174,7 @@ def _find_existing_google_account(
     return None
 
 
-def _get_or_create_user(session: Session, user_id: str | None) -> User:
-    if user_id:
-        user = session.get(User, user_id)
-        if user:
-            return user
+def _get_or_create_user(session: Session) -> User:
     user = User()
     session.add(user)
     session.flush()

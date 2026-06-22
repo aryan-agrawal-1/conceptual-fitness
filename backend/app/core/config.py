@@ -14,6 +14,9 @@ ENV_FILE = BACKEND_DIR / ".env"
 
 
 GOOGLE_HEALTH_SCOPES: tuple[str, ...] = (
+    "openid",
+    "email",
+    "profile",
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
     "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
@@ -35,6 +38,11 @@ class Settings:
     google_health_redirect_uri: str
     token_encryption_key: str
     session_secret_key: str
+    access_token_ttl_minutes: int
+    refresh_token_ttl_days: int
+    app_auth_code_ttl_minutes: int
+    allowed_cors_origins: tuple[str, ...]
+    trust_proxy_headers: bool
     celery_timezone: str
     celery_sync_hour: str
     celery_sync_minute: str
@@ -80,6 +88,19 @@ def _get_float(env: dict[str, str], key: str, default: float) -> float:
         raise RuntimeError(f"Environment variable {key} must be a number") from exc
 
 
+def _get_bool(env: dict[str, str], key: str, default: bool) -> bool:
+    value = env.get(key)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_csv(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def _parse_scopes(value: str | None) -> tuple[str, ...]:
     if not value:
         return GOOGLE_HEALTH_SCOPES
@@ -92,7 +113,7 @@ def get_settings() -> Settings:
     return Settings(
         app_env=_get(env, "APP_ENV", "local"),
         app_base_url=_get(env, "APP_BASE_URL", "http://localhost:8000").rstrip("/"),
-        ios_deep_link_redirect=_get(env, "IOS_DEEP_LINK_REDIRECT", "healthapp://oauth/google-health"),
+        ios_deep_link_redirect=_get(env, "IOS_DEEP_LINK_REDIRECT", "healthapp://auth/callback"),
         database_url=_get(env, "DATABASE_URL", "sqlite:///./health.sqlite3"),
         redis_url=_get(env, "REDIS_URL", "redis://localhost:6379/0"),
         google_health_api_timeout_seconds=_get_float(env, "GOOGLE_HEALTH_API_TIMEOUT_SECONDS", 30.0),
@@ -102,6 +123,11 @@ def get_settings() -> Settings:
         google_health_redirect_uri=_get(env, "GOOGLE_HEALTH_REDIRECT_URI"),
         token_encryption_key=_get(env, "TOKEN_ENCRYPTION_KEY"),
         session_secret_key=_get(env, "SESSION_SECRET_KEY"),
+        access_token_ttl_minutes=_get_int(env, "ACCESS_TOKEN_TTL_MINUTES", 15),
+        refresh_token_ttl_days=_get_int(env, "REFRESH_TOKEN_TTL_DAYS", 30),
+        app_auth_code_ttl_minutes=_get_int(env, "APP_AUTH_CODE_TTL_MINUTES", 5),
+        allowed_cors_origins=_parse_csv(env.get("ALLOWED_CORS_ORIGINS")),
+        trust_proxy_headers=_get_bool(env, "TRUST_PROXY_HEADERS", False),
         celery_timezone=_get(env, "CELERY_TIMEZONE", "UTC"),
         celery_sync_hour=_get(env, "CELERY_SYNC_HOUR", "*"),
         celery_sync_minute=_get(env, "CELERY_SYNC_MINUTE", "0"),
@@ -122,3 +148,15 @@ def missing_or_placeholder_keys(settings: Settings) -> list[str]:
         for key, value in keys
         if not value or value.lower().startswith("your-") or value.lower() == "generate-this"
     ]
+
+
+def validate_production_settings(settings: Settings) -> None:
+    if settings.app_env != "production":
+        return
+    missing = missing_or_placeholder_keys(settings)
+    if missing:
+        raise RuntimeError(f"Production configuration is incomplete: {', '.join(missing)}")
+    if not settings.app_base_url.startswith("https://"):
+        raise RuntimeError("APP_BASE_URL must use https:// in production")
+    if not settings.google_health_redirect_uri.startswith("https://"):
+        raise RuntimeError("GOOGLE_HEALTH_REDIRECT_URI must use https:// in production")

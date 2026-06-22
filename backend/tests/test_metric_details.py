@@ -20,7 +20,7 @@ def _dt(day: date, hour: int, minute: int = 0) -> datetime:
     return datetime.combine(day, time(hour, minute), tzinfo=UTC)
 
 
-def test_metric_detail_returns_daily_points_trend_and_baseline(session) -> None:
+def test_metric_detail_returns_daily_points_trend_and_baseline(session, auth_headers) -> None:
     user = _user(session)
     start = date(2026, 6, 17)
     days = [start + timedelta(days=offset) for offset in range(3)]
@@ -54,7 +54,8 @@ def test_metric_detail_returns_daily_points_trend_and_baseline(session) -> None:
 
     response = TestClient(app).get(
         "/metrics/heart_rate_variability/detail",
-        params={"user_id": user.id, "start": days[0].isoformat(), "end": days[-1].isoformat()},
+        params={"start": days[0].isoformat(), "end": days[-1].isoformat()},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200
@@ -80,7 +81,7 @@ def test_metric_detail_returns_daily_points_trend_and_baseline(session) -> None:
     assert {point["comparison"] for point in payload["series"]} == {"normal"}
 
 
-def test_metrics_dashboard_summary_batches_metric_cards(session) -> None:
+def test_metrics_dashboard_summary_batches_metric_cards(session, auth_headers) -> None:
     user = _user(session)
     start = date(2026, 6, 17)
     days = [start + timedelta(days=offset) for offset in range(3)]
@@ -115,11 +116,11 @@ def test_metrics_dashboard_summary_batches_metric_cards(session) -> None:
     response = TestClient(app).get(
         "/metrics/dashboard-summary",
         params={
-            "user_id": user.id,
             "metrics": "heart_rate_variability,steps",
             "date": days[-1].isoformat(),
             "window_days": 3,
         },
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200
@@ -136,7 +137,7 @@ def test_metrics_dashboard_summary_batches_metric_cards(session) -> None:
     assert payload["metrics"]["steps"]["current"]["value"] == 8000.0
 
 
-def test_heart_rate_metric_detail_aggregates_daily_samples(session) -> None:
+def test_heart_rate_metric_detail_aggregates_daily_samples(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     for index, bpm in enumerate([60, 70, 80]):
@@ -154,7 +155,8 @@ def test_heart_rate_metric_detail_aggregates_daily_samples(session) -> None:
 
     response = TestClient(app).get(
         "/metrics/heart_rate/detail",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200
@@ -174,7 +176,7 @@ def test_heart_rate_metric_detail_aggregates_daily_samples(session) -> None:
     ]
 
 
-def test_metric_detail_prefers_fitbit_activity_interval_totals(session) -> None:
+def test_metric_detail_prefers_fitbit_activity_interval_totals(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     session.add(
@@ -205,7 +207,8 @@ def test_metric_detail_prefers_fitbit_activity_interval_totals(session) -> None:
 
     response = TestClient(app).get(
         "/metrics/distance/detail",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200
@@ -214,7 +217,7 @@ def test_metric_detail_prefers_fitbit_activity_interval_totals(session) -> None:
     assert payload["series"][0]["value"] == 1609.34
 
 
-def test_metric_detail_handles_missing_data_and_unknown_metric(session) -> None:
+def test_metric_detail_handles_missing_data_and_unknown_metric(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     session.commit()
@@ -222,7 +225,8 @@ def test_metric_detail_handles_missing_data_and_unknown_metric(session) -> None:
 
     missing = client.get(
         "/metrics/vo2_max/detail",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
     assert missing.status_code == 200
     payload = missing.json()
@@ -244,6 +248,7 @@ def test_metric_detail_handles_missing_data_and_unknown_metric(session) -> None:
 
     unknown = client.get(
         "/metrics/sleep/detail",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
     assert unknown.status_code == 404

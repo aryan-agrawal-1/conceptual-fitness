@@ -14,11 +14,11 @@ def _user(session) -> User:
     return user
 
 
-def test_profile_get_creates_default_profile(session) -> None:
+def test_profile_get_creates_default_profile(session, auth_headers) -> None:
     user = _user(session)
     client = TestClient(app)
 
-    response = client.get("/profile", params={"user_id": user.id})
+    response = client.get("/profile", headers=auth_headers(user))
 
     assert response.status_code == 200
     payload = response.json()
@@ -29,13 +29,13 @@ def test_profile_get_creates_default_profile(session) -> None:
     assert session.scalar(select(UserProfile).where(UserProfile.user_id == user.id)) is not None
 
 
-def test_profile_patch_updates_supported_fields(session) -> None:
+def test_profile_patch_updates_supported_fields(session, auth_headers) -> None:
     user = _user(session)
     client = TestClient(app)
 
     response = client.patch(
         "/profile",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={
             "timezone": "Europe/London",
             "birth_year": 1994,
@@ -57,27 +57,27 @@ def test_profile_patch_updates_supported_fields(session) -> None:
     assert payload["sleep_target_minutes"] == 510
 
 
-def test_profile_rejects_unknown_timezone(session) -> None:
+def test_profile_rejects_unknown_timezone(session, auth_headers) -> None:
     user = _user(session)
     client = TestClient(app)
 
     response = client.patch(
         "/profile",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={"timezone": "Not/AZone"},
     )
 
     assert response.status_code == 422
 
 
-def test_tags_crud_is_scoped_to_current_user(session) -> None:
+def test_tags_crud_is_scoped_to_current_user(session, auth_headers) -> None:
     user = _user(session)
     other = _user(session)
     client = TestClient(app)
 
     create_response = client.post(
         "/tags",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={
             "date": "2026-06-19",
             "type": "caffeine",
@@ -92,28 +92,29 @@ def test_tags_crud_is_scoped_to_current_user(session) -> None:
 
     list_response = client.get(
         "/tags",
-        params={"user_id": user.id, "start": "2026-06-18", "end": "2026-06-20"},
+        params={"start": "2026-06-18", "end": "2026-06-20"},
+        headers=auth_headers(user),
     )
     assert list_response.status_code == 200
     assert [item["id"] for item in list_response.json()] == [tag["id"]]
 
     blocked_response = client.patch(
         f"/tags/{tag['id']}",
-        params={"user_id": other.id},
+        headers=auth_headers(other),
         json={"severity": "high"},
     )
     assert blocked_response.status_code == 404
 
     update_response = client.patch(
         f"/tags/{tag['id']}",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={"severity": "high", "value": {"amount_mg": 200}},
     )
     assert update_response.status_code == 200
     assert update_response.json()["severity"] == "high"
     assert update_response.json()["value"] == {"amount_mg": 200}
 
-    delete_response = client.delete(f"/tags/{tag['id']}", params={"user_id": user.id})
+    delete_response = client.delete(f"/tags/{tag['id']}", headers=auth_headers(user))
     assert delete_response.status_code == 204
     assert session.get(DailyContext, tag["id"]) is None
 

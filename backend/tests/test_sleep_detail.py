@@ -95,7 +95,7 @@ def _sleep_score(session, user: User, day: date, *, value: float = 84.2) -> None
     )
 
 
-def test_sleep_detail_returns_current_score_consistency_series_and_sessions(session) -> None:
+def test_sleep_detail_returns_current_score_consistency_series_and_sessions(session, auth_headers) -> None:
     user = _user(session)
     day_1 = date(2026, 6, 18)
     day_2 = date(2026, 6, 19)
@@ -125,7 +125,8 @@ def test_sleep_detail_returns_current_score_consistency_series_and_sessions(sess
 
     response = TestClient(app).get(
         "/sleep/detail",
-        params={"user_id": user.id, "start": day_1.isoformat(), "end": day_3.isoformat()},
+        params={"start": day_1.isoformat(), "end": day_3.isoformat()},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200
@@ -172,7 +173,7 @@ def test_sleep_detail_returns_current_score_consistency_series_and_sessions(sess
     assert all("stages" not in item for item in payload["sessions"])
 
 
-def test_sleep_detail_uses_longest_sleep_when_no_provider_main_sleep(session) -> None:
+def test_sleep_detail_uses_longest_sleep_when_no_provider_main_sleep(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     shorter = _sleep(
@@ -197,7 +198,8 @@ def test_sleep_detail_uses_longest_sleep_when_no_provider_main_sleep(session) ->
 
     response = TestClient(app).get(
         "/sleep/detail",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200

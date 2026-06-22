@@ -55,7 +55,7 @@ def _workout(session, user: User, day: date, raw_summary: dict | None = None) ->
     return workout
 
 
-def test_workout_list_returns_enriched_provider_zone_summary(session) -> None:
+def test_workout_list_returns_enriched_provider_zone_summary(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     workout = _workout(
@@ -88,7 +88,10 @@ def test_workout_list_returns_enriched_provider_zone_summary(session) -> None:
         )
     session.commit()
 
-    response = TestClient(app).get(f"/workouts?start={day}&end={day}&user_id={user.id}")
+    response = TestClient(app).get(
+        f"/workouts?start={day}&end={day}",
+        headers=auth_headers(user),
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -112,7 +115,7 @@ def test_workout_list_returns_enriched_provider_zone_summary(session) -> None:
     assert payload[0]["intensity"] == "moderate"
 
 
-def test_workout_detail_uses_time_in_zone_intervals_when_provider_zones_missing(session) -> None:
+def test_workout_detail_uses_time_in_zone_intervals_when_provider_zones_missing(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     account = GoogleAccount(user_id=user.id, health_user_id="health-id", granted_scopes=[])
@@ -154,7 +157,7 @@ def test_workout_detail_uses_time_in_zone_intervals_when_provider_zones_missing(
     )
     session.commit()
 
-    response = TestClient(app).get(f"/workouts/{workout.id}?user_id={user.id}")
+    response = TestClient(app).get(f"/workouts/{workout.id}", headers=auth_headers(user))
 
     assert response.status_code == 200
     payload = response.json()
@@ -173,7 +176,7 @@ def test_workout_detail_uses_time_in_zone_intervals_when_provider_zones_missing(
     ]
 
 
-def test_workout_detail_infers_zones_from_heart_rate_reserve(session) -> None:
+def test_workout_detail_infers_zones_from_heart_rate_reserve(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
     workout = _workout(session, user, day)
@@ -198,7 +201,7 @@ def test_workout_detail_infers_zones_from_heart_rate_reserve(session) -> None:
         )
     session.commit()
 
-    response = TestClient(app).get(f"/workouts/{workout.id}?user_id={user.id}")
+    response = TestClient(app).get(f"/workouts/{workout.id}", headers=auth_headers(user))
 
     assert response.status_code == 200
     payload = response.json()
@@ -209,12 +212,12 @@ def test_workout_detail_infers_zones_from_heart_rate_reserve(session) -> None:
     assert payload["intensity"] == "light"
 
 
-def test_workout_detail_404s_for_other_users_workout(session) -> None:
+def test_workout_detail_404s_for_other_users_workout(session, auth_headers) -> None:
     owner = _user(session)
     other = _user(session)
     workout = _workout(session, owner, date(2026, 6, 19))
     session.commit()
 
-    response = TestClient(app).get(f"/workouts/{workout.id}?user_id={other.id}")
+    response = TestClient(app).get(f"/workouts/{workout.id}", headers=auth_headers(other))
 
     assert response.status_code == 404

@@ -8,7 +8,7 @@ from app.main import app
 from app.models import MetricSample, User, UserProfile
 
 
-def test_body_metrics_returns_profile_values_and_bmi(session) -> None:
+def test_body_metrics_returns_profile_values_and_bmi(session, auth_headers) -> None:
     user = User()
     session.add(user)
     session.flush()
@@ -24,7 +24,7 @@ def test_body_metrics_returns_profile_values_and_bmi(session) -> None:
     session.commit()
     client = TestClient(app)
 
-    response = client.get("/body-metrics", params={"user_id": user.id})
+    response = client.get("/body-metrics", headers=auth_headers(user))
 
     assert response.status_code == 200
     payload = response.json()
@@ -35,7 +35,7 @@ def test_body_metrics_returns_profile_values_and_bmi(session) -> None:
     assert payload["bmi_history"] == []
 
 
-def test_body_metrics_returns_synced_history(session) -> None:
+def test_body_metrics_returns_synced_history(session, auth_headers) -> None:
     user = User()
     session.add(user)
     session.flush()
@@ -73,7 +73,8 @@ def test_body_metrics_returns_synced_history(session) -> None:
 
     response = client.get(
         "/body-metrics",
-        params={"user_id": user.id, "start": "2026-06-01", "end": "2026-06-30"},
+        params={"start": "2026-06-01", "end": "2026-06-30"},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200
@@ -112,7 +113,7 @@ def test_body_metrics_returns_synced_history(session) -> None:
     ]
 
 
-def test_manual_body_metrics_update_creates_history_and_updates_profile(session) -> None:
+def test_manual_body_metrics_update_creates_history_and_updates_profile(session, auth_headers) -> None:
     user = User()
     session.add(user)
     session.commit()
@@ -120,7 +121,7 @@ def test_manual_body_metrics_update_creates_history_and_updates_profile(session)
 
     response = client.post(
         "/body-metrics",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={
             "date": "2026-06-19",
             "height_cm": 181,
@@ -145,7 +146,7 @@ def test_manual_body_metrics_update_creates_history_and_updates_profile(session)
     assert profile.weight_kg == 78.5
 
 
-def test_manual_body_metrics_update_reuses_same_day_manual_sample(session) -> None:
+def test_manual_body_metrics_update_reuses_same_day_manual_sample(session, auth_headers) -> None:
     user = User()
     session.add(user)
     session.commit()
@@ -153,12 +154,12 @@ def test_manual_body_metrics_update_reuses_same_day_manual_sample(session) -> No
 
     first = client.post(
         "/body-metrics",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={"date": "2026-06-19", "weight_kg": 78.5},
     )
     second = client.post(
         "/body-metrics",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={"date": "2026-06-19", "weight_kg": 79.2},
     )
 
@@ -170,7 +171,7 @@ def test_manual_body_metrics_update_reuses_same_day_manual_sample(session) -> No
     assert second.json()["weight_kg"] == 79.2
 
 
-def test_backdated_manual_body_metric_does_not_replace_newer_current_value(session) -> None:
+def test_backdated_manual_body_metric_does_not_replace_newer_current_value(session, auth_headers) -> None:
     user = User()
     session.add(user)
     session.flush()
@@ -199,7 +200,7 @@ def test_backdated_manual_body_metric_does_not_replace_newer_current_value(sessi
 
     response = client.post(
         "/body-metrics",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={"date": "2026-06-01", "weight_kg": 82},
     )
 
@@ -210,7 +211,7 @@ def test_backdated_manual_body_metric_does_not_replace_newer_current_value(sessi
     assert session.query(MetricSample).filter_by(user_id=user.id, metric="weight").count() == 2
 
 
-def test_manual_body_metrics_update_requires_a_metric(session) -> None:
+def test_manual_body_metrics_update_requires_a_metric(session, auth_headers) -> None:
     user = User()
     session.add(user)
     session.commit()
@@ -218,7 +219,7 @@ def test_manual_body_metrics_update_requires_a_metric(session) -> None:
 
     response = client.post(
         "/body-metrics",
-        params={"user_id": user.id},
+        headers=auth_headers(user),
         json={"date": "2026-06-19"},
     )
 

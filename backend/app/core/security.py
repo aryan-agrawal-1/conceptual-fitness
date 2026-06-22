@@ -22,13 +22,26 @@ def generate_state_token() -> str:
     return secrets.token_urlsafe(48)
 
 
+def generate_app_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
 def state_digest(state: str) -> str:
     secret = get_settings().session_secret_key.encode("utf-8")
     return hmac.new(secret, state.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def token_digest(token: str) -> str:
+    secret = get_settings().session_secret_key.encode("utf-8")
+    return hmac.new(secret, token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def verify_state_digest(state: str, expected_digest: str) -> bool:
     return hmac.compare_digest(state_digest(state), expected_digest)
+
+
+def verify_token_digest(token: str, expected_digest: str) -> bool:
+    return hmac.compare_digest(token_digest(token), expected_digest)
 
 
 def encrypt_secret(value: str) -> str:
@@ -42,4 +55,3 @@ def decrypt_secret(value: str) -> str:
         return fernet.decrypt(value.encode("utf-8")).decode("utf-8")
     except InvalidToken as exc:
         raise RuntimeError("Stored token could not be decrypted") from exc
-

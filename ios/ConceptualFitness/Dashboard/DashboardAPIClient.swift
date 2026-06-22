@@ -3,6 +3,7 @@ import Foundation
 struct DashboardAPIClient {
     var baseURL: URL = URL(string: "http://127.0.0.1:8000")!
     var session: URLSession = .shared
+    var authStore: AuthStore?
 
     func loadDashboard() async throws -> DashboardBundle {
         let dateString = Self.apiDate.string(from: Date())
@@ -13,8 +14,14 @@ struct DashboardAPIClient {
         guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw URLError(.badURL)
         }
-        let (data, response) = try await session.data(from: url)
-        try validate(response: response)
+        let data: Data
+        if let authStore {
+            data = try await authStore.authenticatedData(for: url)
+        } else {
+            let (rawData, response) = try await session.data(from: url)
+            try validate(response: response)
+            data = rawData
+        }
         return try JSONDecoder().decode(T.self, from: data)
     }
 

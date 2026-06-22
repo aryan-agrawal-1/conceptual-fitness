@@ -310,7 +310,7 @@ def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> 
     assert strain.value == 24.0
 
 
-def test_scores_api_rebuild_and_history(session) -> None:
+def test_scores_api_rebuild_and_history(session, auth_headers) -> None:
     user = _user_with_profile(session)
     day = date.today()
     _add_sleep(session, user, day)
@@ -320,25 +320,27 @@ def test_scores_api_rebuild_and_history(session) -> None:
     client = TestClient(app)
     response = client.post(
         "/scores/rebuild",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
     assert response.status_code == 200
     assert response.json()["scores_rebuilt"] == 3
 
     history = client.get(
         "/scores/daily",
-        params={"user_id": user.id, "start": day.isoformat(), "end": day.isoformat()},
+        params={"start": day.isoformat(), "end": day.isoformat()},
+        headers=auth_headers(user),
     )
     assert history.status_code == 200
     payload = history.json()
     assert {item["score_type"] for item in payload} == {"sleep", "readiness", "strain"}
 
-    dashboard = client.get("/dashboard/today", params={"user_id": user.id})
+    dashboard = client.get("/dashboard/today", headers=auth_headers(user))
     assert dashboard.status_code == 200
     assert set(dashboard.json()["scores"]) == {"sleep", "readiness", "strain"}
 
 
-def test_dashboard_bundle_returns_frontend_dashboard_payload(session) -> None:
+def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_headers) -> None:
     user = _user_with_profile(session)
     day = date.today()
     _add_sleep(session, user, day)
@@ -369,7 +371,8 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session) -> None:
 
     response = TestClient(app).get(
         "/dashboard/bundle",
-        params={"user_id": user.id, "date": day.isoformat(), "metrics_window_days": 1},
+        params={"date": day.isoformat(), "metrics_window_days": 1},
+        headers=auth_headers(user),
     )
 
     assert response.status_code == 200

@@ -25,6 +25,7 @@
 		010000000000000000000010 /* WeatherKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000010 /* WeatherKit.framework */; };
 		010000000000000000000011 /* CoreLocation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000011 /* CoreLocation.framework */; };
 		010000000000000000000012 /* FoundationModels.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000015 /* FoundationModels.framework */; };
+		010000000000000000000013 /* Auth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000016 /* Auth.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +50,7 @@
 		020000000000000000000013 /* ConceptualFitness.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ConceptualFitness.entitlements; sourceTree = "<group>"; };
 		020000000000000000000014 /* ConceptualFitness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ConceptualFitness.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		020000000000000000000015 /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
+		020000000000000000000016 /* Auth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Auth.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,6 +96,7 @@
 			children = (
 				020000000000000000000002 /* AppRoute.swift */,
 				020000000000000000000003 /* AppShellView.swift */,
+				020000000000000000000016 /* Auth.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -239,6 +242,7 @@
 				01000000000000000000000D /* LocationProvider.swift in Sources */,
 				01000000000000000000000E /* WeatherProvider.swift in Sources */,
 				01000000000000000000000F /* WeatherBackgroundView.swift in Sources */,
+				010000000000000000000013 /* Auth.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -11,6 +11,7 @@ from app.core.config import Settings, get_settings
 from app.google_health.data_types import (
     GOOGLE_HEALTH_API_BASE_URL,
     GOOGLE_OAUTH_REVOKE_URL,
+    GOOGLE_OAUTH_USERINFO_URL,
     GOOGLE_OAUTH_TOKEN_URL,
     WEARABLES_DATA_SOURCE_FAMILY,
 )
@@ -55,6 +56,31 @@ class GoogleHealthClient:
 
     async def get_identity(self, access_token: str) -> dict[str, Any]:
         return await self._get_json("/users/me/identity", access_token)
+
+    async def get_userinfo(self, access_token: str) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+                response = await asyncio.wait_for(
+                    client.get(
+                        GOOGLE_OAUTH_USERINFO_URL,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Accept": "application/json",
+                        },
+                    ),
+                    timeout=self.timeout,
+                )
+        except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
+            raise GoogleHealthAPIError(
+                f"Google userinfo request timed out after {self.timeout:g}s",
+                payload={"timeout_seconds": self.timeout},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise GoogleHealthAPIError(
+                "Google userinfo request failed before receiving a response",
+                payload={"error": str(exc)},
+            ) from exc
+        return self._handle_response(response)
 
     async def list_data_points(
         self,
