@@ -45,11 +45,13 @@ struct DailyBriefCard: View {
                 ScoreRingView(item: .sleep(from: data.snapshot))
             }
 
-            Text(data.insight)
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.primary.opacity(0.78))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+            if let insight = data.insight?.nonEmptyDashboardText {
+                Text(insight)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary.opacity(0.78))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -449,10 +451,23 @@ extension Double {
         .background(WeatherBackgroundView(weather: .fallback))
 }
 
+#Preview("Daily brief - no AI") {
+    DailyBriefCard(data: .previewWithoutInsights())
+        .padding()
+        .background(WeatherBackgroundView(weather: .fallback))
+}
+
 #Preview("Metric grid") {
     ScrollView {
         HealthMetricsSection(items: MetricCardItem.items(from: .sample))
             .padding()
     }
     .background(AppBackground())
+}
+
+extension String {
+    var nonEmptyDashboardText: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }

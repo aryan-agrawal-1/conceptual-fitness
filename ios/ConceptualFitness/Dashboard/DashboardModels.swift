@@ -252,22 +252,33 @@ struct DashboardData {
     let workouts: [WorkoutSummary]
     let vo2Max: VO2MaxDetail?
     let dateContext: DashboardDateContext
-    let dailyBrief: String
-    let insight: String
+    let dailyBrief: String?
+    let insight: String?
 
     static let sample = preview()
 
-    static func preview(dailyBrief: String? = nil, insight: String? = nil) -> DashboardData {
+    static func preview(
+        dailyBrief: String? = Self.previewDailyBrief,
+        insight: String? = Self.previewShortInsight,
+        dateContext: DashboardDateContext = .today
+    ) -> DashboardData {
         DashboardData(
             snapshot: .sample,
             metricSummaries: [:],
             workouts: WorkoutSummary.samples,
             vo2Max: VO2MaxDetail(current: MetricPoint(value: 48.2, date: "2026-06-22"), dataQuality: "strong"),
-            dateContext: .today,
-            dailyBrief: dailyBrief ?? "Recovery looks strong after 7 hours 48 minutes of sleep last night, with readiness and sleep both in a good range. Use today for a purposeful push if it fits your plan: build strain steadily, warm up properly, and stop short of turning a good recovery day into unnecessary fatigue. Keep the evening calm so the sleep win carries forward.",
-            insight: insight ?? "Strong recovery supports a purposeful push today. Build strain steadily."
+            dateContext: dateContext,
+            dailyBrief: dailyBrief,
+            insight: insight
         )
     }
+
+    static func previewWithoutInsights(dateContext: DashboardDateContext = .today) -> DashboardData {
+        preview(dailyBrief: nil, insight: nil, dateContext: dateContext)
+    }
+
+    private static let previewDailyBrief = "Recovery looks strong after 7 hours 48 minutes of sleep last night, with readiness and sleep both in a good range. Use today for a purposeful push if it fits your plan: build strain steadily, warm up properly, and stop short of turning a good recovery day into unnecessary fatigue. Keep the evening calm so the sleep win carries forward."
+    private static let previewShortInsight = "Strong recovery supports a purposeful push today. Build strain steadily."
 }
 
 extension DashboardSnapshot {

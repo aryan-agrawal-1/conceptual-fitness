@@ -7,6 +7,8 @@ struct DashboardView: View {
     let insightProvider: DailyInsightProvider
     let firstName: String?
     let weatherEnabled: Bool
+    private let loadsLiveData: Bool
+    private let greetingOverride: String?
 
     @State private var loadState: DashboardLoadState = .loading
     @State private var weather = WeatherData.fallback
@@ -15,6 +17,29 @@ struct DashboardView: View {
     #if DEBUG
     @State private var showsWeatherLab = false
     #endif
+
+    init(
+        client: DashboardAPIClient,
+        weatherProvider: WeatherProvider,
+        locationProvider: LocationProvider,
+        insightProvider: DailyInsightProvider,
+        firstName: String?,
+        weatherEnabled: Bool,
+        previewLoadState: DashboardLoadState? = nil,
+        previewWeather: WeatherData = .fallback,
+        greetingOverride: String? = nil
+    ) {
+        self.client = client
+        self.weatherProvider = weatherProvider
+        self.locationProvider = locationProvider
+        self.insightProvider = insightProvider
+        self.firstName = firstName
+        self.weatherEnabled = weatherEnabled
+        self.loadsLiveData = previewLoadState == nil
+        self.greetingOverride = greetingOverride
+        _loadState = State(initialValue: previewLoadState ?? .loading)
+        _weather = State(initialValue: previewWeather)
+    }
 
     var body: some View {
         ZStack {
@@ -29,7 +54,9 @@ struct DashboardView: View {
             }
             .scrollIndicators(.hidden)
             .refreshable {
-                await reload()
+                if loadsLiveData {
+                    await reload()
+                }
             }
         }
         .navigationTitle("Dashboard")
@@ -62,6 +89,7 @@ struct DashboardView: View {
         #endif
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
+            guard loadsLiveData else { return }
             if weatherEnabled {
                 locationProvider.requestLocation()
             }
@@ -71,7 +99,7 @@ struct DashboardView: View {
             }
         }
         .task(id: locationProvider.revision) {
-            if weatherEnabled {
+            if loadsLiveData && weatherEnabled {
                 await reloadWeather()
             }
         }
@@ -81,10 +109,10 @@ struct DashboardView: View {
         ZStack(alignment: .top) {
             if usesWeatherBackground {
                 WeatherBackgroundView(weather: weather)
-                    .frame(height: 560)
+                    .frame(height: heroHeight)
             } else {
-                Color.white
-                    .frame(height: 560)
+                Color.clear
+                    .frame(height: heroHeight)
             }
 
             VStack(alignment: .leading, spacing: 14) {
@@ -108,12 +136,14 @@ struct DashboardView: View {
                 }
                 .padding(.top, 54)
 
-                Text(heroBriefText)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(heroTextColor.opacity(0.78))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let heroBriefText {
+                    Text(heroBriefText)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(heroTextColor.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 Spacer(minLength: 28)
 
@@ -128,7 +158,7 @@ struct DashboardView: View {
             }
             .padding(.horizontal, 20)
         }
-        .frame(height: 560)
+        .frame(height: heroHeight)
     }
 
     @ViewBuilder
@@ -164,14 +194,26 @@ struct DashboardView: View {
         )
     }
 
-    private var heroBriefText: String {
+    private var heroBriefText: String? {
         switch loadState {
         case .loaded(let data):
-            return data.dailyBrief
+            return data.dailyBrief?.nonEmptyDashboardText
         case .loading:
-            return insightProvider.cachedDailyBriefForCurrentSlot() ?? "Preparing your daily brief..."
+            return insightProvider.cachedDailyBriefForCurrentSlot()?.nonEmptyDashboardText
         case .failed:
-            return previewData.dailyBrief
+            return previewData.dailyBrief?.nonEmptyDashboardText
+        }
+    }
+
+    private var heroHeight: CGFloat {
+        switch loadState {
+        case .loaded(let data) where !data.hasDailyInsightText:
+            if usesWeatherBackground {
+                return data.dateContext == .yesterday ? 358 : 330
+            }
+            return data.dateContext == .yesterday ? 318 : 290
+        default:
+            return 560
         }
     }
 
@@ -184,6 +226,10 @@ struct DashboardView: View {
     }
 
     private var greeting: String {
+        if let greetingOverride {
+            return greetingOverride
+        }
+
         let hour = Calendar.current.component(.hour, from: Date())
         let base: String
         if hour >= 4 && hour < 12 {
@@ -260,6 +306,12 @@ enum DashboardLoadState {
     case failed(String)
 }
 
+private extension DashboardData {
+    var hasDailyInsightText: Bool {
+        dailyBrief?.nonEmptyDashboardText != nil || insight?.nonEmptyDashboardText != nil
+    }
+}
+
 #Preview {
     NavigationStack {
         DashboardView(
@@ -269,6 +321,51 @@ enum DashboardLoadState {
             insightProvider: DailyInsightProvider(),
             firstName: "Aryan",
             weatherEnabled: true
+        )
+    }
+}
+
+#Preview("Dashboard - AI insights") {
+    NavigationStack {
+        DashboardView(
+            client: DashboardAPIClient(),
+            weatherProvider: WeatherProvider(),
+            locationProvider: LocationProvider(),
+            insightProvider: DailyInsightProvider(),
+            firstName: "Aryan",
+            weatherEnabled: true,
+            previewLoadState: .loaded(.sample),
+            greetingOverride: "Good evening, Aryan"
+        )
+    }
+}
+
+#Preview("Dashboard - no AI") {
+    NavigationStack {
+        DashboardView(
+            client: DashboardAPIClient(),
+            weatherProvider: WeatherProvider(),
+            locationProvider: LocationProvider(),
+            insightProvider: DailyInsightProvider(),
+            firstName: "Aryan",
+            weatherEnabled: true,
+            previewLoadState: .loaded(.previewWithoutInsights()),
+            greetingOverride: "Good evening, Aryan"
+        )
+    }
+}
+
+#Preview("Dashboard - no AI, no location") {
+    NavigationStack {
+        DashboardView(
+            client: DashboardAPIClient(),
+            weatherProvider: WeatherProvider(),
+            locationProvider: LocationProvider(),
+            insightProvider: DailyInsightProvider(),
+            firstName: "Aryan",
+            weatherEnabled: false,
+            previewLoadState: .loaded(.previewWithoutInsights()),
+            greetingOverride: "Good evening, Aryan"
         )
     }
 }

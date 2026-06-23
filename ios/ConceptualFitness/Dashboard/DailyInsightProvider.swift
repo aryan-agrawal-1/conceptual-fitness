@@ -6,7 +6,7 @@ struct DailyInsightProvider {
         cachedLastText(for: BriefSlot(date: now), kind: .dailyBrief, now: now)
     }
 
-    func dailyBrief(for bundle: DashboardBundle, now: Date = Date()) async -> String {
+    func dailyBrief(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
         let slot = BriefSlot(date: now)
         if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .dailyBrief) {
             return cached
@@ -19,10 +19,10 @@ struct DailyInsightProvider {
             }
         }
 
-        return "Daily brief unavailable on this device."
+        return nil
     }
 
-    func shortInsight(for bundle: DashboardBundle, now: Date = Date()) async -> String {
+    func shortInsight(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
         let slot = BriefSlot(date: now)
         if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .shortInsight) {
             return cached
@@ -35,7 +35,7 @@ struct DailyInsightProvider {
             }
         }
 
-        return "Insight unavailable on this device."
+        return nil
     }
 
     func previewDailyBrief(now: Date = Date()) -> String {
