@@ -159,8 +159,8 @@ struct DashboardView: View {
 
     private var previewData: DashboardData {
         DashboardData.preview(
-            dailyBrief: insightProvider.fallbackDailyBrief(for: .sample),
-            insight: insightProvider.shortInsight(for: .sample)
+            dailyBrief: insightProvider.previewDailyBrief(),
+            insight: insightProvider.previewShortInsight()
         )
     }
 
@@ -226,8 +226,8 @@ struct DashboardView: View {
             let now = Date()
             let displayBundle = try await client.loadDashboard(now: now)
             let bundle = displayBundle.bundle
-            let dailyBrief = await insightProvider.dailyBrief(for: bundle.snapshot, now: now)
-            let insight = insightProvider.shortInsight(for: bundle.snapshot, now: now)
+            async let dailyBrief = insightProvider.dailyBrief(for: bundle, now: now)
+            async let insight = insightProvider.shortInsight(for: bundle, now: now)
             loadState = .loaded(
                 DashboardData(
                     snapshot: bundle.snapshot,
@@ -235,8 +235,8 @@ struct DashboardView: View {
                     workouts: bundle.recentWorkouts,
                     vo2Max: bundle.vo2Max,
                     dateContext: displayBundle.dateContext,
-                    dailyBrief: dailyBrief,
-                    insight: insight
+                    dailyBrief: await dailyBrief,
+                    insight: await insight
                 )
             )
         } catch {

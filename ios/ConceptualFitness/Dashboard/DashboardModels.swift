@@ -82,6 +82,8 @@ struct DailyScore: Decodable {
     let status: String?
     let confidencePhase: String?
     let dataQuality: String?
+    let components: [String: JSONValue]?
+    let inputs: [String: JSONValue]?
     let reasons: [ScoreReason]?
 
     enum CodingKeys: String, CodingKey {
@@ -90,6 +92,8 @@ struct DailyScore: Decodable {
         case status
         case confidencePhase = "confidence_phase"
         case dataQuality = "data_quality"
+        case components
+        case inputs
         case reasons
     }
 }
@@ -103,17 +107,89 @@ struct ScoreReason: Decodable {
 
 struct StrainTarget: Decodable {
     let targetLoadPoints: Double?
+    let chronicLoadPoints: Double?
+    let acuteLoadPoints: Double?
     let progressLoadPoints: Double?
     let progressRatio: Double?
     let loadBand: String?
     let confidencePhase: String?
+    let components: [String: JSONValue]?
+    let inputs: [String: JSONValue]?
 
     enum CodingKeys: String, CodingKey {
         case targetLoadPoints = "target_load_points"
+        case chronicLoadPoints = "chronic_load_points"
+        case acuteLoadPoints = "acute_load_points"
         case progressLoadPoints = "progress_load_points"
         case progressRatio = "progress_ratio"
         case loadBand = "load_band"
         case confidencePhase = "confidence_phase"
+        case components
+        case inputs
+    }
+}
+
+enum JSONValue: Codable, Equatable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else {
+            self = .array(try container.decode([JSONValue].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+
+    var doubleValue: Double? {
+        if case .number(let value) = self { return value }
+        return nil
+    }
+
+    var stringValue: String? {
+        if case .string(let value) = self { return value }
+        return nil
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case .object(let value) = self { return value }
+        return nil
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case .array(let value) = self { return value }
+        return nil
     }
 }
 
@@ -213,16 +289,20 @@ extension DashboardSnapshot {
             dataQuality: "strong"
         ),
         scores: DashboardScores(
-            sleep: DailyScore(value: 88, unit: "score_0_100", status: "ready", confidencePhase: "strong", dataQuality: "strong", reasons: nil),
-            strain: DailyScore(value: 18, unit: "load_points", status: "ready", confidencePhase: "strong", dataQuality: "strong", reasons: nil),
-            readiness: DailyScore(value: 82, unit: "score_0_100", status: "ready", confidencePhase: "strong", dataQuality: "strong", reasons: nil)
+            sleep: DailyScore(value: 88, unit: "score_0_100", status: "ready", confidencePhase: "strong", dataQuality: "strong", components: nil, inputs: nil, reasons: nil),
+            strain: DailyScore(value: 18, unit: "load_points", status: "ready", confidencePhase: "strong", dataQuality: "strong", components: nil, inputs: nil, reasons: nil),
+            readiness: DailyScore(value: 82, unit: "score_0_100", status: "ready", confidencePhase: "strong", dataQuality: "strong", components: nil, inputs: nil, reasons: nil)
         ),
         strainTarget: StrainTarget(
             targetLoadPoints: 21,
+            chronicLoadPoints: 21,
+            acuteLoadPoints: 18,
             progressLoadPoints: 18,
             progressRatio: 0.86,
             loadBand: "productive",
-            confidencePhase: "strong"
+            confidencePhase: "strong",
+            components: nil,
+            inputs: nil
         )
     )
 }

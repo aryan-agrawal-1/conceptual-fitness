@@ -6,138 +6,129 @@ struct DailyInsightProvider {
         cachedLastText(for: BriefSlot(date: now), kind: .dailyBrief, now: now)
     }
 
-    func dailyBrief(for snapshot: DashboardSnapshot, now: Date = Date()) async -> String {
+    func dailyBrief(for bundle: DashboardBundle, now: Date = Date()) async -> String {
         let slot = BriefSlot(date: now)
-        if let cached = cachedText(for: snapshot, slot: slot, kind: .dailyBrief) {
+        if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .dailyBrief) {
             return cached
         }
 
         if #available(iOS 26.0, *) {
-            if let generated = await foundationModelSummary(for: snapshot, slot: slot) {
-                cache(generated, for: snapshot, slot: slot, kind: .dailyBrief)
+            if let generated = await generatedSummary(for: bundle, slot: slot, mode: slot == .evening ? .eveningBrief : .dayBrief) {
+                cache(generated, for: bundle.snapshot, slot: slot, kind: .dailyBrief)
                 return generated
             }
         }
-        let fallback = fallbackDailyBrief(for: snapshot, now: now)
-        cache(fallback, for: snapshot, slot: slot, kind: .dailyBrief)
-        return fallback
+
+        return "Daily brief unavailable on this device."
     }
 
-    func shortInsight(for snapshot: DashboardSnapshot, now: Date = Date()) -> String {
+    func shortInsight(for bundle: DashboardBundle, now: Date = Date()) async -> String {
         let slot = BriefSlot(date: now)
-        if let cached = cachedText(for: snapshot, slot: slot, kind: .shortInsight) {
+        if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .shortInsight) {
             return cached
         }
 
-        let sleep = snapshot.scores.sleep?.value
-        let readiness = snapshot.scores.readiness?.value
-        let strainProgress = snapshot.strainTarget?.progressRatio
-        let insight: String
-
-        if slot == .evening {
-            if let sleep, sleep < 60 {
-                insight = "Sleep is the main limiter. Keep tonight's plan quiet and protect a full sleep window."
-            } else if let readiness, readiness < 55 {
-                insight = "Readiness is low. Keep the evening easy and let recovery lead the plan."
-            } else if let strainProgress, strainProgress > 1.05 {
-                insight = "Weekly strain is already high. Use tonight for maintenance and recovery."
-            } else if let readiness, readiness >= 80, let sleep, sleep >= 80 {
-                insight = "Recovery is in a good place. Keep tonight calm so the sleep win carries forward."
-            } else {
-                insight = "Your scores point to a balanced day. Finish with an easy wind-down."
-            }
-        } else {
-            if let readiness, readiness >= 80, let sleep, sleep >= 80 {
-                insight = "Strong recovery supports a purposeful push today. Build strain steadily."
-            } else if let readiness, readiness < 55 {
-                insight = "Readiness is low today. Keep movement easy and hold strain below target."
-            } else if let sleep, sleep < 60 {
-                insight = "Sleep is the main limiter today. Keep training controlled and prioritize tonight's wind-down."
-            } else if let strainProgress, strainProgress > 1.05 {
-                insight = "You are already over this week's strain target. Treat today as maintenance."
-            } else {
-                insight = "Your scores point to a balanced day. Build useful strain steadily."
+        if #available(iOS 26.0, *) {
+            if let generated = await generatedSummary(for: bundle, slot: slot, mode: .shortInsight) {
+                cache(generated, for: bundle.snapshot, slot: slot, kind: .shortInsight)
+                return generated
             }
         }
 
-        cache(insight, for: snapshot, slot: slot, kind: .shortInsight)
-        return insight
+        return "Insight unavailable on this device."
     }
 
-    func fallbackDailyBrief(for snapshot: DashboardSnapshot, now: Date = Date()) -> String {
+    func previewDailyBrief(now: Date = Date()) -> String {
         let slot = BriefSlot(date: now)
-        let sleep = snapshot.scores.sleep?.value
-        let readiness = snapshot.scores.readiness?.value
-        let strainProgress = snapshot.strainTarget?.progressRatio
-        let sleepText = sleepDurationText(minutes: snapshot.metrics?.sleepMinutes)
-        let hrvText = snapshot.metrics?.heartRateVariability.map { "HRV is \($0.clean) ms" }
-        let restingText = snapshot.metrics?.restingHeartRate.map { "resting heart rate is \($0.clean) bpm" }
-        let recoverySignal = [hrvText, restingText].compactMap(\.self).joined(separator: " and ")
-
         if slot == .evening {
-            if let sleep, sleep < 70 {
-                return "Last night looks like the main recovery limiter, with \(sleepText) logged and a sleep score of \(Int(sleep.rounded())). Keep the rest of tonight simple: finish hard training and heavy meals early, dim screens, and start a consistent wind-down. Aim for a full sleep window, a cooler room, and an easy morning plan so recovery can catch up."
-            }
-            return "Your recovery picture is \(readinessText(readiness)), and last night's sleep logged \(sleepText). Tonight's goal is to protect that base: keep the evening low-friction, avoid late intensity, and give yourself enough time in bed to repeat a strong sleep window. If you want movement, keep it relaxed and let the day close without chasing more strain."
+            return "Tonight is for protecting recovery: keep the wind-down simple, avoid late intensity, and give sleep enough room to do its job."
         }
+        return "Recovery supports a purposeful day: build useful strain if it fits your plan, then keep enough margin for a calm evening and strong sleep."
+    }
 
-        if let readiness, readiness < 55 {
-            return "Readiness is low today, so treat recovery as the priority. Last night's sleep logged \(sleepText), and \(recoverySignal.isEmpty ? "your recovery signals are still settling" : recoverySignal). Keep training easy, cap strain below target, and use light movement, hydration, and steady meals to help your system normalize before asking for more intensity."
-        }
-
-        if let sleep, sleep < 60 {
-            return "Sleep is the main limiter after \(sleepText) last night. Keep today's aim controlled: move enough to feel better, but avoid stacking hard intensity on top of poor recovery. Prioritize daylight, hydration, and a clear caffeine cutoff, then make tonight's wind-down non-negotiable so you can rebuild sleep pressure and recover more fully."
-        }
-
-        if let strainProgress, strainProgress > 1.05 {
-            return "You are already past this week's strain target, so the useful move today is maintenance. Last night's sleep logged \(sleepText), and readiness is \(readinessText(readiness)). Keep movement low to moderate, leave hard intervals for another day, and focus on recovery basics so tomorrow's baseline is not dragged down by extra load."
-        }
-
-        if let readiness, readiness >= 80, let sleep, sleep >= 80 {
-            return "Recovery looks strong after \(sleepText) last night, with sleep and readiness both in a good range. Use today for a purposeful push if it fits your plan: build strain steadily, warm up properly, and stop short of turning a good recovery day into unnecessary fatigue. Keep the evening calm so the sleep win carries forward."
-        }
-
-        return "Your scores point to a balanced day after \(sleepText) last night. Aim for useful strain rather than maximum strain: get movement in, keep intensity honest, and watch how energy changes through the day. \(recoverySignalSentence(recoverySignal)) Finish with a simple wind-down so tomorrow starts from a stable recovery base."
+    func previewShortInsight(now: Date = Date()) -> String {
+        BriefSlot(date: now) == .evening
+            ? "The day is ready to close with a steady wind-down."
+            : "Recovery looks supportive, so today can handle purposeful movement."
     }
 
     @available(iOS 26.0, *)
-    private func foundationModelSummary(for snapshot: DashboardSnapshot, slot: BriefSlot) async -> String? {
+    private func generatedSummary(for bundle: DashboardBundle, slot: BriefSlot, mode: InsightMode) async -> String? {
         let model = SystemLanguageModel.default
         guard model.availability == .available else { return nil }
 
-        let strainPercent = ((snapshot.strainTarget?.progressRatio ?? 0) * 100).rounded()
-        let sleepDuration = sleepDurationText(minutes: snapshot.metrics?.sleepMinutes)
+        let context = DailyInsightContext(bundle: bundle, slot: slot)
         let prompt = """
-        Write one daily health coaching brief in 70 to 95 words.
-        Use calm direct language. Do not diagnose. Do not use bullet points.
-        Describe last night's sleep and recovery, then give a specific aim for the next part of the day.
-        Current local phase: \(slot.promptLabel).
-        If the phase is evening, focus on tonight's sleep goal and a practical wind-down plan instead of pushing training.
-        Readiness: \(snapshot.scores.readiness?.value?.clean ?? "unknown").
-        Sleep: \(snapshot.scores.sleep?.value?.clean ?? "unknown").
-        Sleep duration: \(sleepDuration).
-        Strain target progress: \(Int(strainPercent))%.
-        HRV: \(snapshot.metrics?.heartRateVariability?.clean ?? "unknown").
-        Resting heart rate: \(snapshot.metrics?.restingHeartRate?.clean ?? "unknown").
-        Steps: \(snapshot.metrics?.steps.map(String.init) ?? "unknown").
+        \(mode.task)
+
+        Output rules:
+        - Do not use bullet points.
+        - Do not quote numeric scores, metric values, component scores, percentages, load points, or thresholds.
+        - Write directly to the user with "you" and "your". The tone should feel personal, not like a detached report.
+        - Translate the data into plain guidance. Say what you should do and why.
+        - Name your dominant limiter or opportunity when one is clear.
+        - Prefer natural sentences over compressed clauses. For example: "Your main limiter today is recent training load" instead of "The limiter is recent load."
+        - Keep medical language cautious. Do not diagnose illness, injury, sleep disorders, or cardiovascular problems.
+        - If data quality or confidence is weak, phrase the recommendation cautiously.
+        - Do not echo internal component keys from the data, such as recent_load_fit or illness_anomaly_context.
+        - Do name user-facing metrics when they explain the recommendation, such as HRV, resting heart rate, respiratory rate, oxygen saturation, sleep duration, strain, and sleep debt.
+        - If an anomaly signal matters, name the metric behind it instead of saying "one recovery signal" or "a metric."
+
+        Current local phase: \(slot.promptLabel)
+
+        Domain contract:
+        \(Self.domainContract)
+
+        User data:
+        \(context.promptBlock)
         """
 
         do {
             let session = LanguageModelSession(
                 model: model,
-                instructions: "You write practical wearable-based recovery, sleep, and training briefs for a fitness dashboard."
+                instructions: "You write practical wearable-based recovery, sleep, and training guidance for a fitness dashboard. You understand the app's Sleep, Strain, and Readiness scores from their components and personal baselines, then convert them into concise user-facing coaching."
             )
             let response = try await session.respond(
                 to: prompt,
-                options: GenerationOptions(temperature: 0.25, maximumResponseTokens: 180)
+                options: GenerationOptions(temperature: 0.2, maximumResponseTokens: mode.maximumResponseTokens)
             )
-            let cleaned = response.content
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            return cleaned.isEmpty ? nil : cleaned
+            return cleaned(response.content, for: mode)
         } catch {
             return nil
         }
+    }
+
+    private static let domainContract = """
+    Sleep is a 0-100 view of last night's sleep quality and adequacy. It relies most on sleep duration, timing consistency, and sleep continuity because wearables are better at broad sleep-wake patterns than exact sleep stages. Timing and overnight physiology are supporting signals. Sleep stages are useful context but should not override a short, irregular, or broken night.
+
+    Strain is accumulated load, not a 0-100 quality score. More strain is not automatically better. Interpret strain against your weekly target, chronic load, recent training load, and whether load came from cardio, ordinary activity, or muscular work. If weekly strain is already high, favor maintenance or recovery even if sleep looks good.
+
+    Readiness is a personalized estimate of whether your body appears recovered enough for strain today. It combines sleep adequacy and sleep debt, overnight recovery signals, recent training load, illness-like anomaly context, and confidence. Readiness should guide training ambition: strong readiness can support purposeful strain, while low readiness should shift you toward easy movement and recovery.
+
+    HRV is interpreted against the user's own baseline. Higher than usual often supports recovery; suppressed HRV can reflect stress, poor sleep, heavy training load, alcohol, travel, or possible illness. Do not treat one HRV value as a diagnosis.
+
+    Resting heart rate is interpreted against the user's own baseline. Lower or normal values tend to support recovery. Elevated resting heart rate can reflect incomplete recovery, stress, dehydration, heat, alcohol, heavy recent load, or possible illness.
+
+    Respiratory rate and oxygen saturation are anomaly/context signals. If respiratory rate is elevated or oxygen saturation is low, be conservative and suggest recovery-focused behavior without making medical claims.
+
+    Sleep debt means the user may need more recovery even if one score is acceptable. Recent load spikes should make advice more conservative, especially when autonomic signals are also poor.
+    """
+
+    private func cleaned(_ text: String, for mode: InsightMode) -> String? {
+        let trimmed = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        guard !trimmed.isEmpty else { return nil }
+        let collapsed = trimmed
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        if mode == .shortInsight {
+            return String(collapsed.prefix(220))
+        }
+        return collapsed
     }
 
     private func cachedText(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String? {
@@ -177,7 +168,7 @@ struct DailyInsightProvider {
     }
 
     private func cacheKey(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v1.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v2.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func cachedLastText(for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
@@ -197,7 +188,7 @@ struct DailyInsightProvider {
     }
 
     private func lastCacheKey(for slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v1.last.\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v2.last.\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func allowedSnapshotDates(for slot: BriefSlot, now: Date, calendar: Calendar = .current) -> Set<String> {
@@ -216,29 +207,280 @@ struct DailyInsightProvider {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+}
 
-    private func sleepDurationText(minutes: Int?) -> String {
-        guard let minutes else { return "no confirmed sleep duration" }
-        let hours = minutes / 60
-        let remainder = minutes % 60
-        if hours == 0 { return "\(remainder) minutes" }
-        if remainder == 0 { return "\(hours) hours" }
-        return "\(hours) hours \(remainder) minutes"
+private struct DailyInsightContext {
+    let bundle: DashboardBundle
+    let slot: BriefSlot
+
+    var promptBlock: String {
+        [
+            "Snapshot:",
+            snapshotBlock,
+            "",
+            "Score components and inputs:",
+            scoreBlock,
+            "",
+            "Key metrics:",
+            metricsBlock,
+            "",
+            "Recent workout context:",
+            workoutsBlock,
+            "",
+            "Interpretive signals:",
+            interpretationBlock,
+        ].joined(separator: "\n")
     }
 
-    private func readinessText(_ value: Double?) -> String {
-        guard let value else { return "still being established" }
-        if value >= 80 { return "strong" }
-        if value >= 65 { return "solid" }
-        if value >= 50 { return "moderate" }
+    private var snapshotBlock: String {
+        let snapshot = bundle.snapshot
+        return [
+            "- date: \(snapshot.date)",
+            "- dashboard_data_quality: \(snapshot.dataQuality ?? "unknown")",
+            "- phase: \(slot.promptLabel)",
+        ].joined(separator: "\n")
+    }
+
+    private var scoreBlock: String {
+        let snapshot = bundle.snapshot
+        return [
+            scoreSection(name: "sleep", score: snapshot.scores.sleep),
+            scoreSection(name: "readiness", score: snapshot.scores.readiness),
+            scoreSection(name: "strain", score: snapshot.scores.strain),
+            strainTargetSection(snapshot.strainTarget),
+        ].joined(separator: "\n")
+    }
+
+    private var metricsBlock: String {
+        let metrics = bundle.snapshot.metrics
+        var lines = [
+            "- steps: \(format(metrics?.steps))",
+            "- active_calories: \(format(metrics?.activeCalories))",
+            "- total_calories: \(format(metrics?.totalCalories))",
+            "- distance_meters: \(format(metrics?.distanceMeters))",
+            "- resting_heart_rate: \(format(metrics?.restingHeartRate))",
+            "- heart_rate_variability: \(format(metrics?.heartRateVariability))",
+            "- oxygen_saturation: \(format(metrics?.oxygenSaturation))",
+            "- respiratory_rate: \(format(metrics?.respiratoryRate))",
+            "- sleep_minutes: \(format(metrics?.sleepMinutes))",
+            "- workout_count: \(format(metrics?.workoutCount))",
+            "- metrics_data_quality: \(metrics?.dataQuality ?? "unknown")",
+            "- vo2_max_current: \(format(bundle.vo2Max?.current?.value))",
+            "- vo2_max_data_quality: \(bundle.vo2Max?.dataQuality ?? "unknown")",
+        ]
+
+        for key in bundle.metricSummaries.keys.sorted() {
+            guard let summary = bundle.metricSummaries[key] else { continue }
+            lines.append("- metric_summary.\(key).current: \(format(summary.current?.value)); quality: \(summary.dataQuality ?? "unknown")")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private var workoutsBlock: String {
+        let workouts = bundle.recentWorkouts.prefix(5)
+        guard !workouts.isEmpty else { return "- no recent workouts supplied" }
+        return workouts.map { workout in
+            "- \(workout.workoutType ?? "workout") on \(workout.date ?? "unknown date"); duration_seconds: \(format(workout.durationSeconds)); active_calories: \(format(workout.activeCalories)); distance_meters: \(format(workout.distanceMeters)); intensity: \(workout.intensity ?? "unknown"); avg_hr: \(format(workout.heartRate?.averageBPM)); max_hr: \(format(workout.heartRate?.maxBPM))"
+        }.joined(separator: "\n")
+    }
+
+    private var interpretationBlock: String {
+        let snapshot = bundle.snapshot
+        let readinessDrivers = driverSummary(
+            components: snapshot.scores.readiness?.components,
+            preferredOrder: [
+                ("illness_anomaly_context", "recovery anomaly context"),
+                ("autonomic_recovery", "overnight recovery signals"),
+                ("sleep_adequacy_debt", "sleep adequacy and sleep debt"),
+                ("recent_load_fit", "recent training load"),
+                ("confidence", "personal baseline confidence"),
+            ]
+        )
+        let sleepDrivers = driverSummary(
+            components: snapshot.scores.sleep?.components,
+            preferredOrder: [
+                ("duration", "sleep duration"),
+                ("regularity", "sleep timing consistency"),
+                ("continuity", "sleep continuity"),
+                ("timing", "bedtime timing"),
+                ("physiology", "overnight recovery signals"),
+                ("stages", "sleep stage estimate"),
+            ]
+        )
+        let strainDrivers = strainDriverSummary(snapshot.scores.strain?.components)
+        let strainTarget = snapshot.strainTarget
+        return [
+            "- sleep_overall: \(scoreBand(snapshot.scores.sleep?.value)); plain_language_sleep_drivers: \(sleepDrivers)",
+            "- readiness_overall: \(scoreBand(snapshot.scores.readiness?.value)); plain_language_readiness_drivers: \(readinessDrivers)",
+            "- current_strain_load: \(format(snapshot.scores.strain?.value)); plain_language_strain_sources: \(strainDrivers)",
+            "- weekly_training_load: \(strainTarget?.loadBand ?? "unknown"); weekly_progress_ratio: \(format(strainTarget?.progressRatio)); target_load_points: \(format(strainTarget?.targetLoadPoints)); progress_load_points: \(format(strainTarget?.progressLoadPoints))",
+            "- hrv_signal: \(baselineSignal(snapshot.scores.readiness?.components?["autonomic_recovery"]?.objectValue?["hrv"]))",
+            "- resting_hr_signal: \(baselineSignal(snapshot.scores.readiness?.components?["autonomic_recovery"]?.objectValue?["rhr"]))",
+            "- anomaly_signals: \(anomalySignals(snapshot.scores.readiness?.components?["illness_anomaly_context"]))",
+            "- confidence_phase: readiness=\(snapshot.scores.readiness?.confidencePhase ?? "unknown"), sleep=\(snapshot.scores.sleep?.confidencePhase ?? "unknown"), strain=\(snapshot.scores.strain?.confidencePhase ?? "unknown")",
+        ].joined(separator: "\n")
+    }
+
+    private func scoreSection(name: String, score: DailyScore?) -> String {
+        guard let score else { return "\(name): missing" }
+        return [
+            "\(name):",
+            "- value: \(format(score.value)); unit: \(score.unit ?? "unknown"); status: \(score.status ?? "unknown"); confidence: \(score.confidencePhase ?? "unknown"); data_quality: \(score.dataQuality ?? "unknown")",
+            "- reasons: \(reasonSummary(score.reasons))",
+            "- components: \(formatJSON(.object(score.components ?? [:])))",
+            "- inputs: \(formatJSON(.object(score.inputs ?? [:])))",
+        ].joined(separator: "\n")
+    }
+
+    private func strainTargetSection(_ target: StrainTarget?) -> String {
+        guard let target else { return "strain_target: missing" }
+        return [
+            "strain_target:",
+            "- target_load_points: \(format(target.targetLoadPoints)); chronic_load_points: \(format(target.chronicLoadPoints)); acute_load_points: \(format(target.acuteLoadPoints)); progress_load_points: \(format(target.progressLoadPoints)); progress_ratio: \(format(target.progressRatio)); load_band: \(target.loadBand ?? "unknown"); confidence: \(target.confidencePhase ?? "unknown")",
+            "- components: \(formatJSON(.object(target.components ?? [:])))",
+            "- inputs: \(formatJSON(.object(target.inputs ?? [:])))",
+        ].joined(separator: "\n")
+    }
+
+    private func reasonSummary(_ reasons: [ScoreReason]?) -> String {
+        guard let reasons, !reasons.isEmpty else { return "none" }
+        return reasons.map { reason in
+            "\(reason.code ?? "unknown")(\(reason.severity ?? "unknown"), \(reason.direction ?? "unknown")): \(reason.message ?? "")"
+        }.joined(separator: "; ")
+    }
+
+    private func driverSummary(components: [String: JSONValue]?, preferredOrder: [(key: String, label: String)]) -> String {
+        guard let components else { return "unknown" }
+        let scored = preferredOrder.compactMap { item -> String? in
+            let key = item.key
+            let label = item.label
+            guard let score = components[key]?.objectValue?["score"]?.doubleValue else { return nil }
+            return "\(label) \(scoreBand(score))"
+        }
+        return scored.isEmpty ? "unknown" : scored.joined(separator: ", ")
+    }
+
+    private func strainDriverSummary(_ components: [String: JSONValue]?) -> String {
+        guard let components else { return "unknown" }
+        let keys: [(key: String, label: String)] = [
+            ("cardio_load", "cardio load"),
+            ("source_zone_load", "provider zone load"),
+            ("daily_activity_load", "ordinary activity"),
+            ("muscular_load", "strength or muscular load"),
+            ("rpe_load", "reported effort load"),
+            ("total_load", "total strain"),
+        ]
+        let parts = keys.compactMap { item -> String? in
+            let key = item.key
+            let label = item.label
+            guard let value = components[key] else { return nil }
+            if let object = value.objectValue {
+                if let load = object["load_points"]?.doubleValue {
+                    return "\(label)=\(format(load))"
+                }
+                return "\(label)=available"
+            }
+            if case .null = value {
+                return "\(label)=missing"
+            }
+            return "\(label)=\(formatJSON(value))"
+        }
+        return parts.isEmpty ? "unknown" : parts.joined(separator: ", ")
+    }
+
+    private func baselineSignal(_ value: JSONValue?) -> String {
+        guard let object = value?.objectValue else { return "unknown" }
+        let score = object["score"]?.doubleValue
+        let baseline = object["baseline"]?.doubleValue ?? object["median"]?.doubleValue
+        let observed = object["value"]?.doubleValue
+        return "score_band=\(scoreBand(score)); observed=\(format(observed)); baseline=\(format(baseline))"
+    }
+
+    private func anomalySignals(_ value: JSONValue?) -> String {
+        guard let object = value?.objectValue else { return "unknown" }
+        let anomalies = object["anomalies"]?.arrayValue?.map { anomalyLabel(formatJSON($0)) }.joined(separator: ", ")
+        return anomalies?.isEmpty == false ? anomalies! : "none"
+    }
+
+    private func anomalyLabel(_ value: String) -> String {
+        switch value {
+        case "oxygen_saturation_low":
+            return "oxygen saturation is low"
+        case "respiratory_rate_elevated":
+            return "respiratory rate is elevated"
+        case "hrv_suppressed":
+            return "HRV is suppressed"
+        case "resting_hr_elevated":
+            return "resting heart rate is elevated"
+        case "illness_tag":
+            return "illness tag is present"
+        default:
+            return value.displayTitle.lowercased()
+        }
+    }
+
+    private func scoreBand(_ value: Double?) -> String {
+        guard let value else { return "unknown" }
+        if value >= 85 { return "strong" }
+        if value >= 70 { return "solid" }
+        if value >= 55 { return "limited" }
         return "low"
     }
 
-    private func recoverySignalSentence(_ value: String) -> String {
-        guard let first = value.first else {
-            return "As more data syncs, the brief will become more specific."
+    private func format(_ value: Double?) -> String {
+        guard let value else { return "unknown" }
+        return value.clean
+    }
+
+    private func format(_ value: Int?) -> String {
+        guard let value else { return "unknown" }
+        return String(value)
+    }
+
+    private func formatJSON(_ value: JSONValue) -> String {
+        switch value {
+        case .string(let string):
+            return string
+        case .number(let number):
+            return number.clean
+        case .bool(let bool):
+            return bool ? "true" : "false"
+        case .null:
+            return "null"
+        case .array(let array):
+            return "[" + array.prefix(12).map(formatJSON).joined(separator: ", ") + (array.count > 12 ? ", ..." : "") + "]"
+        case .object(let object):
+            let parts = object.keys.sorted().prefix(40).map { key in
+                "\(key): \(formatJSON(object[key] ?? .null))"
+            }
+            return "{" + parts.joined(separator: ", ") + (object.count > 40 ? ", ..." : "") + "}"
         }
-        return "\(String(first).uppercased())\(value.dropFirst())."
+    }
+}
+
+private enum InsightMode: Equatable {
+    case dayBrief
+    case eveningBrief
+    case shortInsight
+
+    var task: String {
+        switch self {
+        case .dayBrief:
+            return "Write one daily health coaching brief in 70 to 95 words. The brief should tell the user what to aim for today and why: whether this is a good day for a workout, an easier movement day, recovery, or a normal steady day."
+        case .eveningBrief:
+            return "Write one evening health coaching brief in 70 to 95 words. The brief should tell the user how to wind down tonight and why: whether to keep rhythm, catch up on sleep, avoid more strain, or prepare for tomorrow."
+        case .shortInsight:
+            return "Write a very short dashboard insight in one or two sentences. It should summarize what the scores mean for the user's day without using numbers."
+        }
+    }
+
+    var maximumResponseTokens: Int {
+        switch self {
+        case .dayBrief, .eveningBrief:
+            return 180
+        case .shortInsight:
+            return 70
+        }
     }
 }
 
