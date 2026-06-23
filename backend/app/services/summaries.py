@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession, Workout
 from app.services.health_dates import get_or_create_profile
 from app.services.interval_totals import interval_totals_by_date
+from app.services.metric_rollups import daily_rollup_values
 
 PREFERRED_SAMPLE_DATA_TYPES: dict[str, str] = {
     "heart_rate_variability": "daily-heart-rate-variability",
@@ -40,6 +41,28 @@ def rebuild_daily_summaries(
         start=start,
         end=end,
     )
+    rollup_totals = {
+        metric: daily_rollup_values(
+            session,
+            user_id=user_id,
+            metric=metric,
+            start=start,
+            end=end,
+            value_kind="sum",
+        )
+        for metric in ("steps", "active_calories", "distance")
+    }
+    rollup_sample_averages = {
+        metric: daily_rollup_values(
+            session,
+            user_id=user_id,
+            metric=metric,
+            start=start,
+            end=end,
+            value_kind="avg",
+        )
+        for metric in ("oxygen_saturation",)
+    }
 
     samples = session.scalars(
         select(MetricSample).where(
@@ -87,17 +110,24 @@ def rebuild_daily_summaries(
         totals = interval_totals[day]
         values = sample_values[day]
         preferred_values = preferred_sample_values[day]
-        summary.steps = _optional_int(totals.get("steps"))
-        summary.active_calories = _optional_float(totals.get("active_calories"))
+        summary.steps = _optional_int(totals.get("steps") or rollup_totals["steps"].get(day))
+        summary.active_calories = _optional_float(
+            totals.get("active_calories") or rollup_totals["active_calories"].get(day)
+        )
         summary.total_calories = _optional_float(totals.get("total_calories"))
-        summary.distance_meters = _optional_float(totals.get("distance"))
+        summary.distance_meters = _optional_float(
+            totals.get("distance") or rollup_totals["distance"].get(day)
+        )
         summary.resting_heart_rate = _mean(values.get("resting_heart_rate"))
         summary.heart_rate_variability = _preferred_mean(
             preferred_values,
             values,
             "heart_rate_variability",
         )
-        summary.oxygen_saturation = _preferred_mean(preferred_values, values, "oxygen_saturation")
+        summary.oxygen_saturation = (
+            _preferred_mean(preferred_values, values, "oxygen_saturation")
+            or rollup_sample_averages["oxygen_saturation"].get(day)
+        )
         summary.respiratory_rate = _preferred_mean(preferred_values, values, "respiratory_rate")
         summary.sleep_minutes = sleep_minutes.get(day) or None
         summary.workout_count = workout_counts.get(day, 0)

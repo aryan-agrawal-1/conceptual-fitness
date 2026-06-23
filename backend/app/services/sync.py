@@ -15,9 +15,14 @@ from app.models import ConnectionStatus, GoogleAccount, SyncCursor, SyncStatus, 
 from app.services.health_dates import timezone_for_profile
 from app.services.normalization import (
     _record_civil_date,
-    upsert_heart_rate_points_fast,
+    high_volume_records_for_points,
     upsert_measurement_points_fast,
     upsert_raw_and_normalized,
+)
+from app.services.metric_rollups import (
+    HIGH_VOLUME_DATA_TYPES,
+    MINUTE_ROLLUP_METRICS,
+    replace_high_volume_rollups,
 )
 from app.services.scores import rebuild_derived_scores
 from app.services.summaries import rebuild_daily_summaries
@@ -396,6 +401,7 @@ async def _sync_data_type(
             resume_running=resume_running,
             use_timestamp=bounds.uses_timestamp,
         )
+        chunk_points: list[dict[str, object]] = []
         async for points, next_page_token in client.iter_data_point_pages_with_tokens(
             data_type,
             access_token,
@@ -407,6 +413,11 @@ async def _sync_data_type(
             if profile:
                 profile.record_page(data_type)
             records_seen += len(points)
+            if data_type in HIGH_VOLUME_DATA_TYPES:
+                chunk_points.extend(points)
+                cursor.last_page_token = next_page_token
+                page_token = None
+                continue
             store_started = perf_counter()
             stored = _store_points(
                 session,
@@ -429,6 +440,34 @@ async def _sync_data_type(
             session.add(cursor)
             session.commit()
             page_token = None
+        if data_type in HIGH_VOLUME_DATA_TYPES:
+            store_started = perf_counter()
+            filtered_points = _points_in_range(
+                data_type,
+                chunk_points,
+                start=_bound_date(chunk_start),
+                end=_bound_date(chunk_end),
+            )
+            records = high_volume_records_for_points(
+                data_type=data_type,
+                points=filtered_points,
+            )
+            stored = replace_high_volume_rollups(
+                session,
+                account=account,
+                metric=spec.metric,
+                records=records,
+                range_start=_range_start_datetime(session, account, spec.filter_time_path, chunk_start),
+                range_end=_range_end_datetime(session, account, spec.filter_time_path, chunk_end),
+            )
+            records_stored += stored
+            if profile:
+                profile.record_store(
+                    data_type,
+                    seconds=perf_counter() - store_started,
+                    seen=len(filtered_points),
+                    stored=stored,
+                )
         _set_cursor_chunk_complete(cursor, bounds, chunk_end)
         cursor.last_page_token = None
         session.add(cursor)
@@ -448,6 +487,8 @@ def _bounds_for_data_type(
     now: datetime,
 ) -> TypeSyncBounds:
     spec = DATA_TYPE_SPECS[data_type]
+    if data_type in HIGH_VOLUME_DATA_TYPES and spec.metric not in MINUTE_ROLLUP_METRICS:
+        return TypeSyncBounds(start=start, end=end)
     if not spec.use_timestamp_cursor:
         return TypeSyncBounds(start=start, end=end)
 
@@ -558,6 +599,28 @@ def _date_start_for_filter(
     return datetime.combine(value, time.min, tzinfo=_account_timezone(session, account))
 
 
+def _range_start_datetime(
+    session: Session,
+    account: GoogleAccount,
+    filter_time_path: str,
+    value: date | datetime,
+) -> datetime:
+    if isinstance(value, datetime):
+        return _normalize_timestamp_for_filter(session, account, filter_time_path, value)
+    return _date_start_for_filter(session, account, filter_time_path, value)
+
+
+def _range_end_datetime(
+    session: Session,
+    account: GoogleAccount,
+    filter_time_path: str,
+    value: date | datetime,
+) -> datetime:
+    if isinstance(value, datetime):
+        return _normalize_timestamp_for_filter(session, account, filter_time_path, value)
+    return _date_start_for_filter(session, account, filter_time_path, value + timedelta(days=1))
+
+
 def _normalize_timestamp_for_filter(
     session: Session,
     account: GoogleAccount,
@@ -636,12 +699,6 @@ def _store_points(
 ) -> int:
     spec = DATA_TYPE_SPECS[data_type]
     points = _points_in_range(data_type, points, start=start, end=end)
-    if data_type == "heart-rate":
-        return upsert_heart_rate_points_fast(
-            session,
-            account=account,
-            points=points,
-        )
     if spec.storage in {"interval", "sample"}:
         return upsert_measurement_points_fast(
             session,

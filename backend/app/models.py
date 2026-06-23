@@ -294,6 +294,56 @@ class MetricInterval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MetricMinuteRollup(Base):
+    __tablename__ = "metric_minute_rollups"
+    __table_args__ = (
+        UniqueConstraint("user_id", "metric", "bucket_start", name="uq_metric_minute_rollup"),
+        Index("ix_metric_minute_rollups_user_metric_date", "user_id", "metric", "civil_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    metric: Mapped[str] = mapped_column(String(80))
+    bucket_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    civil_date: Mapped[date] = mapped_column(Date)
+    avg_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sum_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str] = mapped_column(String(32))
+    source_platform: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source_device: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class MetricDailyRollup(Base):
+    __tablename__ = "metric_daily_rollups"
+    __table_args__ = (
+        UniqueConstraint("user_id", "metric", "civil_date", name="uq_metric_daily_rollup"),
+        Index("ix_metric_daily_rollups_user_metric_date", "user_id", "metric", "civil_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    metric: Mapped[str] = mapped_column(String(80))
+    civil_date: Mapped[date] = mapped_column(Date)
+    avg_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sum_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str] = mapped_column(String(32))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class SleepSession(Base):
     __tablename__ = "sleep_sessions"
     __table_args__ = (UniqueConstraint("raw_record_id", name="uq_sleep_session_raw_record"),)

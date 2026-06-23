@@ -20,6 +20,7 @@ from app.models import (
     Workout,
     new_uuid,
 )
+from app.services.metric_rollups import HighVolumeRecord
 
 HEART_RATE_BULK_BATCH_SIZE = 2000
 BULK_MEASUREMENT_DATA_TYPES = {
@@ -119,133 +120,17 @@ def _find_raw_record(
     )
 
 
-def upsert_heart_rate_points_fast(
-    session: Session,
+def high_volume_records_for_points(
     *,
-    account: GoogleAccount,
+    data_type: str,
     points: list[dict[str, Any]],
-) -> int:
-    bind = session.get_bind()
-    if bind.dialect.name != "postgresql":
-        for point in points:
-            upsert_raw_and_normalized(
-                session,
-                account=account,
-                data_type="heart-rate",
-                data_point=point,
-            )
-        return len(points)
-
-    spec = DATA_TYPE_SPECS["heart-rate"]
-    raw_rows: dict[str, dict[str, Any]] = {}
-    sample_rows_by_source: dict[str, dict[str, Any]] = {}
-
-    for point in points:
-        raw_hash = _content_hash(point)
-        source_record_id = (
-            point.get("name") or point.get("dataPointName") or f"heart-rate:{raw_hash}"
-        )
-        payload = point.get(spec.payload_key, {})
-        if not isinstance(payload, dict):
-            payload = {}
-        source = point.get("dataSource") or {}
-        if not isinstance(source, dict):
-            source = {}
-        device = source.get("device") or {}
-        if not isinstance(device, dict):
-            device = {}
-
-        start_time, end_time = _record_times(payload)
-        civil_date = _record_civil_date(payload) or (start_time.date() if start_time else None)
-        raw_rows[source_record_id] = {
-            "id": new_uuid(),
-            "user_id": account.user_id,
-            "google_account_id": account.id,
-            "data_type": "heart-rate",
-            "source_record_id": source_record_id,
-            "source_platform": source.get("platform"),
-            "source_device": device.get("displayName"),
-            "start_time": start_time,
-            "end_time": end_time,
-            "civil_date": civil_date,
-            "raw_json": point,
-            "content_hash": raw_hash,
-            "created_at": utcnow(),
-            "updated_at": utcnow(),
-        }
-
-        observed_at = _sample_time(payload)
-        value = _extract_numeric_value(payload)
-        if observed_at is None or value is None:
-            continue
-        sample_rows_by_source[source_record_id] = {
-            "id": new_uuid(),
-            "user_id": account.user_id,
-            "metric": spec.metric,
-            "observed_at": observed_at,
-            "civil_date": civil_date,
-            "value": value,
-            "unit": spec.unit,
-            "source_platform": source.get("platform"),
-            "source_device": device.get("displayName"),
-            "created_at": utcnow(),
-        }
-
-    if not raw_rows:
-        return 0
-
-    raw_items = list(raw_rows.items())
-    for offset in range(0, len(raw_items), HEART_RATE_BULK_BATCH_SIZE):
-        raw_batch = dict(raw_items[offset : offset + HEART_RATE_BULK_BATCH_SIZE])
-        rows_to_upsert, raw_ids = _changed_raw_rows(
-            session,
-            account=account,
-            data_type="heart-rate",
-            rows_by_source=raw_batch,
-        )
-        if not rows_to_upsert:
-            continue
-        raw_ids.update(
-            _bulk_upsert_raw_rows(
-                session,
-                rows_to_upsert,
-            )
-        )
-
-        sample_rows: list[dict[str, Any]] = []
-        for source_record_id in rows_to_upsert:
-            row = sample_rows_by_source.get(source_record_id)
-            raw_record_id = raw_ids.get(source_record_id)
-            if row is None or raw_record_id is None:
-                continue
-            sample_rows.append({**row, "raw_record_id": raw_record_id})
-
-        if sample_rows:
-            _replace_normalized_many(
-                session,
-                [
-                    raw_ids[source_record_id]
-                    for source_record_id in rows_to_upsert
-                    if source_record_id in raw_ids
-                ],
-                storage="sample",
-            )
-            sample_insert = pg_insert(MetricSample).values(sample_rows)
-            session.execute(
-                sample_insert.on_conflict_do_update(
-                    constraint="uq_metric_sample",
-                    set_={
-                        "civil_date": sample_insert.excluded.civil_date,
-                        "value": sample_insert.excluded.value,
-                        "unit": sample_insert.excluded.unit,
-                        "source_platform": sample_insert.excluded.source_platform,
-                        "source_device": sample_insert.excluded.source_device,
-                    },
-                    where=MetricSample.value.is_distinct_from(sample_insert.excluded.value),
-                )
-            )
-
-    return len(points)
+) -> list[HighVolumeRecord]:
+    spec = DATA_TYPE_SPECS[data_type]
+    return [
+        record
+        for point in points
+        if (record := _high_volume_record(spec, data_type, point)) is not None
+    ]
 
 
 def upsert_measurement_points_fast(
@@ -440,6 +325,59 @@ def _measurement_row(
         "source_device": device.get("displayName"),
         "created_at": utcnow(),
     }
+
+
+def _high_volume_record(
+    spec: DataTypeSpec,
+    data_type: str,
+    point: dict[str, Any],
+) -> HighVolumeRecord | None:
+    payload = point.get(spec.payload_key, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    source = point.get("dataSource") or {}
+    if not isinstance(source, dict):
+        source = {}
+    device = source.get("device") or {}
+    if not isinstance(device, dict):
+        device = {}
+
+    start_time, end_time = _record_times(payload)
+    civil_date = _record_civil_date(payload) or (start_time.date() if start_time else None)
+    value = _extract_numeric_value(payload)
+    if spec.storage == "sample":
+        observed_at = _sample_time(payload)
+        if observed_at is None or value is None:
+            return None
+        return HighVolumeRecord(
+            data_type=data_type,
+            metric=spec.metric,
+            observed_at=observed_at,
+            civil_date=civil_date or observed_at.date(),
+            value=_normalize_sample_value(spec, payload, value),
+            unit=spec.unit,
+            source_platform=source.get("platform"),
+            source_device=device.get("displayName"),
+        )
+
+    if spec.storage == "interval":
+        if value is None and start_time is not None and end_time is not None:
+            value = max(0.0, (end_time - start_time).total_seconds())
+        if start_time is None or end_time is None or value is None:
+            return None
+        return HighVolumeRecord(
+            data_type=data_type,
+            metric=spec.metric,
+            start_time=start_time,
+            end_time=end_time,
+            civil_date=civil_date or start_time.date(),
+            value=_normalize_interval_value(spec, payload, value),
+            unit=spec.unit,
+            source_platform=source.get("platform"),
+            source_device=device.get("displayName"),
+        )
+
+    return None
 
 
 def _bulk_upsert_normalized_rows(

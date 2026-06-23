@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models import ConnectionStatus, GoogleAccount
+from app.services.metric_rollups import cleanup_high_volume_storage
 from app.services.sync import run_initial_backfill, sync_google_account_range, sync_window_from_cursors
 from app.tasks.celery_app import celery_app
 
@@ -26,11 +27,14 @@ def initial_backfill(account_id: str) -> dict[str, object]:
         if account is None:
             return {"status": "missing_account", "account_id": account_id}
         result = asyncio.run(run_initial_backfill(session, account=account))
+        cleanup_counts = cleanup_high_volume_storage(session, today=date.today())
+        session.commit()
         return {
             "status": "ok",
             "account_id": account_id,
             "records_seen": result.records_seen,
             "records_stored": result.records_stored,
+            "cleanup": cleanup_counts,
         }
 
 
@@ -62,4 +66,6 @@ def sync_all_connected_accounts() -> dict[str, object]:
                 }
             except Exception as exc:
                 failed[account.id] = str(exc)
-    return {"synced": synced, "failed": failed, "ranges": ranges}
+        cleanup_counts = cleanup_high_volume_storage(session, today=date.today())
+        session.commit()
+    return {"synced": synced, "failed": failed, "ranges": ranges, "cleanup": cleanup_counts}

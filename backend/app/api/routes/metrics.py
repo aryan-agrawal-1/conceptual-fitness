@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from statistics import mean
 from typing import Any
 
@@ -15,6 +15,7 @@ from app.models import (
     DailyScore,
     DailySummary,
     MetricInterval,
+    MetricMinuteRollup,
     MetricSample,
     RawHealthRecord,
     SleepSession,
@@ -28,9 +29,17 @@ from app.services.health_dates import (
     timezone_for_profile,
 )
 from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION
+from app.services.metric_rollups import (
+    HIGH_VOLUME_METRICS,
+    RollupPoint,
+    SUM_METRICS,
+    daily_rollup_values,
+    rollup_points_for_metric,
+)
 
 
 router = APIRouter(tags=["metrics"])
+_ONE_MINUTE = timedelta(minutes=1)
 
 
 @dataclass(frozen=True)
@@ -277,38 +286,46 @@ def metric_series(
     start: date = Query(...),
     end: date = Query(...),
 ) -> dict[str, object]:
-    samples = session.scalars(
-        select(MetricSample)
-        .where(
-            MetricSample.user_id == user.id,
-            MetricSample.metric == metric,
-            MetricSample.civil_date >= start,
-            MetricSample.civil_date <= end,
-        )
-        .order_by(MetricSample.observed_at)
-    ).all()
-    intervals = session.scalars(
-        select(MetricInterval)
-        .where(
-            MetricInterval.user_id == user.id,
-            MetricInterval.metric == metric,
-            MetricInterval.civil_date >= start,
-            MetricInterval.civil_date <= end,
-        )
-        .order_by(MetricInterval.start_time)
-    ).all()
+    rollup_points = (
+        rollup_points_for_metric(session, user_id=user.id, metric=metric, start=start, end=end)
+        if metric in HIGH_VOLUME_METRICS
+        else []
+    )
+    samples = []
+    intervals = []
+    if not rollup_points:
+        samples = session.scalars(
+            select(MetricSample)
+            .where(
+                MetricSample.user_id == user.id,
+                MetricSample.metric == metric,
+                MetricSample.civil_date >= start,
+                MetricSample.civil_date <= end,
+            )
+            .order_by(MetricSample.observed_at)
+        ).all()
+        intervals = session.scalars(
+            select(MetricInterval)
+            .where(
+                MetricInterval.user_id == user.id,
+                MetricInterval.metric == metric,
+                MetricInterval.civil_date >= start,
+                MetricInterval.civil_date <= end,
+            )
+            .order_by(MetricInterval.start_time)
+        ).all()
     return {
         "metric": metric,
         "samples": [
             {
-                "observed_at": sample.observed_at,
-                "date": sample.civil_date,
-                "value": sample.value,
-                "unit": sample.unit,
-                "source_platform": sample.source_platform,
-                "source_device": sample.source_device,
+                "observed_at": point.observed_at,
+                "date": point.civil_date,
+                "value": point.value,
+                "unit": point.unit,
+                "source_platform": point.source_platform,
+                "source_device": point.source_device,
             }
-            for sample in samples
+            for point in [*rollup_points, *samples]
         ],
         "intervals": [
             {
@@ -710,6 +727,30 @@ def _daily_metric_points(
 ) -> list[dict[str, object]]:
     sample_values = _sample_values_by_date(session, user_id, config.sample_metric, start, end)
     interval_totals = _interval_totals_by_date(session, user_id, config.interval_metric, start, end)
+    sample_mins = (
+        daily_rollup_values(
+            session,
+            user_id=user_id,
+            metric=config.sample_metric,
+            start=start,
+            end=end,
+            value_kind="min",
+        )
+        if config.sample_metric in HIGH_VOLUME_METRICS
+        else {}
+    )
+    sample_maxes = (
+        daily_rollup_values(
+            session,
+            user_id=user_id,
+            metric=config.sample_metric,
+            start=start,
+            end=end,
+            value_kind="max",
+        )
+        if config.sample_metric in HIGH_VOLUME_METRICS
+        else {}
+    )
     points: list[dict[str, object]] = []
     current = start
     while current <= end:
@@ -726,8 +767,8 @@ def _daily_metric_points(
             "data_quality": _point_quality(summaries.get(current), value),
         }
         if config.metric == "heart_rate":
-            point["min_value"] = _rounded(min(samples)) if samples else None
-            point["max_value"] = _rounded(max(samples)) if samples else None
+            point["min_value"] = _rounded(sample_mins.get(current) or (min(samples) if samples else None))
+            point["max_value"] = _rounded(sample_maxes.get(current) or (max(samples) if samples else None))
         points.append(point)
         current = date.fromordinal(current.toordinal() + 1)
     return points
@@ -742,6 +783,20 @@ def _sample_values_by_date(
 ) -> dict[date, list[float]]:
     if sample_metric is None:
         return {}
+    if sample_metric in HIGH_VOLUME_METRICS:
+        rollup_values = {
+            day: [value]
+            for day, value in daily_rollup_values(
+                session,
+                user_id=user_id,
+                metric=sample_metric,
+                start=start,
+                end=end,
+                value_kind="avg",
+            ).items()
+        }
+        if rollup_values:
+            return rollup_values
     samples = session.scalars(
         select(MetricSample).where(
             MetricSample.user_id == user_id,
@@ -1063,7 +1118,33 @@ def _workout_heart_rate_samples(
     session: DbSession,
     user_id: str,
     workout: Workout,
-) -> list[MetricSample]:
+) -> list[object]:
+    rollups = [
+        row
+        for row in session.scalars(
+            select(MetricMinuteRollup)
+            .where(
+                MetricMinuteRollup.user_id == user_id,
+                MetricMinuteRollup.metric == "heart_rate",
+                MetricMinuteRollup.bucket_start >= workout.start_time,
+                MetricMinuteRollup.bucket_start <= workout.end_time,
+            )
+            .order_by(MetricMinuteRollup.bucket_start)
+        ).all()
+        if row.avg_value is not None
+    ]
+    if rollups:
+        return [
+            RollupPoint(
+                observed_at=row.bucket_start,
+                civil_date=row.civil_date,
+                value=row.avg_value,
+                unit=row.unit,
+                source_platform=row.source_platform,
+                source_device=row.source_device,
+            )
+            for row in rollups
+        ]
     return session.scalars(
         select(MetricSample)
         .where(
@@ -1082,6 +1163,26 @@ def _workout_metric_total(
     workout: Workout,
     metric: str,
 ) -> float | None:
+    if metric in SUM_METRICS:
+        rollups = session.scalars(
+            select(MetricMinuteRollup).where(
+                MetricMinuteRollup.user_id == user_id,
+                MetricMinuteRollup.metric == metric,
+                MetricMinuteRollup.bucket_start < workout.end_time,
+                MetricMinuteRollup.bucket_start >= workout.start_time - _ONE_MINUTE,
+            )
+        ).all()
+        total = 0.0
+        for row in rollups:
+            if row.sum_value is None:
+                continue
+            bucket_end = row.bucket_start + _ONE_MINUTE
+            overlap = _overlap_seconds(row.bucket_start, bucket_end, workout.start_time, workout.end_time)
+            if overlap > 0:
+                total += row.sum_value * min(1.0, overlap / 60)
+        if total > 0:
+            return total
+
     intervals = session.scalars(
         select(MetricInterval).where(
             MetricInterval.user_id == user_id,

@@ -14,7 +14,9 @@ from app.main import app
 from app.models import (
     ConnectionStatus,
     GoogleAccount,
+    MetricDailyRollup,
     MetricInterval,
+    MetricMinuteRollup,
     MetricSample,
     RawHealthRecord,
     SyncCursor,
@@ -365,7 +367,44 @@ async def test_heart_rate_sync_uses_daily_reconcile_chunks(session) -> None:
     )
 
     samples = session.scalars(select(MetricSample).where(MetricSample.metric == "heart_rate")).all()
-    assert len(samples) == 3
+    rollups = session.scalars(
+        select(MetricMinuteRollup).where(MetricMinuteRollup.metric == "heart_rate")
+    ).all()
+    assert samples == []
+    assert len(rollups) == 3
+    assert {rollup.sample_count for rollup in rollups} == {1}
+
+    cursor = session.scalar(
+        select(SyncCursor).where(
+            SyncCursor.google_account_id == account.id,
+            SyncCursor.data_type == "heart-rate",
+        )
+    )
+    cursor.last_successful_start = None
+    cursor.last_successful_end = None
+    cursor.last_successful_start_at = None
+    cursor.last_successful_end_at = None
+    session.commit()
+
+    await sync_google_account_range(
+        session,
+        account=account,
+        start=date(2026, 6, 16),
+        end=date(2026, 6, 18),
+        data_types=("heart-rate",),
+        client=FakePagedGoogleHealthClient(),
+    )
+
+    rollups_after_resync = session.scalars(
+        select(MetricMinuteRollup).where(MetricMinuteRollup.metric == "heart_rate")
+    ).all()
+    daily_after_resync = session.scalars(
+        select(MetricDailyRollup).where(MetricDailyRollup.metric == "heart_rate")
+    ).all()
+    assert len(rollups_after_resync) == 3
+    assert {rollup.sample_count for rollup in rollups_after_resync} == {1}
+    assert len(daily_after_resync) == 3
+    assert {daily.sample_count for daily in daily_after_resync} == {1}
 
 
 @pytest.mark.asyncio
@@ -461,15 +500,15 @@ async def test_incremental_timestamp_sync_uses_hour_overlap(session) -> None:
     )
 
     assert client.filters == [
-        'active_energy_burned.interval.civil_start_time >= "2026-06-23T11:00:00" '
-        'AND active_energy_burned.interval.civil_start_time < "2026-06-23T15:00:00"',
-        'time_in_heart_rate_zone.interval.civil_start_time >= "2026-06-23T11:00:00" '
-        'AND time_in_heart_rate_zone.interval.civil_start_time < "2026-06-23T15:00:00"',
+        'active_energy_burned.interval.civil_start_time >= "2026-06-22T00:00:00" '
+        'AND active_energy_burned.interval.civil_start_time < "2026-06-24T00:00:00"',
+        'time_in_heart_rate_zone.interval.civil_start_time >= "2026-06-22T00:00:00" '
+        'AND time_in_heart_rate_zone.interval.civil_start_time < "2026-06-24T00:00:00"',
     ]
     cursors = session.scalars(
         select(SyncCursor).where(SyncCursor.data_type.in_(("active-energy-burned", "time-in-heart-rate-zone")))
     ).all()
-    assert {cursor.last_successful_end_at for cursor in cursors} == {datetime(2026, 6, 23, 15)}
+    assert {cursor.last_successful_end for cursor in cursors} == {date(2026, 6, 23)}
 
 
 @pytest.mark.asyncio
@@ -555,7 +594,15 @@ async def test_heart_rate_failure_does_not_block_other_data_types(session) -> No
     )
 
     assert result.data_types == ["steps"]
-    assert session.scalar(select(MetricInterval).where(MetricInterval.metric == "steps")).value == 100
+    assert session.scalar(select(MetricInterval).where(MetricInterval.metric == "steps")) is None
+    steps_minute_rollups = session.scalars(
+        select(MetricMinuteRollup).where(MetricMinuteRollup.metric == "steps")
+    ).all()
+    assert steps_minute_rollups == []
+    steps_daily_rollups = session.scalars(
+        select(MetricDailyRollup).where(MetricDailyRollup.metric == "steps")
+    ).all()
+    assert sum(row.sum_value or 0 for row in steps_daily_rollups) == 100
 
     heart_rate_cursor = session.scalar(
         select(SyncCursor).where(

@@ -31,6 +31,7 @@ from app.services.health_dates import (
     local_week_start,
     timezone_for_profile,
 )
+from app.services.metric_rollups import RollupPoint, rollup_points_for_metric
 
 
 BASELINE_VERSION = "baseline_v1"
@@ -1090,7 +1091,16 @@ def _main_sleep(session: Session, user_id: str, day: date) -> SleepSession | Non
     )
 
 
-def _heart_rate_samples(session: Session, user_id: str, day: date) -> list[MetricSample]:
+def _heart_rate_samples(session: Session, user_id: str, day: date) -> list[MetricSample | RollupPoint]:
+    rollups = rollup_points_for_metric(
+        session,
+        user_id=user_id,
+        metric="heart_rate",
+        start=day,
+        end=day,
+    )
+    if rollups:
+        return rollups
     return session.scalars(
         select(MetricSample)
         .where(
