@@ -25,6 +25,8 @@ class DataTypeSpec:
     page_size: int | None = None
     fail_sync_on_error: bool = True
     resume_page_tokens: bool = True
+    use_timestamp_cursor: bool = False
+    timestamp_overlap_minutes: int = 60
 
     @property
     def list_filter_start(self) -> str:
@@ -62,6 +64,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         unit="kcal",
         filter_time_path="active_energy_burned.interval.civil_start_time",
         page_size=10000,
+        use_timestamp_cursor=True,
     ),
     "total-calories": DataTypeSpec(
         data_type="total-calories",
@@ -83,6 +86,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         chunk_days=1,
         page_size=10000,
         fail_sync_on_error=False,
+        use_timestamp_cursor=True,
     ),
     "daily-resting-heart-rate": DataTypeSpec(
         data_type="daily-resting-heart-rate",
@@ -131,6 +135,7 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         filter_time_path="time_in_heart_rate_zone.interval.civil_start_time",
         page_size=10000,
         fail_sync_on_error=False,
+        use_timestamp_cursor=True,
     ),
     "oxygen-saturation": DataTypeSpec(
         data_type="oxygen-saturation",

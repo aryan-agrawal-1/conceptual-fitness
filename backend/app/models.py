@@ -485,6 +485,12 @@ class SyncCursor(Base):
     data_type: Mapped[str] = mapped_column(String(80))
     last_successful_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     last_successful_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_successful_start_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_successful_end_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     last_page_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

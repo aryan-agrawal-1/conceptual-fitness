@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -250,6 +250,9 @@ def test_sync_specs_follow_google_page_size_limits() -> None:
     assert DATA_TYPE_SPECS["heart-rate"].page_size == 10000
     assert DATA_TYPE_SPECS["time-in-heart-rate-zone"].page_size == 10000
     assert DATA_TYPE_SPECS["steps"].page_size == 10000
+    assert DATA_TYPE_SPECS["heart-rate"].use_timestamp_cursor is True
+    assert DATA_TYPE_SPECS["time-in-heart-rate-zone"].use_timestamp_cursor is True
+    assert DATA_TYPE_SPECS["active-energy-burned"].use_timestamp_cursor is True
     assert DATA_TYPE_SPECS["sleep"].page_size == 25
     assert DATA_TYPE_SPECS["exercise"].page_size == 25
     assert "weight" in MVP_SYNC_DATA_TYPES
@@ -374,6 +377,8 @@ async def test_sync_resumes_from_saved_page_token(session) -> None:
         status=SyncStatus.running,
         last_successful_start=date(2026, 6, 18),
         last_successful_end=date(2026, 6, 18),
+        last_successful_start_at=datetime(2026, 6, 18, 0, tzinfo=UTC),
+        last_successful_end_at=datetime(2026, 6, 19, 0, tzinfo=UTC),
         last_page_token="page-2",
     )
     session.add(cursor)
@@ -401,6 +406,8 @@ async def test_sync_resume_skips_prior_completed_chunks(session) -> None:
         status=SyncStatus.running,
         last_successful_start=date(2026, 6, 17),
         last_successful_end=date(2026, 6, 17),
+        last_successful_start_at=datetime(2026, 6, 17, 0, tzinfo=UTC),
+        last_successful_end_at=datetime(2026, 6, 18, 0, tzinfo=UTC),
         last_page_token="page-2",
     )
     session.add(cursor)
@@ -423,6 +430,46 @@ async def test_sync_resume_skips_prior_completed_chunks(session) -> None:
         'heart_rate.sample_time.physical_time >= "2026-06-18T00:00:00Z" '
         'AND heart_rate.sample_time.physical_time < "2026-06-19T00:00:00Z"',
     ]
+
+
+@pytest.mark.asyncio
+async def test_incremental_timestamp_sync_uses_hour_overlap(session) -> None:
+    account = _connected_account(session)
+    for data_type in ("active-energy-burned", "time-in-heart-rate-zone"):
+        session.add(
+            SyncCursor(
+                google_account_id=account.id,
+                data_type=data_type,
+                status=SyncStatus.succeeded,
+                last_successful_start=date(2026, 6, 23),
+                last_successful_end=date(2026, 6, 23),
+                last_successful_start_at=datetime(2026, 6, 23, 11, tzinfo=UTC),
+                last_successful_end_at=datetime(2026, 6, 23, 12, tzinfo=UTC),
+            )
+        )
+    session.commit()
+    client = FakeResumeGoogleHealthClient()
+
+    await sync_google_account_range(
+        session,
+        account=account,
+        start=date(2026, 6, 22),
+        end=date(2026, 6, 23),
+        data_types=("active-energy-burned", "time-in-heart-rate-zone"),
+        client=client,
+        now=datetime(2026, 6, 23, 15, tzinfo=UTC),
+    )
+
+    assert client.filters == [
+        'active_energy_burned.interval.civil_start_time >= "2026-06-23T11:00:00" '
+        'AND active_energy_burned.interval.civil_start_time < "2026-06-23T15:00:00"',
+        'time_in_heart_rate_zone.interval.civil_start_time >= "2026-06-23T11:00:00" '
+        'AND time_in_heart_rate_zone.interval.civil_start_time < "2026-06-23T15:00:00"',
+    ]
+    cursors = session.scalars(
+        select(SyncCursor).where(SyncCursor.data_type.in_(("active-energy-burned", "time-in-heart-rate-zone")))
+    ).all()
+    assert {cursor.last_successful_end_at for cursor in cursors} == {datetime(2026, 6, 23, 15)}
 
 
 @pytest.mark.asyncio
