@@ -169,7 +169,7 @@ struct DashboardView: View {
         case .loaded(let data):
             return data.dailyBrief
         case .loading:
-            return "Preparing your daily brief..."
+            return insightProvider.cachedDailyBriefForCurrentSlot() ?? "Preparing your daily brief..."
         case .failed:
             return previewData.dailyBrief
         }
@@ -214,12 +214,20 @@ struct DashboardView: View {
 
     @MainActor
     private func reload() async {
-        loadState = .loading
+        let hadLoadedData: Bool
+        if case .loaded = loadState {
+            hadLoadedData = true
+        } else {
+            hadLoadedData = false
+            loadState = .loading
+        }
+
         do {
-            let displayBundle = try await client.loadDashboard()
+            let now = Date()
+            let displayBundle = try await client.loadDashboard(now: now)
             let bundle = displayBundle.bundle
-            let dailyBrief = await insightProvider.dailyBrief(for: bundle.snapshot)
-            let insight = insightProvider.shortInsight(for: bundle.snapshot)
+            let dailyBrief = await insightProvider.dailyBrief(for: bundle.snapshot, now: now)
+            let insight = insightProvider.shortInsight(for: bundle.snapshot, now: now)
             loadState = .loaded(
                 DashboardData(
                     snapshot: bundle.snapshot,
@@ -232,7 +240,9 @@ struct DashboardView: View {
                 )
             )
         } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString). Start the FastAPI server to load live dashboard data.")
+            if !hadLoadedData {
+                loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString). Start the FastAPI server to load live dashboard data.")
+            }
         }
     }
 
