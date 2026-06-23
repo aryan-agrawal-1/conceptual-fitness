@@ -68,7 +68,8 @@ def upsert_raw_and_normalized(
         )
     else:
         if raw_record.content_hash == raw_hash and raw_record.source_record_id == source_record_id:
-            return raw_record
+            if _normalized_exists(session, raw_record.id, storage=spec.storage):
+                return raw_record
         raw_record.raw_json = data_point
         raw_record.content_hash = raw_hash
         raw_record.source_record_id = source_record_id
@@ -92,6 +93,21 @@ def upsert_raw_and_normalized(
     elif spec.storage == "workout":
         _normalize_workout(session, account, raw_record, payload)
     return raw_record
+
+
+def _normalized_exists(session: Session, raw_record_id: str, *, storage: str) -> bool:
+    if storage == "raw":
+        return True
+    models = {
+        "interval": MetricInterval,
+        "sample": MetricSample,
+        "sleep": SleepSession,
+        "workout": Workout,
+    }
+    model = models.get(storage)
+    if model is None:
+        return False
+    return session.scalar(select(model.id).where(model.raw_record_id == raw_record_id).limit(1)) is not None
 
 
 def _find_raw_record(

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.models import (
     DailySummary,
     GoogleAccount,
+    MetricDailyRollup,
     MetricInterval,
     MetricSample,
     RawHealthRecord,
@@ -14,6 +15,7 @@ from app.models import (
     User,
     UserProfile,
 )
+from app.services.metric_rollups import HighVolumeRecord, replace_high_volume_rollups
 from app.services.normalization import _content_hash, upsert_raw_and_normalized
 from app.services.summaries import rebuild_daily_summaries
 
@@ -398,6 +400,66 @@ def test_daily_summary_prefers_fitbit_activity_totals(session) -> None:
     assert summary.active_calories == 220
 
 
+def test_high_volume_daily_rollups_prefer_fitbit_activity_totals(session) -> None:
+    account = _account(session)
+    day = date(2026, 6, 15)
+    start = datetime(2026, 6, 15, 8, tzinfo=UTC)
+    end = datetime(2026, 6, 15, 8, 5, tzinfo=UTC)
+
+    for metric, unit, fitbit_value, healthkit_value in (
+        ("steps", "count", 1200, 800),
+        ("distance", "meters", 1500, 1000),
+        ("active_calories", "kcal", 220, 110),
+    ):
+        replace_high_volume_rollups(
+            session,
+            account=account,
+            metric=metric,
+            records=[
+                HighVolumeRecord(
+                    data_type=metric,
+                    metric=metric,
+                    value=fitbit_value,
+                    unit=unit,
+                    source_platform="FITBIT",
+                    source_device=None,
+                    civil_date=day,
+                    start_time=start,
+                    end_time=end,
+                ),
+                HighVolumeRecord(
+                    data_type=metric,
+                    metric=metric,
+                    value=healthkit_value,
+                    unit=unit,
+                    source_platform="HEALTH_KIT",
+                    source_device=None,
+                    civil_date=day,
+                    start_time=start,
+                    end_time=end,
+                ),
+            ],
+            range_start=start,
+            range_end=end,
+        )
+
+    rebuild_daily_summaries(session, user_id=account.user_id, start=day, end=day)
+    session.commit()
+
+    rollups = {
+        row.metric: row
+        for row in session.scalars(select(MetricDailyRollup)).all()
+    }
+    assert rollups["steps"].sum_value == 1200
+    assert rollups["distance"].sum_value == 1500
+    assert rollups["active_calories"].sum_value == 220
+
+    summary = session.scalar(select(DailySummary))
+    assert summary.steps == 1200
+    assert summary.distance_meters == 1500
+    assert summary.active_calories == 220
+
+
 def test_daily_summary_prefers_daily_derived_samples(session) -> None:
     account = _account(session)
     day = date(2026, 6, 15)
@@ -449,6 +511,43 @@ def test_daily_summary_prefers_daily_derived_samples(session) -> None:
 
     summary = session.scalar(select(DailySummary))
     assert summary.oxygen_saturation == 96.4
+
+
+def test_unchanged_raw_record_with_missing_normalized_row_is_rebuilt(session) -> None:
+    account = _account(session)
+    day = date(2026, 6, 15)
+    data_point = {
+        "dataSource": {"platform": "FITBIT"},
+        "dailyOxygenSaturation": {
+            "date": {"year": day.year, "month": day.month, "day": day.day},
+            "averagePercentage": 96.6,
+            "lowerBoundPercentage": 94,
+            "upperBoundPercentage": 100,
+        },
+    }
+
+    raw_record = upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="daily-oxygen-saturation",
+        data_point=data_point,
+    )
+    session.flush()
+    sample = session.scalar(select(MetricSample).where(MetricSample.raw_record_id == raw_record.id))
+    assert sample is not None
+    session.delete(sample)
+    session.flush()
+
+    upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="daily-oxygen-saturation",
+        data_point=data_point,
+    )
+    session.flush()
+    rebuilt = session.scalar(select(MetricSample).where(MetricSample.raw_record_id == raw_record.id))
+    assert rebuilt is not None
+    assert rebuilt.value == 96.6
 
 
 def test_normalizes_body_metrics_and_updates_profile(session) -> None:

@@ -37,6 +37,10 @@ HIGH_VOLUME_METRICS = {
 }
 MINUTE_ROLLUP_METRICS = {"heart_rate"}
 SUM_METRICS = {"time_in_heart_rate_zone", "active_calories", "steps", "distance"}
+SOURCE_PLATFORM_PRIORITY = {
+    "FITBIT": 0,
+    "HEALTH_KIT": 1,
+}
 EPHEMERAL_RAW_DATA_TYPES = HIGH_VOLUME_DATA_TYPES | {
     "active-zone-minutes",
     "heart-rate-variability",
@@ -276,13 +280,13 @@ def _build_daily_aggregates(
     user_id: str,
     records: list[HighVolumeRecord],
 ) -> dict[tuple[str, date], _Aggregate]:
-    daily_aggregates: dict[tuple[str, date], _Aggregate] = {}
+    source_aggregates: dict[tuple[str, date, str | None], _Aggregate] = {}
     for record in records:
         civil_date = record.civil_date or _record_date(record)
         if civil_date is None:
             continue
-        aggregate = daily_aggregates.setdefault(
-            (record.metric, civil_date),
+        aggregate = source_aggregates.setdefault(
+            (record.metric, civil_date, record.source_platform),
             _Aggregate(
                 user_id=user_id,
                 metric=record.metric,
@@ -293,7 +297,23 @@ def _build_daily_aggregates(
             ),
         )
         aggregate.add(record.value)
+    daily_aggregates: dict[tuple[str, date], _Aggregate] = {}
+    for aggregate in source_aggregates.values():
+        key = (aggregate.metric, aggregate.civil_date)
+        current = daily_aggregates.get(key)
+        if current is None or _source_sort_key(aggregate) < _source_sort_key(current):
+            daily_aggregates[key] = aggregate
     return daily_aggregates
+
+
+def _source_sort_key(aggregate: _Aggregate) -> tuple[int, int, float, str]:
+    priority = SOURCE_PLATFORM_PRIORITY.get(aggregate.source_platform or "", 100)
+    return (
+        priority,
+        -aggregate.sample_count,
+        -(aggregate.sum_value or 0.0),
+        aggregate.source_platform or "",
+    )
 
 
 def _record_date(record: HighVolumeRecord) -> date | None:
