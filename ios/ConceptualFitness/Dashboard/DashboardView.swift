@@ -5,6 +5,8 @@ struct DashboardView: View {
     let weatherProvider: WeatherProvider
     @ObservedObject var locationProvider: LocationProvider
     let insightProvider: DailyInsightProvider
+    let firstName: String?
+    let weatherEnabled: Bool
 
     @State private var loadState: DashboardLoadState = .loading
     @State private var weather = WeatherData.fallback
@@ -60,19 +62,30 @@ struct DashboardView: View {
         #endif
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
-            locationProvider.requestLocation()
+            if weatherEnabled {
+                locationProvider.requestLocation()
+            }
             await reload()
-            await reloadWeather()
+            if weatherEnabled {
+                await reloadWeather()
+            }
         }
         .task(id: locationProvider.revision) {
-            await reloadWeather()
+            if weatherEnabled {
+                await reloadWeather()
+            }
         }
     }
 
     private var hero: some View {
         ZStack(alignment: .top) {
-            WeatherBackgroundView(weather: weather)
-                .frame(height: 560)
+            if usesWeatherBackground {
+                WeatherBackgroundView(weather: weather)
+                    .frame(height: 560)
+            } else {
+                Color.white
+                    .frame(height: 560)
+            }
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
@@ -85,11 +98,13 @@ struct DashboardView: View {
 
                     Spacer()
 
-                    WeatherStatusChip(
-                        title: weather.locationName ?? weatherStatus,
-                        systemImage: locationProvider.location == nil ? "location.slash" : "location.fill",
-                        isPresented: $showsLocation
-                    )
+                    if usesWeatherBackground {
+                        WeatherStatusChip(
+                            title: weather.locationName ?? weatherStatus,
+                            systemImage: locationProvider.location == nil ? "location.slash" : "location.fill",
+                            isPresented: $showsLocation
+                        )
+                    }
                 }
                 .padding(.top, 54)
 
@@ -170,13 +185,31 @@ struct DashboardView: View {
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
-        if hour < 12 { return "Good morning" }
-        if hour < 18 { return "Good afternoon" }
-        return "Good evening"
+        let base: String
+        if hour < 12 {
+            base = "Good morning"
+        } else if hour < 18 {
+            base = "Good afternoon"
+        } else {
+            base = "Good evening"
+        }
+        guard let firstName = firstName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !firstName.isEmpty
+        else {
+            return base
+        }
+        return "\(base), \(firstName)"
     }
 
     private var heroTextColor: Color {
-        weather.isDay || weather.scene == .sunrise || weather.scene == .sunset ? .black.opacity(0.84) : .white
+        guard usesWeatherBackground else { return .black.opacity(0.84) }
+        return weather.isDay || weather.scene == .sunrise || weather.scene == .sunset ? Color.black.opacity(0.84) : Color.white
+    }
+
+    private var usesWeatherBackground: Bool {
+        weatherEnabled
+            && locationProvider.authorizationStatus != .denied
+            && locationProvider.authorizationStatus != .restricted
     }
 
     @MainActor
@@ -221,7 +254,9 @@ enum DashboardLoadState {
             client: DashboardAPIClient(),
             weatherProvider: WeatherProvider(),
             locationProvider: LocationProvider(),
-            insightProvider: DailyInsightProvider()
+            insightProvider: DailyInsightProvider(),
+            firstName: "Aryan",
+            weatherEnabled: true
         )
     }
 }

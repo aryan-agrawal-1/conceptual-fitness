@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from typing import Literal
 from zoneinfo import ZoneInfoNotFoundError, ZoneInfo
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.security import utcnow
 from app.models import UserProfile
 from app.services.health_dates import get_or_create_profile
 
@@ -23,19 +25,31 @@ class ProfilePayload(BaseModel):
     height_cm: float | None
     weight_kg: float | None
     bmi: float | None
+    weather_enabled: bool
+    location_permission_status: str | None
+    height_source_preference: str
+    weight_source_preference: str
     fitness_goal: str | None
     sleep_target_minutes: int
+    onboarding_completed_at: datetime | None
 
 
 class ProfileUpdate(BaseModel):
     timezone: str | None = Field(default=None, min_length=1, max_length=80)
     date_of_birth: date | None = None
     birth_year: int | None = Field(default=None, ge=1900, le=2100)
-    sex: str | None = Field(default=None, max_length=32)
+    sex: Literal["female", "male", "not_specified"] | None = None
     height_cm: float | None = Field(default=None, gt=0, le=260)
     weight_kg: float | None = Field(default=None, gt=0, le=700)
+    weather_enabled: bool | None = None
+    location_permission_status: (
+        Literal["not_determined", "authorized", "denied", "restricted", "manual"] | None
+    ) = None
+    height_source_preference: Literal["google", "manual"] | None = None
+    weight_source_preference: Literal["google", "manual"] | None = None
     fitness_goal: str | None = Field(default=None, max_length=80)
     sleep_target_minutes: int | None = Field(default=None, ge=180, le=900)
+    onboarding_completed: bool | None = None
 
     @model_validator(mode="after")
     def validate_age_fields(self) -> ProfileUpdate:
@@ -64,12 +78,17 @@ def update_profile(
 ) -> ProfilePayload:
     profile = get_or_create_profile(session, user.id)
     updates = payload.model_dump(exclude_unset=True)
+    onboarding_completed = updates.pop("onboarding_completed", None)
     if updates.get("date_of_birth") is not None:
         profile.birth_year = None
     if updates.get("birth_year") is not None:
         profile.date_of_birth = None
     for key, value in updates.items():
         setattr(profile, key, _clean_string(value) if isinstance(value, str) else value)
+    if onboarding_completed is True:
+        profile.onboarding_completed_at = utcnow()
+    elif onboarding_completed is False:
+        profile.onboarding_completed_at = None
     session.add(profile)
     session.commit()
     session.refresh(profile)
@@ -86,8 +105,13 @@ def _profile_payload(profile: UserProfile) -> ProfilePayload:
         height_cm=profile.height_cm,
         weight_kg=profile.weight_kg,
         bmi=_bmi(profile.height_cm, profile.weight_kg),
+        weather_enabled=profile.weather_enabled,
+        location_permission_status=profile.location_permission_status,
+        height_source_preference=profile.height_source_preference,
+        weight_source_preference=profile.weight_source_preference,
         fitness_goal=profile.fitness_goal,
         sleep_target_minutes=profile.sleep_target_minutes,
+        onboarding_completed_at=profile.onboarding_completed_at,
     )
 
 

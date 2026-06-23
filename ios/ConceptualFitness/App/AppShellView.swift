@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppShellView: View {
     @ObservedObject var authStore: AuthStore
+    let session: AuthSession
 
     @State private var selectedTab: AppTab = .dashboard
     @State private var dashboardPath: [AppRoute] = []
@@ -19,7 +20,9 @@ struct AppShellView: View {
                     client: DashboardAPIClient(authStore: authStore),
                     weatherProvider: weatherProvider,
                     locationProvider: locationProvider,
-                    insightProvider: insightProvider
+                    insightProvider: insightProvider,
+                    firstName: session.user.firstName,
+                    weatherEnabled: session.profile.weatherEnabled
                 )
                 .withAppDestinations()
             }
@@ -53,7 +56,15 @@ struct AppShellView: View {
 }
 
 #Preview {
-    AppShellView(authStore: AuthStore())
+    AppShellView(authStore: AuthStore(), session: .preview)
+}
+
+extension AuthSession {
+    static let preview = AuthSession(
+        user: AuthUser(id: "preview", email: "preview@example.com", firstName: "Aryan", lastName: nil),
+        googleHealth: GoogleHealthStatus(status: .connected),
+        profile: AuthProfileStatus(onboardingCompletedAt: "2026-06-23T12:00:00Z", weatherEnabled: true)
+    )
 }
 
 private extension View {

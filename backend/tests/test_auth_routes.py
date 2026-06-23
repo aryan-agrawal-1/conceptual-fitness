@@ -62,7 +62,18 @@ def test_exchange_refresh_me_and_logout_flow(session) -> None:
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token_payload['access_token']}"})
     assert me.status_code == 200
     assert me.json()["user"]["id"] == user.id
+    assert me.json()["user"]["first_name"] is None
+    assert me.json()["profile"]["onboarding_completed_at"] is None
     assert me.json()["google_health"]["status"] == "connected"
+
+    updated_me = client.patch(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token_payload['access_token']}"},
+        json={"first_name": " Aryan ", "last_name": "Test"},
+    )
+    assert updated_me.status_code == 200
+    assert updated_me.json()["user"]["first_name"] == "Aryan"
+    assert updated_me.json()["user"]["last_name"] == "Test"
 
     refresh = client.post(
         "/auth/refresh",

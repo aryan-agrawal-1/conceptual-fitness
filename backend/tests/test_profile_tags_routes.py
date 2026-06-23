@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import date, datetime, UTC
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.main import app
-from app.models import DailyContext, User, UserProfile
+from app.models import DailyContext, MetricSample, User, UserProfile
 
 
 def _user(session) -> User:
@@ -26,6 +28,10 @@ def test_profile_get_creates_default_profile(session, auth_headers) -> None:
     assert payload["timezone"] == "UTC"
     assert payload["sleep_target_minutes"] == 480
     assert payload["fitness_goal"] is None
+    assert payload["weather_enabled"] is False
+    assert payload["height_source_preference"] == "google"
+    assert payload["weight_source_preference"] == "google"
+    assert payload["onboarding_completed_at"] is None
     assert session.scalar(select(UserProfile).where(UserProfile.user_id == user.id)) is not None
 
 
@@ -42,8 +48,13 @@ def test_profile_patch_updates_supported_fields(session, auth_headers) -> None:
             "sex": "male",
             "height_cm": 181.5,
             "weight_kg": 78.2,
+            "weather_enabled": True,
+            "location_permission_status": "authorized",
+            "height_source_preference": "manual",
+            "weight_source_preference": "manual",
             "fitness_goal": "improve_cardio",
             "sleep_target_minutes": 510,
+            "onboarding_completed": True,
         },
     )
 
@@ -53,8 +64,13 @@ def test_profile_patch_updates_supported_fields(session, auth_headers) -> None:
     assert payload["birth_year"] == 1994
     assert payload["height_cm"] == 181.5
     assert payload["weight_kg"] == 78.2
+    assert payload["weather_enabled"] is True
+    assert payload["location_permission_status"] == "authorized"
+    assert payload["height_source_preference"] == "manual"
+    assert payload["weight_source_preference"] == "manual"
     assert payload["fitness_goal"] == "improve_cardio"
     assert payload["sleep_target_minutes"] == 510
+    assert payload["onboarding_completed_at"] is not None
 
 
 def test_profile_rejects_unknown_timezone(session, auth_headers) -> None:
@@ -68,6 +84,67 @@ def test_profile_rejects_unknown_timezone(session, auth_headers) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_profile_rejects_unknown_sex(session, auth_headers) -> None:
+    user = _user(session)
+    client = TestClient(app)
+
+    response = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"sex": "other"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_manual_body_metrics_preference_blocks_synced_profile_overwrite(
+    session,
+    auth_headers,
+) -> None:
+    user = _user(session)
+    profile = UserProfile(
+        user_id=user.id,
+        timezone="UTC",
+        height_cm=181,
+        weight_kg=78,
+        height_source_preference="manual",
+        weight_source_preference="manual",
+        sleep_target_minutes=480,
+    )
+    session.add_all(
+        [
+            profile,
+            MetricSample(
+                user_id=user.id,
+                metric="height",
+                observed_at=datetime(2026, 6, 22, 9, tzinfo=UTC),
+                civil_date=date(2026, 6, 22),
+                value=1.9,
+                unit="meters",
+                source_platform="FITBIT",
+            ),
+            MetricSample(
+                user_id=user.id,
+                metric="weight",
+                observed_at=datetime(2026, 6, 22, 9, tzinfo=UTC),
+                civil_date=date(2026, 6, 22),
+                value=86,
+                unit="kg",
+                source_platform="FITBIT",
+            ),
+        ]
+    )
+    session.commit()
+    client = TestClient(app)
+
+    response = client.get("/body-metrics", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["height_cm"] == 181
+    assert payload["weight_kg"] == 78
 
 
 def test_tags_crud_is_scoped_to_current_user(session, auth_headers) -> None:

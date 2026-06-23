@@ -8,14 +8,26 @@ enum AuthState: Equatable {
     case checking
     case signedOut
     case signingIn
-    case authenticated(GoogleHealthConnectionState)
+    case authenticated(AuthSession)
     case failed(String)
 }
 
-enum GoogleHealthConnectionState: String, Decodable {
+enum GoogleHealthConnectionState: String, Decodable, Equatable {
     case connected
     case disconnected
     case errored
+}
+
+struct AuthSession: Decodable, Equatable {
+    let user: AuthUser
+    let googleHealth: GoogleHealthStatus
+    let profile: AuthProfileStatus
+
+    enum CodingKeys: String, CodingKey {
+        case user
+        case googleHealth = "google_health"
+        case profile
+    }
 }
 
 struct TokenResponse: Decodable {
@@ -35,20 +47,55 @@ struct TokenResponse: Decodable {
 struct AuthMeResponse: Decodable {
     let user: AuthUser
     let googleHealth: GoogleHealthStatus
+    let profile: AuthProfileStatus
 
     enum CodingKeys: String, CodingKey {
         case user
         case googleHealth = "google_health"
+        case profile
+    }
+
+    var session: AuthSession {
+        AuthSession(user: user, googleHealth: googleHealth, profile: profile)
     }
 }
 
-struct AuthUser: Decodable {
+struct AuthUser: Decodable, Equatable {
     let id: String
     let email: String?
+    let firstName: String?
+    let lastName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case email
+        case firstName = "first_name"
+        case lastName = "last_name"
+    }
 }
 
-struct GoogleHealthStatus: Decodable {
+struct GoogleHealthStatus: Decodable, Equatable {
     let status: GoogleHealthConnectionState
+}
+
+struct AuthProfileStatus: Decodable, Equatable {
+    let onboardingCompletedAt: String?
+    let weatherEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case onboardingCompletedAt = "onboarding_completed_at"
+        case weatherEnabled = "weather_enabled"
+    }
+}
+
+private struct NameUpdateRequest: Encodable {
+    let firstName: String
+    let lastName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case firstName = "first_name"
+        case lastName = "last_name"
+    }
 }
 
 enum AuthError: Error {
@@ -144,7 +191,12 @@ final class AuthStore: ObservableObject {
     }
 
     func authenticatedData(for url: URL) async throws -> Data {
-        var request = URLRequest(url: url)
+        let request = URLRequest(url: url)
+        return try await authenticatedData(for: request)
+    }
+
+    func authenticatedData(for request: URLRequest) async throws -> Data {
+        var request = request
         request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         if !Self.isUnauthorized(response) {
@@ -156,6 +208,40 @@ final class AuthStore: ObservableObject {
         let (retryData, retryResponse) = try await session.data(for: request)
         try Self.validate(retryResponse)
         return retryData
+    }
+
+    func authenticatedRequest<T: Decodable>(path: String) async throws -> T {
+        var request = try makeRequest(path: path, method: "GET")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data = try await authenticatedData(for: request)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    func authenticatedJSON<T: Decodable, Body: Encodable>(
+        path: String,
+        method: String,
+        body: Body
+    ) async throws -> T {
+        var request = try makeRequest(path: path, method: method)
+        request.httpBody = try JSONEncoder().encode(body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data = try await authenticatedData(for: request)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    @discardableResult
+    func refreshSession() async throws -> AuthSession {
+        try await loadMe()
+    }
+
+    func updateName(firstName: String, lastName: String?) async throws {
+        let response: AuthMeResponse = try await authenticatedJSON(
+            path: "/auth/me",
+            method: "PATCH",
+            body: NameUpdateRequest(firstName: firstName, lastName: lastName)
+        )
+        state = .authenticated(response.session)
     }
 
     private func validAccessToken() async throws -> String {
@@ -193,17 +279,11 @@ final class AuthStore: ObservableObject {
         keychain.refreshToken = response.refreshToken
     }
 
-    private func loadMe() async throws {
+    @discardableResult
+    private func loadMe() async throws -> AuthSession {
         let me: AuthMeResponse = try await authenticatedRequest(path: "/auth/me")
-        state = .authenticated(me.googleHealth.status)
-    }
-
-    private func authenticatedRequest<T: Decodable>(path: String) async throws -> T {
-        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
-            throw AuthError.badURL
-        }
-        let data = try await authenticatedData(for: url)
-        return try JSONDecoder().decode(T.self, from: data)
+        state = .authenticated(me.session)
+        return me.session
     }
 
     private func request<T: Decodable>(path: String) async throws -> T {
@@ -307,7 +387,7 @@ struct AuthGateView: View {
     var body: some View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-skipAuthForWeatherDebug") {
-            AppShellView(authStore: authStore)
+            AppShellView(authStore: authStore, session: .preview)
         } else {
             authContent
         }
@@ -326,38 +406,62 @@ struct AuthGateView: View {
             signInView
         case .signingIn:
             ProgressView("Signing in")
-        case .authenticated(.connected):
-            AppShellView(authStore: authStore)
-        case .authenticated(.disconnected), .authenticated(.errored):
+        case .authenticated(let session) where session.googleHealth.status == .connected:
+            if session.profile.onboardingCompletedAt == nil {
+                OnboardingView(authStore: authStore, session: session)
+            } else {
+                AppShellView(authStore: authStore, session: session)
+            }
+        case .authenticated:
             reconnectView
         }
     }
 
     private var signInView: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            Image(systemName: "heart.text.square.fill")
-                .font(.system(size: 52, weight: .semibold))
-                .foregroundStyle(.blue)
-            Text("Conceptual Fitness")
-                .font(.largeTitle.weight(.bold))
-            Text("Sign in to sync your Google Health data.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button {
-                Task { await authStore.signIn() }
-            } label: {
-                Label("Continue with Google", systemImage: "person.crop.circle.badge.checkmark")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+        ZStack {
+            AppBackground()
+
+            VStack(alignment: .leading, spacing: 28) {
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    Image(systemName: "heart.text.square.fill")
+                        .font(.system(size: 58, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .symbolRenderingMode(.hierarchical)
+
+                    Text("Conceptual Fitness")
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
+
+                    Text("Connect Google Health to turn your recovery, sleep, and training data into a daily dashboard.")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(spacing: 12) {
+                    Button {
+                        Task { await authStore.signIn() }
+                    } label: {
+                        Label("Continue with Google", systemImage: "person.crop.circle.badge.checkmark")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Text("Your health data stays tied to your authenticated app session.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                Spacer()
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.top, 8)
-            Spacer()
+            .padding(28)
         }
-        .padding(28)
     }
 
     private var reconnectView: some View {

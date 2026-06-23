@@ -55,6 +55,8 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -85,8 +87,15 @@ class UserProfile(Base):
     sex: Mapped[str | None] = mapped_column(String(32), nullable=True)
     height_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
     weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weather_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    location_permission_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    height_source_preference: Mapped[str] = mapped_column(String(32), default="google")
+    weight_source_preference: Mapped[str] = mapped_column(String(32), default="google")
     fitness_goal: Mapped[str | None] = mapped_column(String(80), nullable=True)
     sleep_target_minutes: Mapped[int] = mapped_column(Integer, default=480)
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

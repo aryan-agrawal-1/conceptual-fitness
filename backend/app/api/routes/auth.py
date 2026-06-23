@@ -13,6 +13,7 @@ from app.core.config import get_settings, missing_or_placeholder_keys
 from app.core.security import decrypt_secret, utcnow
 from app.google_health.client import GoogleHealthAPIError
 from app.models import ConnectionStatus, GoogleAccount, User
+from app.services.health_dates import get_or_create_profile
 from app.services.app_auth import (
     AppAuthError,
     TokenPair,
@@ -78,7 +79,14 @@ class TokenResponse(BaseModel):
 class UserPayload(BaseModel):
     id: str
     email: str | None
+    first_name: str | None
+    last_name: str | None
     created_at: datetime
+
+
+class UserUpdate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str | None = Field(default=None, max_length=80)
 
 
 class GoogleHealthStatus(BaseModel):
@@ -88,9 +96,15 @@ class GoogleHealthStatus(BaseModel):
     last_error: str | None
 
 
+class MeProfileStatus(BaseModel):
+    onboarding_completed_at: datetime | None
+    weather_enabled: bool
+
+
 class MeResponse(BaseModel):
     user: UserPayload
     google_health: GoogleHealthStatus
+    profile: MeProfileStatus
 
 
 class DisconnectRequest(BaseModel):
@@ -245,7 +259,17 @@ def logout(
 
 @router.get("/me", response_model=MeResponse)
 def me(session: DbSession, user: CurrentUser) -> MeResponse:
-    return MeResponse(user=_user_payload(user), google_health=_google_health_status(session, user.id))
+    return _me_response(session, user)
+
+
+@router.patch("/me", response_model=MeResponse)
+def update_me(payload: UserUpdate, session: DbSession, user: CurrentUser) -> MeResponse:
+    user.first_name = _clean_string(payload.first_name)
+    user.last_name = _clean_optional_string(payload.last_name)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _me_response(session, user)
 
 
 connections_router = APIRouter(prefix="/connections", tags=["connections"])
@@ -309,7 +333,40 @@ def _token_response(token_pair: TokenPair) -> TokenResponse:
 
 
 def _user_payload(user: User) -> UserPayload:
-    return UserPayload(id=user.id, email=user.email, created_at=user.created_at)
+    return UserPayload(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        created_at=user.created_at,
+    )
+
+
+def _me_response(session: DbSession, user: User) -> MeResponse:
+    profile = get_or_create_profile(session, user.id)
+    session.commit()
+    return MeResponse(
+        user=_user_payload(user),
+        google_health=_google_health_status(session, user.id),
+        profile=MeProfileStatus(
+            onboarding_completed_at=profile.onboarding_completed_at,
+            weather_enabled=profile.weather_enabled,
+        ),
+    )
+
+
+def _clean_string(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="String fields cannot be blank")
+    return cleaned
+
+
+def _clean_optional_string(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _google_health_status(session: DbSession, user_id: str) -> GoogleHealthStatus:

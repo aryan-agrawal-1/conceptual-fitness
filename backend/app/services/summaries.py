@@ -195,9 +195,15 @@ def _update_profile_body_metrics(session: Session, *, user_id: str, end: date) -
     profile = get_or_create_profile(session, user_id)
     latest_weight = _latest_sample_at_or_before(session, user_id=user_id, metric="weight", end=end)
     latest_height = _latest_sample_at_or_before(session, user_id=user_id, metric="height", end=end)
-    if latest_weight is not None:
+    if latest_weight is not None and _sample_can_update_current(
+        latest_weight,
+        preference=profile.weight_source_preference,
+    ):
         profile.weight_kg = latest_weight.value
-    if latest_height is not None:
+    if latest_height is not None and _sample_can_update_current(
+        latest_height,
+        preference=profile.height_source_preference,
+    ):
         profile.height_cm = latest_height.value * 100
     if latest_weight is not None or latest_height is not None:
         session.add(profile)
@@ -220,3 +226,7 @@ def _latest_sample_at_or_before(
         .order_by(MetricSample.observed_at.desc())
         .limit(1)
     )
+
+
+def _sample_can_update_current(sample: MetricSample, *, preference: str) -> bool:
+    return preference != "manual" or sample.source_platform == "manual"

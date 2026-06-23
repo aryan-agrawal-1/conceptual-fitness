@@ -90,6 +90,7 @@ def update_body_metrics(
         )
         if _latest_sample(session, user_id=user.id, metric="height") == sample:
             profile.height_cm = payload.height_cm
+        profile.height_source_preference = "manual"
     if payload.weight_kg is not None:
         sample = _upsert_manual_sample(
             session,
@@ -102,6 +103,7 @@ def update_body_metrics(
         )
         if _latest_sample(session, user_id=user.id, metric="weight") == sample:
             profile.weight_kg = payload.weight_kg
+        profile.weight_source_preference = "manual"
     session.add(profile)
     session.commit()
     session.refresh(profile)
@@ -121,9 +123,15 @@ def _body_metrics_payload(
     latest_weight = _latest_sample(session, user_id=user_id, metric="weight")
     height_cm = profile.height_cm
     weight_kg = profile.weight_kg
-    if latest_height is not None:
+    if latest_height is not None and _sample_can_update_current(
+        latest_height,
+        preference=profile.height_source_preference,
+    ):
         height_cm = latest_height.value * 100
-    if latest_weight is not None:
+    if latest_weight is not None and _sample_can_update_current(
+        latest_weight,
+        preference=profile.weight_source_preference,
+    ):
         weight_kg = latest_weight.value
     return BodyMetricsPayload(
         height_cm=height_cm,
@@ -161,6 +169,10 @@ def _latest_sample(session: DbSession, *, user_id: str, metric: str) -> MetricSa
         .order_by(MetricSample.observed_at.desc())
         .limit(1)
     )
+
+
+def _sample_can_update_current(sample: MetricSample, *, preference: str) -> bool:
+    return preference != "manual" or sample.source_platform == "manual"
 
 
 def _upsert_manual_sample(
