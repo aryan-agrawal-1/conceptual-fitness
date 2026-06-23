@@ -111,8 +111,8 @@ struct DashboardView: View {
                 Text(heroBriefText)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(heroTextColor.opacity(0.78))
-                    .lineLimit(7)
                     .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer(minLength: 28)
@@ -186,9 +186,9 @@ struct DashboardView: View {
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         let base: String
-        if hour < 12 {
+        if hour >= 4 && hour < 12 {
             base = "Good morning"
-        } else if hour < 18 {
+        } else if hour >= 12 && hour < 18 {
             base = "Good afternoon"
         } else {
             base = "Good evening"
@@ -216,7 +216,8 @@ struct DashboardView: View {
     private func reload() async {
         loadState = .loading
         do {
-            let bundle = try await client.loadDashboard()
+            let displayBundle = try await client.loadDashboard()
+            let bundle = displayBundle.bundle
             let dailyBrief = await insightProvider.dailyBrief(for: bundle.snapshot)
             let insight = insightProvider.shortInsight(for: bundle.snapshot)
             loadState = .loaded(
@@ -225,6 +226,7 @@ struct DashboardView: View {
                     metricSummaries: bundle.metricSummaries,
                     workouts: bundle.recentWorkouts,
                     vo2Max: bundle.vo2Max,
+                    dateContext: displayBundle.dateContext,
                     dailyBrief: dailyBrief,
                     insight: insight
                 )

@@ -144,9 +144,9 @@ private enum DayPhase: Equatable {
 
     init(date: Date, calendar: Calendar = .current) {
         let hour = calendar.component(.hour, from: date)
-        if hour < 12 {
+        if hour >= 4 && hour < 12 {
             self = .morning
-        } else if hour < 18 {
+        } else if hour >= 12 && hour < 18 {
             self = .afternoon
         } else {
             self = .evening

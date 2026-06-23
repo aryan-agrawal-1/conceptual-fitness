@@ -30,6 +30,15 @@ struct DailyBriefCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if data.dateContext == .yesterday {
+                Text("Yesterday's scores")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.primary.opacity(0.68))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.white.opacity(0.38), in: Capsule())
+            }
+
             HStack(alignment: .top, spacing: 12) {
                 ScoreRingView(item: .strain(from: data.snapshot))
                 ScoreRingView(item: .readiness(from: data.snapshot))

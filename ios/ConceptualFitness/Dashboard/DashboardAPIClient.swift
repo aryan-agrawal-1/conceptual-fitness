@@ -5,9 +5,31 @@ struct DashboardAPIClient {
     var session: URLSession = .shared
     var authStore: AuthStore?
 
-    func loadDashboard() async throws -> DashboardBundle {
-        let dateString = Self.apiDate.string(from: Date())
+    func loadDashboard(now: Date = Date(), calendar: Calendar = .current) async throws -> DashboardDisplayBundle {
+        let today = try await loadDashboard(for: now)
+        if shouldUseYesterdayFallback(now: now, calendar: calendar, bundle: today) {
+            let yesterday = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+            return DashboardDisplayBundle(
+                bundle: try await loadDashboard(for: yesterday),
+                dateContext: .yesterday
+            )
+        }
+        return DashboardDisplayBundle(bundle: today, dateContext: .today)
+    }
+
+    private func loadDashboard(for date: Date) async throws -> DashboardBundle {
+        let dateString = Self.apiDate.string(from: date)
         return try await fetch("/dashboard/bundle?date=\(dateString)")
+    }
+
+    private func shouldUseYesterdayFallback(
+        now: Date,
+        calendar: Calendar,
+        bundle: DashboardBundle
+    ) -> Bool {
+        let hour = calendar.component(.hour, from: now)
+        guard hour < 4 else { return false }
+        return !bundle.hasMeaningfulCurrentRecovery
     }
 
     private func fetch<T: Decodable>(_ path: String) async throws -> T {
@@ -38,4 +60,22 @@ struct DashboardAPIClient {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+}
+
+struct DashboardDisplayBundle {
+    let bundle: DashboardBundle
+    let dateContext: DashboardDateContext
+}
+
+enum DashboardDateContext {
+    case today
+    case yesterday
+}
+
+private extension DashboardBundle {
+    var hasMeaningfulCurrentRecovery: Bool {
+        snapshot.scores.sleep?.value != nil
+            || snapshot.scores.readiness?.value != nil
+            || snapshot.metrics?.sleepMinutes != nil
+    }
 }
