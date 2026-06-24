@@ -76,6 +76,16 @@ struct AuthUser: Decodable, Equatable {
 
 struct GoogleHealthStatus: Decodable, Equatable {
     let status: GoogleHealthConnectionState
+    let connectedAt: String?
+    let lastSyncAt: String?
+    let lastError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case connectedAt = "connected_at"
+        case lastSyncAt = "last_sync_at"
+        case lastError = "last_error"
+    }
 }
 
 struct AuthProfileStatus: Decodable, Equatable {

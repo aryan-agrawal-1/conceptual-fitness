@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.security import decrypt_secret, utcnow
 from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
@@ -29,6 +30,32 @@ from app.services.summaries import rebuild_daily_summaries
 
 
 INITIAL_BACKFILL_DAYS = 14
+
+
+def sync_freshness_window() -> timedelta:
+    return timedelta(minutes=get_settings().google_health_sync_freshness_minutes)
+
+
+def is_account_sync_fresh(account: GoogleAccount, *, now: datetime | None = None) -> bool:
+    if account.last_sync_at is None:
+        return False
+    checked_at = now or utcnow()
+    last_sync_at = _ensure_aware(account.last_sync_at, UTC).astimezone(UTC)
+    return checked_at.astimezone(UTC) - last_sync_at < sync_freshness_window()
+
+
+def account_has_running_sync(session: Session, account: GoogleAccount) -> bool:
+    return (
+        session.scalar(
+            select(SyncCursor.id)
+            .where(
+                SyncCursor.google_account_id == account.id,
+                SyncCursor.status == SyncStatus.running,
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 @dataclass

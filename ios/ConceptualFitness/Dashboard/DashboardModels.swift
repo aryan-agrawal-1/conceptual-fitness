@@ -5,12 +5,52 @@ struct DashboardBundle: Decodable {
     let metricSummaries: [String: MetricDashboardSummary]
     let recentWorkouts: [WorkoutSummary]
     let vo2Max: VO2MaxDetail?
+    let connections: DashboardConnections?
+    let syncStatus: [DashboardSyncStatus]
 
     enum CodingKeys: String, CodingKey {
         case snapshot
         case metricSummaries = "metric_summaries"
         case recentWorkouts = "recent_workouts"
         case vo2Max = "vo2_max"
+        case connections
+        case syncStatus = "sync_status"
+    }
+}
+
+struct DashboardConnections: Decodable {
+    let googleHealth: [GoogleHealthConnection]
+
+    enum CodingKeys: String, CodingKey {
+        case googleHealth = "google_health"
+    }
+}
+
+struct GoogleHealthConnection: Decodable {
+    let accountID: String?
+    let status: String?
+    let lastSyncAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id"
+        case status
+        case lastSyncAt = "last_sync_at"
+    }
+}
+
+struct DashboardSyncStatus: Decodable {
+    let googleAccountID: String?
+    let dataType: String?
+    let status: String
+    let lastError: String?
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case googleAccountID = "google_account_id"
+        case dataType = "data_type"
+        case status
+        case lastError = "last_error"
+        case updatedAt = "updated_at"
     }
 }
 
@@ -251,9 +291,12 @@ struct DashboardData {
     let metricSummaries: [String: MetricDashboardSummary]
     let workouts: [WorkoutSummary]
     let vo2Max: VO2MaxDetail?
+    let connections: DashboardConnections?
+    let syncStatus: [DashboardSyncStatus]
     let dateContext: DashboardDateContext
     let dailyBrief: String?
     let insight: String?
+    let aiDebugStatus: String?
 
     static let sample = preview()
 
@@ -267,9 +310,14 @@ struct DashboardData {
             metricSummaries: [:],
             workouts: WorkoutSummary.samples,
             vo2Max: VO2MaxDetail(current: MetricPoint(value: 48.2, date: "2026-06-22"), dataQuality: "strong"),
+            connections: DashboardConnections(googleHealth: [
+                GoogleHealthConnection(accountID: "preview", status: "connected", lastSyncAt: "2026-06-22T18:42:00Z")
+            ]),
+            syncStatus: [],
             dateContext: dateContext,
             dailyBrief: dailyBrief,
-            insight: insight
+            insight: insight,
+            aiDebugStatus: nil
         )
     }
 
@@ -279,6 +327,18 @@ struct DashboardData {
 
     private static let previewDailyBrief = "Recovery looks strong after 7 hours 48 minutes of sleep last night, with readiness and sleep both in a good range. Use today for a purposeful push if it fits your plan: build strain steadily, warm up properly, and stop short of turning a good recovery day into unnecessary fatigue. Keep the evening calm so the sleep win carries forward."
     private static let previewShortInsight = "Strong recovery supports a purposeful push today. Build strain steadily."
+}
+
+extension DashboardData {
+    var lastSyncAt: Date? {
+        connections?.googleHealth
+            .compactMap { DashboardFormatters.parseBackendDateTime($0.lastSyncAt) }
+            .max()
+    }
+
+    var hasRunningSyncStatus: Bool {
+        syncStatus.contains { $0.status == "running" }
+    }
 }
 
 extension DashboardSnapshot {

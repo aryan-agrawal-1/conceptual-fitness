@@ -17,6 +17,14 @@ struct DashboardAPIClient {
         return DashboardDisplayBundle(bundle: today, dateContext: .today)
     }
 
+    func syncCurrent() async throws -> CurrentSyncResponse {
+        try await request("/sync/current", method: "POST")
+    }
+
+    func currentSyncStatus() async throws -> CurrentSyncStatus {
+        try await fetch("/sync/current/status")
+    }
+
     private func loadDashboard(for date: Date) async throws -> DashboardBundle {
         let dateString = Self.apiDate.string(from: date)
         return try await fetch("/dashboard/bundle?date=\(dateString)")
@@ -33,14 +41,21 @@ struct DashboardAPIClient {
     }
 
     private func fetch<T: Decodable>(_ path: String) async throws -> T {
+        try await request(path, method: "GET")
+    }
+
+    private func request<T: Decodable>(_ path: String, method: String) async throws -> T {
         guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw URLError(.badURL)
         }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         let data: Data
         if let authStore {
-            data = try await authStore.authenticatedData(for: url)
+            data = try await authStore.authenticatedData(for: request)
         } else {
-            let (rawData, response) = try await session.data(from: url)
+            let (rawData, response) = try await session.data(for: request)
             try validate(response: response)
             data = rawData
         }
@@ -70,6 +85,44 @@ struct DashboardDisplayBundle {
 enum DashboardDateContext {
     case today
     case yesterday
+}
+
+struct CurrentSyncResponse: Decodable {
+    let status: CurrentSyncResponseStatus
+    let accountID: String?
+    let isRunning: Bool?
+    let isFresh: Bool?
+    let lastSyncAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case accountID = "account_id"
+        case isRunning = "is_running"
+        case isFresh = "is_fresh"
+        case lastSyncAt = "last_sync_at"
+    }
+}
+
+enum CurrentSyncResponseStatus: String, Decodable {
+    case synced
+    case skippedFresh = "skipped_fresh"
+    case alreadyRunning = "already_running"
+}
+
+struct CurrentSyncStatus: Decodable {
+    let accountID: String
+    let isRunning: Bool
+    let isFresh: Bool
+    let lastSyncAt: String?
+    let cursors: [DashboardSyncStatus]
+
+    enum CodingKeys: String, CodingKey {
+        case accountID = "account_id"
+        case isRunning = "is_running"
+        case isFresh = "is_fresh"
+        case lastSyncAt = "last_sync_at"
+        case cursors
+    }
 }
 
 private extension DashboardBundle {

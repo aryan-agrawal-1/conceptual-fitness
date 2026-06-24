@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DashboardView: View {
     let client: DashboardAPIClient
+    @ObservedObject var syncCoordinator: AppSyncCoordinator
     let weatherProvider: WeatherProvider
     @ObservedObject var locationProvider: LocationProvider
     let insightProvider: DailyInsightProvider
@@ -20,6 +21,7 @@ struct DashboardView: View {
 
     init(
         client: DashboardAPIClient,
+        syncCoordinator: AppSyncCoordinator,
         weatherProvider: WeatherProvider,
         locationProvider: LocationProvider,
         insightProvider: DailyInsightProvider,
@@ -30,6 +32,7 @@ struct DashboardView: View {
         greetingOverride: String? = nil
     ) {
         self.client = client
+        self.syncCoordinator = syncCoordinator
         self.weatherProvider = weatherProvider
         self.locationProvider = locationProvider
         self.insightProvider = insightProvider
@@ -55,14 +58,28 @@ struct DashboardView: View {
             .scrollIndicators(.hidden)
             .refreshable {
                 if loadsLiveData {
+                    await syncCoordinator.syncIfNeeded()
                     await reload()
                 }
             }
         }
-        .navigationTitle("Dashboard")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        #if DEBUG
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    if syncCoordinator.isSyncing {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(lastSyncedTitle)
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+            }
+            #if DEBUG
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showsWeatherLab = true
@@ -71,7 +88,9 @@ struct DashboardView: View {
                 }
                 .accessibilityLabel("Weather Lab")
             }
+            #endif
         }
+        #if DEBUG
         .sheet(isPresented: $showsWeatherLab) {
             NavigationStack {
                 WeatherBackgroundDebugControlsView()
@@ -101,6 +120,12 @@ struct DashboardView: View {
         .task(id: locationProvider.revision) {
             if loadsLiveData && weatherEnabled {
                 await reloadWeather()
+            }
+        }
+        .onChange(of: syncCoordinator.refreshToken) { _, _ in
+            guard loadsLiveData else { return }
+            Task {
+                await reload()
             }
         }
     }
@@ -140,7 +165,8 @@ struct DashboardView: View {
                     Text(heroBriefText)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(heroTextColor.opacity(0.78))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(8)
+                        .truncationMode(.tail)
                         .layoutPriority(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -272,19 +298,28 @@ struct DashboardView: View {
             let now = Date()
             let displayBundle = try await client.loadDashboard(now: now)
             let bundle = displayBundle.bundle
-            async let dailyBrief = insightProvider.dailyBrief(for: bundle, now: now)
-            async let insight = insightProvider.shortInsight(for: bundle, now: now)
+            let dailyBrief = await insightProvider.dailyBrief(for: bundle, now: now)
+            let insight = await insightProvider.shortInsight(for: bundle, now: now)
+            let aiDebugStatus = dailyBrief == nil && insight == nil
+                ? "AI unavailable: FoundationModels generation failed. Check [DailyInsightProvider] logs."
+                : nil
             loadState = .loaded(
                 DashboardData(
                     snapshot: bundle.snapshot,
                     metricSummaries: bundle.metricSummaries,
                     workouts: bundle.recentWorkouts,
                     vo2Max: bundle.vo2Max,
+                    connections: bundle.connections,
+                    syncStatus: bundle.syncStatus,
                     dateContext: displayBundle.dateContext,
-                    dailyBrief: await dailyBrief,
-                    insight: await insight
+                    dailyBrief: dailyBrief,
+                    insight: insight,
+                    aiDebugStatus: aiDebugStatus
                 )
             )
+            if case .loaded(let data) = loadState {
+                syncCoordinator.updateFromDashboard(data)
+            }
         } catch {
             if !hadLoadedData {
                 loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString). Start the FastAPI server to load live dashboard data.")
@@ -297,6 +332,28 @@ struct DashboardView: View {
         let next = await weatherProvider.weather(for: locationProvider.location, locationName: locationProvider.locationName)
         weather = next
         weatherStatus = next.locationName ?? "Weather preview"
+    }
+
+    private var lastSyncedTitle: String {
+        if syncCoordinator.isSyncing {
+            return "Syncing..."
+        }
+        return "Last Synced: \(lastSyncedTime ?? "--:--")"
+    }
+
+    private var lastSyncedTime: String? {
+        displayedLastSyncAt.map(DashboardFormatters.lastSyncedTime.string)
+    }
+
+    private var displayedLastSyncAt: Date? {
+        switch loadState {
+        case .loaded(let data):
+            return data.lastSyncAt ?? syncCoordinator.lastSyncAt
+        case .loading:
+            return syncCoordinator.lastSyncAt
+        case .failed:
+            return previewData.lastSyncAt ?? syncCoordinator.lastSyncAt
+        }
     }
 }
 
@@ -316,6 +373,7 @@ private extension DashboardData {
     NavigationStack {
         DashboardView(
             client: DashboardAPIClient(),
+            syncCoordinator: AppSyncCoordinator(client: DashboardAPIClient()),
             weatherProvider: WeatherProvider(),
             locationProvider: LocationProvider(),
             insightProvider: DailyInsightProvider(),
@@ -329,6 +387,7 @@ private extension DashboardData {
     NavigationStack {
         DashboardView(
             client: DashboardAPIClient(),
+            syncCoordinator: AppSyncCoordinator(client: DashboardAPIClient()),
             weatherProvider: WeatherProvider(),
             locationProvider: LocationProvider(),
             insightProvider: DailyInsightProvider(),
@@ -344,6 +403,7 @@ private extension DashboardData {
     NavigationStack {
         DashboardView(
             client: DashboardAPIClient(),
+            syncCoordinator: AppSyncCoordinator(client: DashboardAPIClient()),
             weatherProvider: WeatherProvider(),
             locationProvider: LocationProvider(),
             insightProvider: DailyInsightProvider(),
@@ -359,6 +419,7 @@ private extension DashboardData {
     NavigationStack {
         DashboardView(
             client: DashboardAPIClient(),
+            syncCoordinator: AppSyncCoordinator(client: DashboardAPIClient()),
             weatherProvider: WeatherProvider(),
             locationProvider: LocationProvider(),
             insightProvider: DailyInsightProvider(),

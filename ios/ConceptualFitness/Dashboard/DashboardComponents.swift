@@ -50,8 +50,19 @@ struct DailyBriefCard: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.primary.opacity(0.78))
                     .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+            }
+
+            #if DEBUG
+            if let aiDebugStatus = data.aiDebugStatus?.nonEmptyDashboardText {
+                Text(aiDebugStatus)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.red.opacity(0.82))
                     .fixedSize(horizontal: false, vertical: true)
             }
+            #endif
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)

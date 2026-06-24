@@ -46,6 +46,7 @@ class Settings:
     celery_timezone: str
     celery_sync_hour: str
     celery_sync_minute: str
+    google_health_sync_freshness_minutes: int
     google_health_scopes: tuple[str, ...] = GOOGLE_HEALTH_SCOPES
 
     @property
@@ -131,6 +132,11 @@ def get_settings() -> Settings:
         celery_timezone=_get(env, "CELERY_TIMEZONE", "UTC"),
         celery_sync_hour=_get(env, "CELERY_SYNC_HOUR", "*"),
         celery_sync_minute=_get(env, "CELERY_SYNC_MINUTE", "0"),
+        google_health_sync_freshness_minutes=_get_int(
+            env,
+            "GOOGLE_HEALTH_SYNC_FRESHNESS_MINUTES",
+            15,
+        ),
         google_health_scopes=_parse_scopes(env.get("GOOGLE_HEALTH_SCOPES")),
     )
 

@@ -722,6 +722,176 @@ def test_sync_all_connected_accounts_uses_cursor_window(session, monkeypatch) ->
     }
 
 
+def test_sync_all_connected_accounts_skips_fresh_accounts(session, monkeypatch) -> None:
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC)
+    session.commit()
+
+    async def fail_sync(*args, **kwargs):
+        raise AssertionError("fresh accounts should not sync")
+
+    monkeypatch.setattr(sync_tasks, "sync_google_account_range", fail_sync)
+
+    result = sync_tasks.sync_all_connected_accounts()
+
+    assert result["synced"] == []
+    assert result["skipped"] == {account.id: "fresh"}
+    assert result["failed"] == {}
+
+
+def test_sync_all_connected_accounts_skips_running_accounts(session, monkeypatch) -> None:
+    account = _connected_account(session)
+    session.add(
+        SyncCursor(
+            google_account_id=account.id,
+            data_type="steps",
+            status=SyncStatus.running,
+        )
+    )
+    session.commit()
+
+    async def fail_sync(*args, **kwargs):
+        raise AssertionError("running accounts should not sync")
+
+    monkeypatch.setattr(sync_tasks, "sync_google_account_range", fail_sync)
+
+    result = sync_tasks.sync_all_connected_accounts()
+
+    assert result["synced"] == []
+    assert result["skipped"] == {account.id: "already_running"}
+    assert result["failed"] == {}
+
+
+def test_current_sync_skips_fresh_account(session, auth_headers, monkeypatch) -> None:
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC)
+    session.commit()
+    user = session.get(User, account.user_id)
+
+    async def fail_sync(*args, **kwargs):
+        raise AssertionError("fresh accounts should not sync")
+
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fail_sync)
+
+    response = TestClient(app).post("/sync/current", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "skipped_fresh"
+    assert payload["account_id"] == account.id
+    assert payload["is_fresh"] is True
+
+
+def test_current_sync_never_synced_account_runs_cursor_window(
+    session,
+    auth_headers,
+    monkeypatch,
+) -> None:
+    account = _connected_account(session)
+    _add_success_cursors(
+        session,
+        account,
+        {data_type: date(2026, 6, 20) for data_type in MVP_SYNC_DATA_TYPES},
+    )
+    user = session.get(User, account.user_id)
+    captured: dict[str, date] = {}
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start: date,
+        end: date,
+        data_types=None,
+        client=None,
+    ):
+        captured["start"] = start
+        captured["end"] = end
+        account.last_sync_at = datetime.now(UTC)
+        session.add(account)
+        session.commit()
+        return SyncResult(
+            google_account_id=account.id,
+            start=start,
+            end=end,
+            records_seen=3,
+            records_stored=2,
+            data_types=["steps"],
+        )
+
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_routes, "date", FixedDate)
+
+    response = TestClient(app).post("/sync/current", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "synced"
+    assert payload["account_id"] == account.id
+    assert payload["records_seen"] == 3
+    assert captured["start"] == date(2026, 6, 19)
+    assert captured["end"] == date(2026, 6, 21)
+
+
+def test_current_sync_reports_already_running(session, auth_headers, monkeypatch) -> None:
+    account = _connected_account(session)
+    session.add(
+        SyncCursor(
+            google_account_id=account.id,
+            data_type="steps",
+            status=SyncStatus.running,
+        )
+    )
+    session.commit()
+    user = session.get(User, account.user_id)
+
+    async def fail_sync(*args, **kwargs):
+        raise AssertionError("running accounts should not sync")
+
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fail_sync)
+
+    response = TestClient(app).post("/sync/current", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "already_running"
+    assert payload["is_running"] is True
+
+
+def test_current_sync_status_is_scoped_to_current_user(session, auth_headers) -> None:
+    account = _connected_account(session)
+    other_user = User()
+    session.add(other_user)
+    session.flush()
+    other = GoogleAccount(
+        user_id=other_user.id,
+        health_user_id="other-health-id",
+        legacy_user_id="other-legacy-id",
+        granted_scopes=[],
+        encrypted_refresh_token=encrypt_secret("refresh-token"),
+        status=ConnectionStatus.connected,
+    )
+    session.add(other)
+    session.flush()
+    session.add(
+        SyncCursor(
+            google_account_id=other.id,
+            data_type="steps",
+            status=SyncStatus.running,
+        )
+    )
+    session.commit()
+    user = session.get(User, account.user_id)
+
+    response = TestClient(app).get("/sync/current/status", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["account_id"] == account.id
+    assert payload["is_running"] is False
+    assert payload["cursors"] == []
+
+
 def test_manual_sync_without_dates_uses_cursor_window(session, monkeypatch) -> None:
     account = _connected_account(session)
     session.commit()

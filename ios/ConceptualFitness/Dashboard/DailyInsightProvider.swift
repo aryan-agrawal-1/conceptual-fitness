@@ -8,33 +8,45 @@ struct DailyInsightProvider {
 
     func dailyBrief(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
         let slot = BriefSlot(date: now)
+        debugLog("dailyBrief requested user=\(bundle.snapshot.userID) date=\(bundle.snapshot.date) slot=\(slot.rawValue) cacheable=\(bundle.snapshot.isCacheableForDailyInsight)")
         if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .dailyBrief) {
+            debugLog("dailyBrief cache hit characters=\(cached.count)")
             return cached
         }
 
         if #available(iOS 26.0, *) {
             if let generated = await generatedSummary(for: bundle, slot: slot, mode: slot == .evening ? .eveningBrief : .dayBrief) {
                 cache(generated, for: bundle.snapshot, slot: slot, kind: .dailyBrief)
+                debugLog("dailyBrief generated characters=\(generated.count)")
                 return generated
             }
+        } else {
+            debugLog("dailyBrief skipped: iOS 26 FoundationModels unavailable on this OS")
         }
 
+        debugLog("dailyBrief unavailable: no cache and no generated text")
         return nil
     }
 
     func shortInsight(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
         let slot = BriefSlot(date: now)
+        debugLog("shortInsight requested user=\(bundle.snapshot.userID) date=\(bundle.snapshot.date) slot=\(slot.rawValue) cacheable=\(bundle.snapshot.isCacheableForDailyInsight)")
         if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .shortInsight) {
+            debugLog("shortInsight cache hit characters=\(cached.count)")
             return cached
         }
 
         if #available(iOS 26.0, *) {
             if let generated = await generatedSummary(for: bundle, slot: slot, mode: .shortInsight) {
                 cache(generated, for: bundle.snapshot, slot: slot, kind: .shortInsight)
+                debugLog("shortInsight generated characters=\(generated.count)")
                 return generated
             }
+        } else {
+            debugLog("shortInsight skipped: iOS 26 FoundationModels unavailable on this OS")
         }
 
+        debugLog("shortInsight unavailable: no cache and no generated text")
         return nil
     }
 
@@ -54,8 +66,13 @@ struct DailyInsightProvider {
 
     @available(iOS 26.0, *)
     private func generatedSummary(for bundle: DashboardBundle, slot: BriefSlot, mode: InsightMode) async -> String? {
-        let model = SystemLanguageModel.default
-        guard model.availability == .available else { return nil }
+        let model = SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations)
+        let availability = String(describing: model.availability)
+        debugLog("\(mode.logName) model availability=\(availability)")
+        guard model.availability == .available else {
+            debugLog("\(mode.logName) generation skipped: model availability=\(availability)")
+            return nil
+        }
 
         let context = DailyInsightContext(bundle: bundle, slot: slot)
         let prompt = """
@@ -65,7 +82,7 @@ struct DailyInsightProvider {
         - Do not use bullet points.
         - Do not quote numeric scores, metric values, component scores, percentages, load points, or thresholds.
         - Write directly to the user with "you" and "your". The tone should feel personal, not like a detached report.
-        - Translate the data into plain guidance. Say what you should do and why.
+        - Translate the data into compact plain guidance. Say what to do and why in the fewest natural words.
         - Name your dominant limiter or opportunity when one is clear.
         - Prefer natural sentences over compressed clauses. For example: "Your main limiter today is recent training load" instead of "The limiter is recent load."
         - Keep medical language cautious. Do not diagnose illness, injury, sleep disorders, or cardiovascular problems.
@@ -83,6 +100,7 @@ struct DailyInsightProvider {
         \(context.promptBlock)
         """
 
+        debugLog("\(mode.logName) promptCharacters=\(prompt.count) contextCharacters=\(context.promptBlock.count)")
         do {
             let session = LanguageModelSession(
                 model: model,
@@ -92,10 +110,64 @@ struct DailyInsightProvider {
                 to: prompt,
                 options: GenerationOptions(temperature: 0.2, maximumResponseTokens: mode.maximumResponseTokens)
             )
-            return cleaned(response.content, for: mode)
+            let cleanedText = cleaned(response.content, for: mode)
+            debugLog("\(mode.logName) generation completed rawCharacters=\(response.content.count) cleanedCharacters=\(cleanedText?.count ?? 0)")
+            return cleanedText
         } catch {
+            debugLog("\(mode.logName) generation failed: \(describe(error))")
+            return await fallbackSummary(for: bundle, slot: slot, mode: mode, model: model)
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func fallbackSummary(
+        for bundle: DashboardBundle,
+        slot: BriefSlot,
+        mode: InsightMode,
+        model: SystemLanguageModel
+    ) async -> String? {
+        let metrics = bundle.snapshot.metrics
+        let prompt = """
+        \(mode.fallbackTask)
+
+        Phase: \(slot.promptLabel)
+        Sleep score: \(formatForPrompt(bundle.snapshot.scores.sleep?.value))
+        Readiness score: \(formatForPrompt(bundle.snapshot.scores.readiness?.value))
+        Strain load: \(formatForPrompt(bundle.snapshot.scores.strain?.value))
+        Sleep minutes: \(formatForPrompt(metrics?.sleepMinutes))
+        Resting heart rate: \(formatForPrompt(metrics?.restingHeartRate))
+        HRV: \(formatForPrompt(metrics?.heartRateVariability))
+        Recent workouts: \(bundle.recentWorkouts.prefix(3).map { $0.workoutType ?? "workout" }.joined(separator: ", "))
+
+        Do not use bullet points or quote the numbers. Write directly to the user.
+        """
+        debugLog("\(mode.logName) fallbackPromptCharacters=\(prompt.count)")
+        do {
+            let session = LanguageModelSession(
+                model: model,
+                instructions: "You write concise wearable-based fitness guidance."
+            )
+            let response = try await session.respond(
+                to: prompt,
+                options: GenerationOptions(temperature: 0.2, maximumResponseTokens: mode.maximumResponseTokens)
+            )
+            let cleanedText = cleaned(response.content, for: mode)
+            debugLog("\(mode.logName) fallback completed rawCharacters=\(response.content.count) cleanedCharacters=\(cleanedText?.count ?? 0)")
+            return cleanedText
+        } catch {
+            debugLog("\(mode.logName) fallback failed: \(describe(error))")
             return nil
         }
+    }
+
+    private func formatForPrompt(_ value: Double?) -> String {
+        guard let value else { return "unknown" }
+        return value.clean
+    }
+
+    private func formatForPrompt(_ value: Int?) -> String {
+        guard let value else { return "unknown" }
+        return String(value)
     }
 
     private static let domainContract = """
@@ -125,10 +197,7 @@ struct DailyInsightProvider {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         guard !collapsed.isEmpty else { return nil }
-        if mode == .shortInsight {
-            return String(collapsed.prefix(220))
-        }
-        return collapsed
+        return String(collapsed.prefix(mode.maximumCharacters))
     }
 
     private func cachedText(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String? {
@@ -168,7 +237,7 @@ struct DailyInsightProvider {
     }
 
     private func cacheKey(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v2.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v4.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func cachedLastText(for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
@@ -188,7 +257,7 @@ struct DailyInsightProvider {
     }
 
     private func lastCacheKey(for slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v2.last.\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v4.last.\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func allowedSnapshotDates(for slot: BriefSlot, now: Date, calendar: Calendar = .current) -> Set<String> {
@@ -207,6 +276,26 @@ struct DailyInsightProvider {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+
+    private func debugLog(_ message: String) {
+        #if DEBUG
+        print("[DailyInsightProvider] \(message)")
+        #endif
+    }
+
+    private func describe(_ error: Error) -> String {
+        if #available(iOS 26.0, *),
+           let generationError = error as? LanguageModelSession.GenerationError {
+            let details = [
+                "description=\(generationError.errorDescription ?? "nil")",
+                "failureReason=\(generationError.failureReason ?? "nil")",
+                "recoverySuggestion=\(generationError.recoverySuggestion ?? "nil")",
+                "raw=\(String(describing: generationError))",
+            ]
+            return details.joined(separator: "; ")
+        }
+        return String(describing: error)
+    }
 }
 
 private struct DailyInsightContext {
@@ -466,20 +555,51 @@ private enum InsightMode: Equatable {
     var task: String {
         switch self {
         case .dayBrief:
-            return "Write one daily health coaching brief in 70 to 95 words. The brief should tell the user what to aim for today and why: whether this is a good day for a workout, an easier movement day, recovery, or a normal steady day."
+            return "Write one daily health coaching brief in 55 to 65 words, suitable for an eight-line dashboard slot. Tell the user what to aim for today and why."
         case .eveningBrief:
-            return "Write one evening health coaching brief in 70 to 95 words. The brief should tell the user how to wind down tonight and why: whether to keep rhythm, catch up on sleep, avoid more strain, or prepare for tomorrow."
+            return "Write one evening health coaching brief in 55 to 65 words, suitable for an eight-line dashboard slot. Tell the user how to wind down tonight and why."
         case .shortInsight:
-            return "Write a very short dashboard insight in one or two sentences. It should summarize what the scores mean for the user's day without using numbers."
+            return "Write one dashboard insight in 10 to 15 words, suitable for a two-line card slot. Summarize what the scores mean without using numbers."
+        }
+    }
+
+    var fallbackTask: String {
+        switch self {
+        case .dayBrief:
+            return "Write one practical daily health coaching brief in 55 to 65 words."
+        case .eveningBrief:
+            return "Write one practical evening health coaching brief in 55 to 65 words."
+        case .shortInsight:
+            return "Write one dashboard insight in 10 to 15 words."
         }
     }
 
     var maximumResponseTokens: Int {
         switch self {
         case .dayBrief, .eveningBrief:
-            return 180
+            return 130
         case .shortInsight:
-            return 70
+            return 40
+        }
+    }
+
+    var maximumCharacters: Int {
+        switch self {
+        case .dayBrief, .eveningBrief:
+            return 520
+        case .shortInsight:
+            return 110
+        }
+    }
+
+    var logName: String {
+        switch self {
+        case .dayBrief:
+            return "dayBrief"
+        case .eveningBrief:
+            return "eveningBrief"
+        case .shortInsight:
+            return "shortInsight"
         }
     }
 }

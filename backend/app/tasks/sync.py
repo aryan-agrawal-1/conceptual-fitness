@@ -8,7 +8,13 @@ from sqlalchemy import select
 from app.db.session import SessionLocal
 from app.models import ConnectionStatus, GoogleAccount
 from app.services.metric_rollups import cleanup_high_volume_storage
-from app.services.sync import run_initial_backfill, sync_google_account_range, sync_window_from_cursors
+from app.services.sync import (
+    account_has_running_sync,
+    is_account_sync_fresh,
+    run_initial_backfill,
+    sync_google_account_range,
+    sync_window_from_cursors,
+)
 from app.tasks.celery_app import celery_app
 
 # hand work to celery to backfill data
@@ -41,6 +47,7 @@ def initial_backfill(account_id: str) -> dict[str, object]:
 @celery_app.task(name="app.tasks.sync.sync_all_connected_accounts")
 def sync_all_connected_accounts() -> dict[str, object]:
     synced: list[str] = []
+    skipped: dict[str, str] = {}
     failed: dict[str, str] = {}
     ranges: dict[str, dict[str, object]] = {}
     with SessionLocal() as session:
@@ -49,6 +56,12 @@ def sync_all_connected_accounts() -> dict[str, object]:
         ).all()
         for account in accounts:
             try:
+                if is_account_sync_fresh(account):
+                    skipped[account.id] = "fresh"
+                    continue
+                if account_has_running_sync(session, account):
+                    skipped[account.id] = "already_running"
+                    continue
                 window = sync_window_from_cursors(session, account=account, today=date.today())
                 asyncio.run(
                     sync_google_account_range(
@@ -68,4 +81,10 @@ def sync_all_connected_accounts() -> dict[str, object]:
                 failed[account.id] = str(exc)
         cleanup_counts = cleanup_high_volume_storage(session, today=date.today())
         session.commit()
-    return {"synced": synced, "failed": failed, "ranges": ranges, "cleanup": cleanup_counts}
+    return {
+        "synced": synced,
+        "skipped": skipped,
+        "failed": failed,
+        "ranges": ranges,
+        "cleanup": cleanup_counts,
+    }

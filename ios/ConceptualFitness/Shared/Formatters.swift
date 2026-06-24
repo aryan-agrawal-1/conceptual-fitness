@@ -16,6 +16,12 @@ enum DashboardFormatters {
         return formatter
     }()
 
+    static let lastSyncedTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
     static let shortDate: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium

@@ -1,4 +1,5 @@
 import SwiftUI
+import FoundationModels
 
 @main
 struct ConceptualFitnessApp: App {
@@ -13,7 +14,9 @@ struct ConceptualFitnessApp: App {
     @ViewBuilder
     private var rootView: some View {
         #if DEBUG
-        if let previewState = DashboardPreviewLaunchState.current {
+        if ProcessInfo.processInfo.arguments.contains("-FoundationModelsSmokeTest") {
+            FoundationModelsSmokeTestView()
+        } else if let previewState = DashboardPreviewLaunchState.current {
             previewState.view
         } else {
             AuthGateView(authStore: authStore)
@@ -25,6 +28,54 @@ struct ConceptualFitnessApp: App {
 }
 
 #if DEBUG
+private struct FoundationModelsSmokeTestView: View {
+    @State private var status = "Starting FoundationModels smoke test..."
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("FoundationModels Smoke Test")
+                .font(.headline)
+            Text(status)
+                .font(.body.monospaced())
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+        }
+        .task {
+            await run()
+        }
+    }
+
+    @MainActor
+    private func run() async {
+        guard #available(iOS 26.0, *) else {
+            status = "unavailable: iOS < 26"
+            print("[FoundationModelsSmokeTest] \(status)")
+            return
+        }
+
+        let model = SystemLanguageModel.default
+        let availability = String(describing: model.availability)
+        guard model.availability == .available else {
+            status = "availability=\(availability)"
+            print("[FoundationModelsSmokeTest] \(status)")
+            return
+        }
+
+        do {
+            let session = LanguageModelSession(model: model, instructions: "Reply with one word.")
+            let response = try await session.respond(
+                to: "Reply with only the word OK.",
+                options: GenerationOptions(temperature: 0.0, maximumResponseTokens: 8)
+            )
+            status = "success: \(response.content)"
+            print("[FoundationModelsSmokeTest] \(status)")
+        } catch {
+            status = "failed: \(String(describing: error))"
+            print("[FoundationModelsSmokeTest] \(status)")
+        }
+    }
+}
+
 @MainActor
 private enum DashboardPreviewLaunchState: String {
     case ai
@@ -45,6 +96,7 @@ private enum DashboardPreviewLaunchState: String {
         NavigationStack {
             DashboardView(
                 client: DashboardAPIClient(),
+                syncCoordinator: AppSyncCoordinator(client: DashboardAPIClient()),
                 weatherProvider: WeatherProvider(),
                 locationProvider: LocationProvider(),
                 insightProvider: DailyInsightProvider(),

@@ -35,6 +35,7 @@ os.environ.update(
         "CELERY_TIMEZONE": "UTC",
         "CELERY_SYNC_HOUR": "*",
         "CELERY_SYNC_MINUTE": "0",
+        "GOOGLE_HEALTH_SYNC_FRESHNESS_MINUTES": "15",
     }
 )
 
