@@ -190,7 +190,6 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="workout",
         unit="session",
         filter_time_path="exercise.interval.civil_start_time",
-        prefer_reconcile=True,
         page_size=25,
     ),
     "daily-vo2-max": DataTypeSpec(

@@ -5,16 +5,25 @@ from datetime import UTC, date, datetime, time, timedelta
 from time import perf_counter
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import decrypt_secret, utcnow
 from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
-from app.models import ConnectionStatus, GoogleAccount, SyncCursor, SyncStatus, UserProfile
+from app.models import (
+    ConnectionStatus,
+    GoogleAccount,
+    RawHealthRecord,
+    SyncCursor,
+    SyncStatus,
+    UserProfile,
+    Workout,
+)
 from app.services.health_dates import timezone_for_profile
 from app.services.normalization import (
+    _content_hash,
     _record_civil_date,
     high_volume_records_for_points,
     upsert_measurement_points_fast,
@@ -440,7 +449,7 @@ async def _sync_data_type(
             if profile:
                 profile.record_page(data_type)
             records_seen += len(points)
-            if data_type in HIGH_VOLUME_DATA_TYPES:
+            if data_type in HIGH_VOLUME_DATA_TYPES or data_type == "exercise":
                 chunk_points.extend(points)
                 cursor.last_page_token = next_page_token
                 page_token = None
@@ -486,6 +495,37 @@ async def _sync_data_type(
                 records=records,
                 range_start=_range_start_datetime(session, account, spec.filter_time_path, chunk_start),
                 range_end=_range_end_datetime(session, account, spec.filter_time_path, chunk_end),
+            )
+            records_stored += stored
+            if profile:
+                profile.record_store(
+                    data_type,
+                    seconds=perf_counter() - store_started,
+                    seen=len(filtered_points),
+                    stored=stored,
+                )
+        elif data_type == "exercise":
+            store_started = perf_counter()
+            filtered_points = _points_in_range(
+                data_type,
+                chunk_points,
+                start=_bound_date(chunk_start),
+                end=_bound_date(chunk_end),
+            )
+            stored = _store_points(
+                session,
+                account,
+                data_type,
+                filtered_points,
+                start=_bound_date(chunk_start),
+                end=_bound_date(chunk_end),
+            )
+            _prune_missing_exercise_records(
+                session,
+                account=account,
+                points=filtered_points,
+                start=_bound_date(chunk_start),
+                end=_bound_date(chunk_end),
             )
             records_stored += stored
             if profile:
@@ -741,6 +781,48 @@ def _store_points(
             data_point=point,
         )
     return len(points)
+
+
+def _prune_missing_exercise_records(
+    session: Session,
+    *,
+    account: GoogleAccount,
+    points: list[dict[str, object]],
+    start: date,
+    end: date,
+) -> int:
+    source_record_ids = _source_record_ids_for_points("exercise", points)
+    stale_records = session.scalars(
+        select(RawHealthRecord).where(
+            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.data_type == "exercise",
+            RawHealthRecord.civil_date >= start,
+            RawHealthRecord.civil_date <= end,
+        )
+    ).all()
+    stale_ids = [
+        record.id
+        for record in stale_records
+        if record.source_record_id not in source_record_ids
+    ]
+    if not stale_ids:
+        return 0
+    session.execute(delete(Workout).where(Workout.raw_record_id.in_(stale_ids)))
+    session.execute(delete(RawHealthRecord).where(RawHealthRecord.id.in_(stale_ids)))
+    return len(stale_ids)
+
+
+def _source_record_ids_for_points(
+    data_type: str,
+    points: list[dict[str, object]],
+) -> set[str]:
+    source_ids: set[str] = set()
+    for point in points:
+        raw_hash = _content_hash(point)
+        source_id = point.get("name") or point.get("dataPointName") or f"{data_type}:{raw_hash}"
+        source_ids.add(str(source_id))
+        source_ids.add(f"{data_type}:{raw_hash}")
+    return source_ids
 
 
 def _points_in_range(

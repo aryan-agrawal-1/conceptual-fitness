@@ -27,10 +27,12 @@ struct AppShellView: View {
     }
 
     var body: some View {
+        let appClient = DashboardAPIClient(authStore: authStore)
+
         TabView(selection: $selectedTab) {
             NavigationStack(path: $dashboardPath) {
                 DashboardView(
-                    client: DashboardAPIClient(authStore: authStore),
+                    client: appClient,
                     syncCoordinator: syncCoordinator,
                     weatherProvider: weatherProvider,
                     locationProvider: locationProvider,
@@ -38,7 +40,7 @@ struct AppShellView: View {
                     firstName: session.user.firstName,
                     weatherEnabled: session.profile.weatherEnabled
                 )
-                .withAppDestinations()
+                .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.dashboard.label }
             .tag(AppTab.dashboard)
@@ -49,7 +51,7 @@ struct AppShellView: View {
                     systemImage: "figure.run",
                     message: "Workout history, training load, and detailed fitness trends will live here."
                 )
-                .withAppDestinations()
+                .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.fitness.label }
             .tag(AppTab.fitness)
@@ -60,7 +62,7 @@ struct AppShellView: View {
                     systemImage: "sparkles",
                     message: "AI reports, correlations, and longer-term health explanations will live here."
                 )
-                .withAppDestinations()
+                .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.insights.label }
             .tag(AppTab.insights)
@@ -188,15 +190,21 @@ final class AppSyncCoordinator: ObservableObject {
 }
 
 private extension View {
-    func withAppDestinations() -> some View {
+    func withAppDestinations(client: DashboardAPIClient) -> some View {
         navigationDestination(for: AppRoute.self) { route in
             switch route {
             case .metric(let metric):
-                PlaceholderDetailView(
-                    title: metric,
-                    systemImage: "chart.line.uptrend.xyaxis",
-                    message: "This dashboard detail screen is reserved for trends, baselines, and explanations."
-                )
+                if metric == "strain" {
+                    StrainDetailView(client: client)
+                } else if metric == "readiness" {
+                    ReadinessDetailView(client: client)
+                } else {
+                    PlaceholderDetailView(
+                        title: metric,
+                        systemImage: "chart.line.uptrend.xyaxis",
+                        message: "This dashboard detail screen is reserved for trends, baselines, and explanations."
+                    )
+                }
             case .workout(let workoutID):
                 PlaceholderDetailView(
                     title: "Workout",

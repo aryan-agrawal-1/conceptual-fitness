@@ -215,34 +215,99 @@ struct WorkoutCard: View {
     let workout: WorkoutSummary
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: workout.iconName)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 48, height: 48)
-                .background(workout.tint.gradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(workout.workoutType?.displayTitle ?? "Workout")
-                    .font(.headline)
-                Text(workout.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 5) {
-                Text(workout.durationText)
-                    .font(.subheadline.bold())
-                Text(workout.activeCalories.map { "\(Int($0.rounded())) kcal" } ?? "--")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
+        WorkoutSummaryRow(workout: workout, presentation: .card)
         .padding(14)
         .frame(maxWidth: .infinity)
         .glassSurface(cornerRadius: 20, interactive: true)
+    }
+}
+
+enum WorkoutSummaryRowPresentation {
+    case card
+    case compact
+}
+
+struct WorkoutSummaryRow: View {
+    let workout: WorkoutSummary
+    var presentation: WorkoutSummaryRowPresentation = .compact
+
+    var body: some View {
+        HStack(spacing: presentation == .card ? 14 : 12) {
+            iconView
+
+            VStack(alignment: .leading, spacing: presentation == .card ? 5 : 4) {
+                Text(workout.summaryDisplayName)
+                    .font(titleFont)
+                    .lineLimit(1)
+                Text(workout.summarySubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+
+            Spacer(minLength: 10)
+
+            metricView
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var iconSize: CGFloat {
+        presentation == .card ? 48 : 30
+    }
+
+    private var iconFont: Font {
+        presentation == .card ? .system(size: 24, weight: .semibold) : .headline
+    }
+
+    @ViewBuilder
+    private var iconView: some View {
+        if presentation == .card {
+            Image(systemName: workout.summaryIconName)
+                .font(iconFont)
+                .foregroundStyle(.white)
+                .frame(width: iconSize, height: iconSize)
+                .background(workout.summaryTint.gradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        } else {
+            Image(systemName: workout.summaryIconName)
+                .font(iconFont)
+                .foregroundStyle(workout.summaryTint)
+                .frame(width: iconSize, height: iconSize)
+                .background(workout.summaryTint.opacity(0.13), in: Circle())
+        }
+    }
+
+    private var titleFont: Font {
+        presentation == .card ? .headline : .subheadline.weight(.bold)
+    }
+
+    @ViewBuilder
+    private var metricView: some View {
+        if let strainLoadPoints = workout.strainLoadPoints {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(strainLoadPoints.clean)
+                    .font(.title3.weight(.bold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text("strain")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("\(strainLoadPoints.clean) strain")
+        } else {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(workout.summaryDurationText)
+                    .font(.title3.weight(.bold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text("duration")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -411,17 +476,18 @@ struct MetricCardItem: Identifiable {
     }
 }
 
-private extension WorkoutSummary {
-    var iconName: String {
+extension WorkoutSummary {
+    var summaryIconName: String {
         let type = workoutType?.lowercased() ?? ""
         if type.contains("run") { return "figure.run" }
         if type.contains("cycl") || type.contains("bike") { return "bicycle" }
         if type.contains("walk") { return "figure.walk" }
         if type.contains("swim") { return "figure.pool.swim" }
+        if type.contains("strength") || type.contains("weight") { return "dumbbell.fill" }
         return "figure.mixed.cardio"
     }
 
-    var tint: Color {
+    var summaryTint: Color {
         switch intensity?.lowercased() {
         case "high": return .orange
         case "moderate": return .blue
@@ -430,20 +496,35 @@ private extension WorkoutSummary {
         }
     }
 
-    var subtitle: String {
+    var summarySubtitle: String {
         let start = DashboardFormatters.parseBackendDateTime(startTime).map(DashboardFormatters.workoutTime.string) ?? date ?? "Recent"
         let distance = distanceMeters.map { String(format: "%.1f km", $0 / 1000) }
-        let maxHR = heartRate?.maxBPM.map { "Max \(Int($0.rounded())) bpm" }
-        return [start, distance, maxHR].compactMap(\.self).joined(separator: "  ")
+        return [start, distance, summaryDurationText].compactMap(\.self).joined(separator: "  ")
     }
 
-    var durationText: String {
+    var summaryDurationText: String {
         guard let durationSeconds else { return "--" }
         let minutes = max(1, Int((Double(durationSeconds) / 60).rounded()))
         if minutes >= 60 {
             return "\(minutes / 60)h \(minutes % 60)m"
         }
         return "\(minutes)m"
+    }
+
+    var summaryDisplayName: String {
+        guard let workoutType else { return "Workout" }
+        let normalized = workoutType
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "Workout" }
+        return normalized
+            .lowercased()
+            .split(separator: " ")
+            .map { word in
+                word.prefix(1).uppercased() + word.dropFirst()
+            }
+            .joined(separator: " ")
     }
 }
 

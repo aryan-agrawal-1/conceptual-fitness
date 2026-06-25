@@ -226,6 +226,9 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
     assert strain.value and strain.value > 10
     assert strain.value_unit == "load_points"
     assert strain.components["cardio_load"]["workout_coverage_ratio"] >= 0.9
+    assert strain.components["cardio_load"]["workout_load_points"] > 0
+    assert strain.components["cardio_load"]["general_activity_load_points"] >= 0
+    assert strain.components["workout_contributions"][0]["load_points"] > 0
     assert strain.inputs["max_hr_source"] in {"hunt_age_formula", "observed_sustained_workout"}
 
     assert readiness.status.value == "scored"
@@ -306,6 +309,9 @@ def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> 
         "load_points": 24.0,
         "zones_seen": 1,
         "source": "time_in_heart_rate_zone",
+        "workout_load_points": 0.0,
+        "general_activity_load_points": 24.0,
+        "workouts": [],
     }
     assert strain.value == 24.0
 
@@ -392,3 +398,123 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
     }
     assert payload["metric_summaries"]["steps"]["current"]["value"] == 6500.0
     assert payload["data_quality"]["sections"]["sync"] == "strong"
+
+
+def test_strain_detail_returns_timeframe_scoped_page_payload(session, auth_headers) -> None:
+    user = _user_with_profile(session, birth_year=1990)
+    anchor = date.today()
+    start = anchor - timedelta(days=14)
+    for offset in range(15):
+        day = start + timedelta(days=offset)
+        _add_sleep(session, user, day)
+        _add_summary(session, user, day, steps=6500 + offset * 100)
+        if offset in {3, 7, 14}:
+            _add_hr_workout(session, user, day, bpm=150 + offset)
+
+    rebuild_derived_scores(session, user_id=user.id, start=start, end=anchor)
+    session.commit()
+
+    response = TestClient(app).get(
+        "/strain/detail",
+        params={"date": anchor.isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["timeframe"] == "week"
+    assert payload["summary"]["title"] == "Weekly load"
+    assert payload["summary"]["progress_load_points"] is not None
+    assert payload["chart"]["kind"] == "daily_bars"
+    assert len(payload["chart"]["points"]) == 7
+    assert payload["components"]["items"]
+    assert {item["key"] for item in payload["components"]["items"]} <= {
+        "workouts",
+        "general_activity",
+    }
+    assert payload["training_context"]["total_load_points"] is not None
+    assert payload["guidance"]["message"]
+    assert payload["data_quality"]["expected_days"] == 7
+    assert payload["contributors"][0]["workout_type"] == "running"
+    assert payload["contributors"][0]["strain_load_points"] > 0
+
+
+def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_headers) -> None:
+    user = _user_with_profile(session, birth_year=1990)
+    anchor = date.today()
+    start = anchor - timedelta(days=14)
+    for offset in range(15):
+        day = start + timedelta(days=offset)
+        _add_sleep(session, user, day, minutes_asleep=440 + offset)
+        _add_summary(
+            session,
+            user,
+            day,
+            hrv=52 + offset,
+            rhr=62 - min(offset, 8),
+            sleep_minutes=440 + offset,
+            steps=6500 + offset * 100,
+        )
+        if offset in {3, 7, 13}:
+            _add_hr_workout(session, user, day, bpm=150 + offset)
+
+    rebuild_derived_scores(session, user_id=user.id, start=start, end=anchor)
+    session.commit()
+
+    response = TestClient(app).get(
+        "/readiness/detail",
+        params={"date": anchor.isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["timeframe"] == "week"
+    assert payload["summary"]["title"] == "Weekly readiness"
+    assert payload["summary"]["average_score"] is not None
+    assert payload["summary"]["readiness_band"] in {"high", "medium", "low"}
+    assert payload["chart"]["kind"] == "daily_line"
+    assert len(payload["chart"]["points"]) == 7
+    assert payload["components"]["items"]
+    assert {item["key"] for item in payload["components"]["items"]} == {
+        "sleep_adequacy_debt",
+        "autonomic_recovery",
+        "recent_load_fit",
+        "illness_anomaly_context",
+        "confidence",
+    }
+    assert payload["context"]["sleep_debt_minutes_7d"] is not None
+    assert payload["context"]["load_ratio"] is not None
+    assert payload["guidance"]["message"]
+    assert payload["data_quality"]["expected_days"] == 7
+    assert payload["data_quality"]["scored_days"] > 0
+
+
+def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers) -> None:
+    user = _user_with_profile(session, birth_year=1990)
+    anchor = date.today()
+    start = date(anchor.year, 1, 1)
+    for offset in range(0, 75):
+        day = start + timedelta(days=offset)
+        if day > anchor:
+            break
+        _add_sleep(session, user, day)
+        _add_summary(session, user, day, hrv=54 + (offset % 12), rhr=58 - (offset % 5))
+        if offset % 9 == 0:
+            _add_hr_workout(session, user, day, bpm=148 + (offset % 8))
+
+    rebuild_derived_scores(session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=74)))
+    session.commit()
+
+    response = TestClient(app).get(
+        "/readiness/detail",
+        params={"date": anchor.isoformat(), "timeframe": "year"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chart"]["kind"] == "monthly_average_scores"
+    assert len(payload["chart"]["points"]) == 12
+    assert payload["chart"]["points"][0]["month_start_date"] == start.isoformat()
+    assert payload["chart"]["points"][0]["average_score"] is not None

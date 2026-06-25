@@ -262,7 +262,7 @@ def _upsert_strain_score(
     cardio = _cardio_load_from_hr(samples, workouts, rhr=rhr, max_hr=max_hr)
     source_zone = _source_zone_load(workouts) if cardio["confidence"] == "weak" else None
     if source_zone is None and cardio["confidence"] == "weak":
-        source_zone = _source_zone_load_from_intervals(session, user_id, day)
+        source_zone = _source_zone_load_from_intervals(session, user_id, day, workouts)
     activity = _daily_activity_load(summary, cardio_confidence=cardio["confidence"])
     muscular = _muscular_load(workouts)
     total = cardio["load_points"]
@@ -279,6 +279,7 @@ def _upsert_strain_score(
         "rpe_load": None,
         "total_load": total,
     }
+    components["workout_contributions"] = _workout_contributions(components, workouts)
     confidence = _strain_confidence_phase(session, user_id, day)
     status = ScoreStatus.in_progress if day == today else ScoreStatus.scored
     reasons = _strain_reasons(total, components)
@@ -480,9 +481,13 @@ def _cardio_load_from_hr(
             "long_gap_count": 0,
             "workout_coverage_ratio": 0.0,
             "confidence": "weak",
+            "workouts": [],
         }
     sorted_samples = sorted(samples, key=lambda item: item.observed_at)
     load = 0.0
+    workout_load = 0.0
+    general_activity_load = 0.0
+    workout_contributions: dict[str, float] = {}
     covered_seconds = 0.0
     long_gap_count = 0
     workout_seconds = sum(
@@ -505,10 +510,16 @@ def _cardio_load_from_hr(
         else:
             points_per_minute = 2.5 * ((intensity - 0.30) / 0.70) ** 1.7
         minutes = seconds / 60
-        load += points_per_minute * minutes
+        contribution = points_per_minute * minutes
+        load += contribution
         covered_seconds += seconds
-        if _timestamp_inside_workout(current.observed_at, workouts):
+        workout = _workout_for_timestamp(current.observed_at, workouts)
+        if workout is not None:
+            workout_load += contribution
+            workout_contributions[workout.id] = workout_contributions.get(workout.id, 0.0) + contribution
             workout_covered += seconds
+        else:
+            general_activity_load += contribution
     covered_minutes = covered_seconds / 60
     workout_ratio = 0.0 if workout_seconds <= 0 else min(1.0, workout_covered / workout_seconds)
     if covered_minutes >= 720 or workout_ratio >= 0.70:
@@ -519,10 +530,17 @@ def _cardio_load_from_hr(
         confidence = "weak"
     return {
         "load_points": round(load, 2),
+        "workout_load_points": round(workout_load, 2),
+        "general_activity_load_points": round(general_activity_load, 2),
         "covered_minutes": round(covered_minutes, 1),
         "long_gap_count": long_gap_count,
         "workout_coverage_ratio": round(workout_ratio, 3),
         "confidence": confidence,
+        "workouts": [
+            {"workout_id": workout_id, "load_points": round(value, 2)}
+            for workout_id, value in workout_contributions.items()
+            if round(value, 2) > 0
+        ],
     }
 
 
@@ -595,24 +613,44 @@ def _source_zone_load(workouts: list[Workout]) -> dict[str, Any] | None:
     total = 0.0
     zones_seen = 0
     weights = [0.1, 0.35, 0.8, 1.4, 2.0]
+    contributing: list[dict[str, Any]] = []
     for workout in workouts:
+        workout_total = 0.0
         zones = _extract_zone_summaries(workout.raw_summary)
         for index, zone in enumerate(zones):
             minutes = _zone_minutes(zone)
             if minutes is None:
                 continue
             weight = weights[min(index, len(weights) - 1)]
-            total += minutes * weight
+            contribution = minutes * weight
+            total += contribution
+            workout_total += contribution
             zones_seen += 1
+        if workout_total > 0:
+            contributing.append(
+                {
+                    "workout_id": workout.id,
+                    "workout_type": workout.workout_type,
+                    "load_points": round(workout_total, 2),
+                }
+            )
     if zones_seen == 0:
         return None
-    return {"load_points": round(total, 2), "zones_seen": zones_seen, "source": "provider_zones"}
+    return {
+        "load_points": round(total, 2),
+        "zones_seen": zones_seen,
+        "source": "provider_zones",
+        "workout_load_points": round(total, 2),
+        "general_activity_load_points": 0.0,
+        "workouts": contributing,
+    }
 
 
 def _source_zone_load_from_intervals(
     session: Session,
     user_id: str,
     day: date,
+    workouts: list[Workout],
 ) -> dict[str, Any] | None:
     rows = session.execute(
         select(MetricInterval, RawHealthRecord)
@@ -630,6 +668,9 @@ def _source_zone_load_from_intervals(
         "PEAK": 1.4,
     }
     total = 0.0
+    workout_total = 0.0
+    general_activity_total = 0.0
+    workout_contributions: dict[str, float] = {}
     zones_seen = 0
     for interval, raw_record in rows:
         payload = raw_record.raw_json.get("timeInHeartRateZone") or {}
@@ -637,7 +678,24 @@ def _source_zone_load_from_intervals(
         weight = weights.get(str(zone_type))
         if weight is None:
             continue
-        total += (interval.value / 60) * weight
+        interval_load = (interval.value / 60) * weight
+        total += interval_load
+        attributed_load = 0.0
+        interval_seconds = max(0.0, (interval.end_time - interval.start_time).total_seconds())
+        for workout in workouts:
+            overlap = _overlap_seconds(
+                interval.start_time,
+                interval.end_time,
+                workout.start_time,
+                workout.end_time,
+            )
+            if overlap <= 0 or interval_seconds <= 0:
+                continue
+            contribution = interval_load * min(1.0, overlap / interval_seconds)
+            attributed_load += contribution
+            workout_total += contribution
+            workout_contributions[workout.id] = workout_contributions.get(workout.id, 0.0) + contribution
+        general_activity_total += max(0.0, interval_load - attributed_load)
         zones_seen += 1
     if zones_seen == 0:
         return None
@@ -645,7 +703,68 @@ def _source_zone_load_from_intervals(
         "load_points": round(total, 2),
         "zones_seen": zones_seen,
         "source": "time_in_heart_rate_zone",
+        "workout_load_points": round(workout_total, 2),
+        "general_activity_load_points": round(general_activity_total, 2),
+        "workouts": [
+            {"workout_id": workout_id, "load_points": round(value, 2)}
+            for workout_id, value in workout_contributions.items()
+            if round(value, 2) > 0
+        ],
     }
+
+
+def _workout_contributions(
+    components: dict[str, Any],
+    workouts: list[Workout] | None = None,
+) -> list[dict[str, Any]]:
+    contributions: dict[str, dict[str, Any]] = {}
+    for workout in workouts or []:
+        contributions[str(workout.id)] = {
+            "workout_id": str(workout.id),
+            "workout_type": workout.workout_type,
+            "load_points": 0.0,
+            "components": {},
+        }
+    sources = (
+        ("cardio_load", "cardio"),
+        ("source_zone_load", "zones"),
+        ("muscular_load", "muscular"),
+    )
+    for component_key, contribution_key in sources:
+        component = components.get(component_key)
+        if not isinstance(component, dict):
+            continue
+        for item in component.get("workouts") or []:
+            if not isinstance(item, dict):
+                continue
+            workout_id = item.get("workout_id")
+            load = item.get("load_points")
+            if not workout_id or not isinstance(load, int | float):
+                continue
+            contribution = contributions.setdefault(
+                str(workout_id),
+                {
+                    "workout_id": str(workout_id),
+                    "workout_type": item.get("workout_type"),
+                    "load_points": 0.0,
+                    "components": {},
+                },
+            )
+            contribution["load_points"] += float(load)
+            contribution["components"][contribution_key] = round(
+                contribution["components"].get(contribution_key, 0.0) + float(load),
+                2,
+            )
+            if contribution.get("workout_type") is None and item.get("workout_type") is not None:
+                contribution["workout_type"] = item.get("workout_type")
+
+    return [
+        {
+            **item,
+            "load_points": round(item["load_points"], 2),
+        }
+        for item in contributions.values()
+    ]
 
 # MY SLEEP SCORE COMPONENTS
 def _duration_score(minutes: int, target: int) -> dict[str, Any]:
@@ -1212,10 +1331,25 @@ def _credible_observed_max_hr(
 
 
 def _timestamp_inside_workout(timestamp: datetime, workouts: list[Workout]) -> bool:
+    return _workout_for_timestamp(timestamp, workouts) is not None
+
+
+def _workout_for_timestamp(timestamp: datetime, workouts: list[Workout]) -> Workout | None:
     for workout in workouts:
         if workout.start_time <= timestamp <= workout.end_time:
-            return True
-    return False
+            return workout
+    return None
+
+
+def _overlap_seconds(
+    start: datetime,
+    end: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> float:
+    latest_start = max(start, window_start)
+    earliest_end = min(end, window_end)
+    return max(0.0, (earliest_end - latest_start).total_seconds())
 
 
 def _sleep_efficiency(sleep: SleepSession) -> float | None:

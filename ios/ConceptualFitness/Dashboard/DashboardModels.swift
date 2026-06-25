@@ -244,6 +244,7 @@ struct WorkoutSummary: Decodable, Identifiable {
     let activeCalories: Double?
     let heartRate: HeartRateSummary?
     let intensity: String?
+    let strainLoadPoints: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -256,6 +257,7 @@ struct WorkoutSummary: Decodable, Identifiable {
         case activeCalories = "active_calories"
         case heartRate = "heart_rate"
         case intensity
+        case strainLoadPoints = "strain_load_points"
     }
 }
 
@@ -284,6 +286,350 @@ struct VO2MaxDetail: Decodable {
 struct MetricPoint: Decodable {
     let value: Double?
     let date: String?
+}
+
+struct StrainDetail: Decodable {
+    let timeframe: String
+    let start: String
+    let end: String
+    let summary: StrainSummary
+    let chart: StrainChart
+    let components: StrainComponents
+    let trainingContext: StrainTrainingContext
+    let guidance: StrainGuidance
+    let contributors: [WorkoutSummary]
+    let dataQuality: StrainDataQuality
+
+    enum CodingKeys: String, CodingKey {
+        case timeframe
+        case start
+        case end
+        case summary
+        case chart
+        case components
+        case trainingContext = "training_context"
+        case guidance
+        case contributors
+        case dataQuality = "data_quality"
+    }
+}
+
+struct StrainSummary: Decodable {
+    let title: String?
+    let primaryValue: Double?
+    let loadPoints: Double?
+    let targetLoadPoints: Double?
+    let progressRatio: Double?
+    let loadBand: String?
+    let validDays: Int?
+    let status: String?
+    let dataQuality: String?
+    let progressLoadPoints: Double?
+    let chronicLoadPoints: Double?
+    let acuteLoadPoints: Double?
+    let averageWeeklyLoad: Double?
+    let weekCount: Int?
+    let periodDays: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case primaryValue = "primary_value"
+        case loadPoints = "load_points"
+        case targetLoadPoints = "target_load_points"
+        case progressRatio = "progress_ratio"
+        case loadBand = "load_band"
+        case validDays = "valid_days"
+        case status
+        case dataQuality = "data_quality"
+        case progressLoadPoints = "progress_load_points"
+        case chronicLoadPoints = "chronic_load_points"
+        case acuteLoadPoints = "acute_load_points"
+        case averageWeeklyLoad = "average_weekly_load"
+        case weekCount = "week_count"
+        case periodDays = "period_days"
+    }
+}
+
+struct StrainChart: Decodable {
+    let kind: String
+    let targetLoadPoints: Double?
+    let progressRatio: Double?
+    let points: [StrainChartPoint]
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case targetLoadPoints = "target_load_points"
+        case progressRatio = "progress_ratio"
+        case points
+    }
+}
+
+struct StrainChartPoint: Decodable, Identifiable {
+    let date: String?
+    let weekStartDate: String?
+    let monthStartDate: String?
+    let loadPoints: Double?
+    let targetLoadPoints: Double?
+    let progressRatio: Double?
+    let loadBand: String?
+    let status: String?
+    let components: [String: Double]?
+    let averageWeeklyLoad: Double?
+    let totalLoadPoints: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case weekStartDate = "week_start_date"
+        case monthStartDate = "month_start_date"
+        case loadPoints = "load_points"
+        case targetLoadPoints = "target_load_points"
+        case progressRatio = "progress_ratio"
+        case loadBand = "load_band"
+        case status
+        case components
+        case averageWeeklyLoad = "average_weekly_load"
+        case totalLoadPoints = "total_load_points"
+    }
+
+    var id: String {
+        date ?? weekStartDate ?? monthStartDate ?? "\(loadPoints ?? -1)-\(averageWeeklyLoad ?? -1)"
+    }
+}
+
+struct StrainComponents: Decodable {
+    let items: [StrainComponentItem]
+    let totalLoadPoints: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case totalLoadPoints = "total_load_points"
+    }
+}
+
+struct StrainComponentItem: Decodable, Identifiable {
+    let key: String
+    let label: String
+    let loadPoints: Double
+    let share: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case label
+        case loadPoints = "load_points"
+        case share
+    }
+
+    var id: String { key }
+}
+
+struct StrainTrainingContext: Decodable {
+    let timeframe: String?
+    let totalLoadPoints: Double?
+    let averageDailyLoad: Double?
+    let latestTargetLoadPoints: Double?
+    let latestChronicLoadPoints: Double?
+    let latestLoadBand: String?
+    let targetBandCounts: [String: Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case timeframe
+        case totalLoadPoints = "total_load_points"
+        case averageDailyLoad = "average_daily_load"
+        case latestTargetLoadPoints = "latest_target_load_points"
+        case latestChronicLoadPoints = "latest_chronic_load_points"
+        case latestLoadBand = "latest_load_band"
+        case targetBandCounts = "target_band_counts"
+    }
+}
+
+struct StrainGuidance: Decodable {
+    let message: String?
+}
+
+struct StrainDataQuality: Decodable {
+    let expectedDays: Int?
+    let scoredDays: Int?
+    let completeness: Double?
+    let qualityCounts: [String: Int]?
+    let confidenceCounts: [String: Int]?
+    let heartRateCoveredMinutes: Double?
+    let longGapCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case expectedDays = "expected_days"
+        case scoredDays = "scored_days"
+        case completeness
+        case qualityCounts = "quality_counts"
+        case confidenceCounts = "confidence_counts"
+        case heartRateCoveredMinutes = "heart_rate_covered_minutes"
+        case longGapCount = "long_gap_count"
+    }
+}
+
+struct ReadinessDetail: Decodable {
+    let timeframe: String
+    let start: String
+    let end: String
+    let summary: ReadinessSummary
+    let chart: ReadinessChart
+    let components: ReadinessComponents
+    let context: ReadinessContext
+    let guidance: StrainGuidance
+    let reasons: [ScoreReason]
+    let dataQuality: ReadinessDataQuality
+
+    enum CodingKeys: String, CodingKey {
+        case timeframe
+        case start
+        case end
+        case summary
+        case chart
+        case components
+        case context
+        case guidance
+        case reasons
+        case dataQuality = "data_quality"
+    }
+}
+
+struct ReadinessSummary: Decodable {
+    let title: String?
+    let primaryValue: Double?
+    let averageScore: Double?
+    let latestScore: Double?
+    let status: String?
+    let readinessBand: String?
+    let trend: String?
+    let validDays: Int?
+    let periodDays: Int?
+    let lowDays: Int?
+    let highDays: Int?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case primaryValue = "primary_value"
+        case averageScore = "average_score"
+        case latestScore = "latest_score"
+        case status
+        case readinessBand = "readiness_band"
+        case trend
+        case validDays = "valid_days"
+        case periodDays = "period_days"
+        case lowDays = "low_days"
+        case highDays = "high_days"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct ReadinessChart: Decodable {
+    let kind: String
+    let points: [ReadinessChartPoint]
+}
+
+struct ReadinessChartPoint: Decodable, Identifiable {
+    let date: String?
+    let monthStartDate: String?
+    let score: Double?
+    let averageScore: Double?
+    let lowDays: Int?
+    let highDays: Int?
+    let scoredDays: Int?
+    let status: String?
+    let readinessBand: String?
+    let dataQuality: String?
+    let key: String?
+    let label: String?
+    let weight: Double?
+    let message: String?
+    let detail: [String: JSONValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case monthStartDate = "month_start_date"
+        case score
+        case averageScore = "average_score"
+        case lowDays = "low_days"
+        case highDays = "high_days"
+        case scoredDays = "scored_days"
+        case status
+        case readinessBand = "readiness_band"
+        case dataQuality = "data_quality"
+        case key
+        case label
+        case weight
+        case message
+        case detail
+    }
+
+    var id: String {
+        date ?? monthStartDate ?? key ?? "\(score ?? -1)-\(averageScore ?? -1)"
+    }
+}
+
+struct ReadinessComponents: Decodable {
+    let items: [ReadinessComponentItem]
+    let averageItems: [ReadinessComponentItem]
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case averageItems = "average_items"
+    }
+}
+
+struct ReadinessComponentItem: Decodable, Identifiable {
+    let key: String
+    let label: String
+    let score: Double
+    let weight: Double?
+    let message: String?
+    let detail: [String: JSONValue]?
+
+    var id: String { key }
+}
+
+struct ReadinessContext: Decodable {
+    let sleepDebtMinutes7d: Double?
+    let hrvScore: Double?
+    let rhrScore: Double?
+    let loadRatio: Double?
+    let yesterdayLoad: Double?
+    let validStrainDays: Int?
+    let anomalies: [String]
+    let readinessCap: Double?
+    let confidencePhase: String?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sleepDebtMinutes7d = "sleep_debt_minutes_7d"
+        case hrvScore = "hrv_score"
+        case rhrScore = "rhr_score"
+        case loadRatio = "load_ratio"
+        case yesterdayLoad = "yesterday_load"
+        case validStrainDays = "valid_strain_days"
+        case anomalies
+        case readinessCap = "readiness_cap"
+        case confidencePhase = "confidence_phase"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct ReadinessDataQuality: Decodable {
+    let expectedDays: Int?
+    let scoredDays: Int?
+    let completeness: Double?
+    let qualityCounts: [String: Int]?
+    let confidenceCounts: [String: Int]?
+    let statusCounts: [String: Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case expectedDays = "expected_days"
+        case scoredDays = "scored_days"
+        case completeness
+        case qualityCounts = "quality_counts"
+        case confidenceCounts = "confidence_counts"
+        case statusCounts = "status_counts"
+    }
 }
 
 struct DashboardData {
@@ -390,7 +736,8 @@ extension WorkoutSummary {
             distanceMeters: 7200,
             activeCalories: 540,
             heartRate: HeartRateSummary(averageBPM: 151, minBPM: 96, maxBPM: 178),
-            intensity: "high"
+            intensity: "high",
+            strainLoadPoints: 12.4
         ),
         WorkoutSummary(
             id: "ride-1",
@@ -402,7 +749,8 @@ extension WorkoutSummary {
             distanceMeters: 18300,
             activeCalories: 610,
             heartRate: HeartRateSummary(averageBPM: 139, minBPM: 84, maxBPM: 166),
-            intensity: "moderate"
+            intensity: "moderate",
+            strainLoadPoints: 9.8
         )
     ]
 }

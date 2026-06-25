@@ -22,6 +22,7 @@ from app.models import (
     SyncCursor,
     SyncStatus,
     User,
+    Workout,
 )
 from app.services import sync as sync_service
 from app.services.sync import (
@@ -245,6 +246,41 @@ class FakeOutOfRangeDailyZonesClient:
                     "heartRateZones": [{"heartRateZoneType": "LIGHT"}],
                 },
             },
+        ], None
+
+
+class FakeExerciseListClient:
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, str]:
+        assert refresh_token == "refresh-token"
+        return {"access_token": "access-token"}
+
+    async def iter_data_point_pages_with_tokens(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        filter_expr: str | None = None,
+        prefer_reconcile: bool = False,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ):
+        assert data_type == "exercise"
+        assert prefer_reconcile is False
+        assert page_size == 25
+        assert "2026-06-24" in str(filter_expr)
+        yield [
+            {
+                "dataPointName": "users/me/dataTypes/exercise/dataPoints/keep",
+                "exercise": {
+                    "interval": {
+                        "startTime": "2026-06-24T09:00:00Z",
+                        "endTime": "2026-06-24T09:30:00Z",
+                        "civilStartTime": {"date": {"year": 2026, "month": 6, "day": 24}},
+                    },
+                    "displayName": "Walk",
+                    "exerciseType": "WALKING",
+                },
+            }
         ], None
 
 
@@ -578,6 +614,88 @@ async def test_session_sync_uses_google_session_page_cap(session) -> None:
     )
 
     assert client.page_sizes == [25, 25]
+
+
+@pytest.mark.asyncio
+async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_records(session) -> None:
+    account = _connected_account(session)
+    session.add(
+        SyncCursor(
+            google_account_id=account.id,
+            data_type="exercise",
+            status=SyncStatus.succeeded,
+            last_successful_start=date(2026, 6, 24),
+            last_successful_end=date(2026, 6, 24),
+        )
+    )
+    kept_raw = RawHealthRecord(
+        user_id=account.user_id,
+        google_account_id=account.id,
+        data_type="exercise",
+        source_record_id="users/me/dataTypes/exercise/dataPoints/keep",
+        civil_date=date(2026, 6, 24),
+        raw_json={"exercise": {"exerciseType": "CARDIO_WORKOUT"}},
+        content_hash="keep-old",
+    )
+    deleted_raw = RawHealthRecord(
+        user_id=account.user_id,
+        google_account_id=account.id,
+        data_type="exercise",
+        source_record_id="users/me/dataTypes/exercise/dataPoints/delete",
+        civil_date=date(2026, 6, 24),
+        raw_json={"exercise": {"exerciseType": "CARDIO_WORKOUT"}},
+        content_hash="delete-old",
+    )
+    session.add_all([kept_raw, deleted_raw])
+    session.flush()
+    session.add_all(
+        [
+            Workout(
+                user_id=account.user_id,
+                raw_record_id=kept_raw.id,
+                workout_type="CARDIO_WORKOUT",
+                start_time=datetime(2026, 6, 24, 9, tzinfo=UTC),
+                end_time=datetime(2026, 6, 24, 9, 30, tzinfo=UTC),
+                civil_date=date(2026, 6, 24),
+                duration_seconds=1800,
+                raw_summary=kept_raw.raw_json["exercise"],
+            ),
+            Workout(
+                user_id=account.user_id,
+                raw_record_id=deleted_raw.id,
+                workout_type="CARDIO_WORKOUT",
+                start_time=datetime(2026, 6, 24, 10, tzinfo=UTC),
+                end_time=datetime(2026, 6, 24, 10, 30, tzinfo=UTC),
+                civil_date=date(2026, 6, 24),
+                duration_seconds=1800,
+                raw_summary=deleted_raw.raw_json["exercise"],
+            ),
+        ]
+    )
+    session.commit()
+
+    result = await sync_google_account_range(
+        session,
+        account=account,
+        start=date(2026, 6, 24),
+        end=date(2026, 6, 25),
+        data_types=("exercise",),
+        client=FakeExerciseListClient(),
+        now=datetime(2026, 6, 25, 12, tzinfo=UTC),
+    )
+
+    workouts = session.scalars(select(Workout).where(Workout.user_id == account.user_id)).all()
+    raw_records = session.scalars(
+        select(RawHealthRecord).where(
+            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.data_type == "exercise",
+        )
+    ).all()
+    assert result.start == date(2026, 6, 24)
+    assert len(workouts) == 1
+    assert workouts[0].workout_type == "WALKING"
+    assert len(raw_records) == 1
+    assert raw_records[0].source_record_id == "users/me/dataTypes/exercise/dataPoints/keep"
 
 
 @pytest.mark.asyncio

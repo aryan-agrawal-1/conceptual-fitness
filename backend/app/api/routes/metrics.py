@@ -1059,7 +1059,7 @@ def _workout_summary_payload(
     if active_calories is None:
         active_calories = _workout_metric_total(session, user_id, workout, "active_calories")
 
-    return {
+    payload = {
         "id": workout.id,
         "workout_type": workout.workout_type,
         "start_time": workout.start_time,
@@ -1078,6 +1078,33 @@ def _workout_summary_payload(
         "zone_source": zone_source,
         "intensity": _workout_intensity(zones),
     }
+    strain_load_points = _workout_strain_load_points(session, user_id, workout)
+    if strain_load_points is not None:
+        payload["strain_load_points"] = strain_load_points
+    return payload
+
+
+def _workout_strain_load_points(
+    session: DbSession,
+    user_id: str,
+    workout: Workout,
+) -> float | None:
+    score = session.scalar(
+        select(DailyScore).where(
+            DailyScore.user_id == user_id,
+            DailyScore.score_type == "strain",
+            DailyScore.score_date == workout.civil_date,
+        )
+    )
+    if score is None or not isinstance(score.components, dict):
+        return None
+    for item in score.components.get("workout_contributions") or []:
+        if not isinstance(item, dict) or item.get("workout_id") != workout.id:
+            continue
+        load = item.get("load_points")
+        if isinstance(load, int | float):
+            return round(float(load), 2)
+    return None
 
 
 WORKOUT_DISTANCE_KEYS = {

@@ -27,6 +27,9 @@
 		010000000000000000000012 /* FoundationModels.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000015 /* FoundationModels.framework */; };
 		010000000000000000000013 /* Auth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000016 /* Auth.swift */; };
 		010000000000000000000014 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000017 /* OnboardingView.swift */; };
+		010000000000000000000015 /* StrainDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000018 /* StrainDetailView.swift */; };
+		010000000000000000000016 /* ReadinessDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000019 /* ReadinessDetailView.swift */; };
+		010000000000000000000017 /* ScoreRangeSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001A /* ScoreRangeSelector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +56,9 @@
 		020000000000000000000015 /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
 		020000000000000000000016 /* Auth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Auth.swift; sourceTree = "<group>"; };
 		020000000000000000000017 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		020000000000000000000018 /* StrainDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrainDetailView.swift; sourceTree = "<group>"; };
+		020000000000000000000019 /* ReadinessDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessDetailView.swift; sourceTree = "<group>"; };
+		02000000000000000000001A /* ScoreRangeSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoreRangeSelector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -112,6 +118,8 @@
 				020000000000000000000009 /* DailyInsightProvider.swift */,
 				02000000000000000000000A /* DashboardView.swift */,
 				02000000000000000000000B /* DashboardComponents.swift */,
+				020000000000000000000018 /* StrainDetailView.swift */,
+				020000000000000000000019 /* ReadinessDetailView.swift */,
 			);
 			path = Dashboard;
 			sourceTree = "<group>";
@@ -132,6 +140,7 @@
 			children = (
 				020000000000000000000005 /* GlassPanel.swift */,
 				020000000000000000000006 /* Formatters.swift */,
+				02000000000000000000001A /* ScoreRangeSelector.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -247,6 +256,9 @@
 				01000000000000000000000F /* WeatherBackgroundView.swift in Sources */,
 				010000000000000000000013 /* Auth.swift in Sources */,
 				010000000000000000000014 /* OnboardingView.swift in Sources */,
+				010000000000000000000015 /* StrainDetailView.swift in Sources */,
+				010000000000000000000016 /* ReadinessDetailView.swift in Sources */,
+				010000000000000000000017 /* ScoreRangeSelector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

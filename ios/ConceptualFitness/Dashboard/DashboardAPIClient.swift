@@ -25,6 +25,16 @@ struct DashboardAPIClient {
         try await fetch("/sync/current/status")
     }
 
+    func loadStrainDetail(date: Date = Date(), timeframe: StrainTimeframe) async throws -> StrainDetail {
+        let dateString = Self.apiDate.string(from: date)
+        return try await fetch("/strain/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
+    }
+
+    func loadReadinessDetail(date: Date = Date(), timeframe: ScoreTimeframe) async throws -> ReadinessDetail {
+        let dateString = Self.apiDate.string(from: date)
+        return try await fetch("/readiness/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
+    }
+
     private func loadDashboard(for date: Date) async throws -> DashboardBundle {
         let dateString = Self.apiDate.string(from: date)
         return try await fetch("/dashboard/bundle?date=\(dateString)")
