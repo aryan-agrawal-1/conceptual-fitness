@@ -265,11 +265,108 @@ struct HeartRateSummary: Decodable {
     let averageBPM: Double?
     let minBPM: Double?
     let maxBPM: Double?
+    let sampleCount: Int?
+
+    init(averageBPM: Double?, minBPM: Double?, maxBPM: Double?, sampleCount: Int? = nil) {
+        self.averageBPM = averageBPM
+        self.minBPM = minBPM
+        self.maxBPM = maxBPM
+        self.sampleCount = sampleCount
+    }
 
     enum CodingKeys: String, CodingKey {
         case averageBPM = "average_bpm"
         case minBPM = "min_bpm"
         case maxBPM = "max_bpm"
+        case sampleCount = "sample_count"
+    }
+}
+
+struct WorkoutDetail: Decodable, Identifiable {
+    let id: String
+    let workoutType: String?
+    let startTime: String?
+    let endTime: String?
+    let date: String?
+    let durationSeconds: Int?
+    let distanceMeters: Double?
+    let activeCalories: Double?
+    let heartRate: HeartRateSummary?
+    let heartRateZones: [WorkoutHeartRateZone]
+    let zoneSource: String?
+    let intensity: String?
+    let strainLoadPoints: Double?
+    let heartRateSamples: [WorkoutHeartRateSample]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workoutType = "workout_type"
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case date
+        case durationSeconds = "duration_seconds"
+        case distanceMeters = "distance_meters"
+        case activeCalories = "active_calories"
+        case heartRate = "heart_rate"
+        case heartRateZones = "heart_rate_zones"
+        case zoneSource = "zone_source"
+        case intensity
+        case strainLoadPoints = "strain_load_points"
+        case heartRateSamples = "heart_rate_samples"
+    }
+}
+
+struct WorkoutHeartRateZone: Decodable, Identifiable {
+    let zone: String
+    let seconds: Int
+    let minutes: Double
+    let source: String?
+    let sourceZones: [String]
+    let thresholds: [String: WorkoutZoneThreshold]?
+    let maxHeartRate: Double?
+    let maxHeartRateSource: String?
+    let restingHeartRate: Double?
+
+    var id: String { zone }
+
+    enum CodingKeys: String, CodingKey {
+        case zone
+        case seconds
+        case minutes
+        case source
+        case sourceZones = "source_zones"
+        case thresholds
+        case maxHeartRate = "max_heart_rate"
+        case maxHeartRateSource = "max_heart_rate_source"
+        case restingHeartRate = "resting_heart_rate"
+    }
+}
+
+struct WorkoutZoneThreshold: Decodable {
+    let minBPM: Double?
+    let maxBPM: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case minBPM = "min_bpm"
+        case maxBPM = "max_bpm"
+    }
+}
+
+struct WorkoutHeartRateSample: Decodable, Identifiable {
+    let observedAt: String?
+    let value: Double?
+    let unit: String?
+    let sourcePlatform: String?
+    let sourceDevice: String?
+
+    var id: String { "\(observedAt ?? "sample")-\(value?.clean ?? "--")" }
+
+    enum CodingKeys: String, CodingKey {
+        case observedAt = "observed_at"
+        case value
+        case unit
+        case sourcePlatform = "source_platform"
+        case sourceDevice = "source_device"
     }
 }
 

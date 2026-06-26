@@ -208,11 +208,7 @@ private extension View {
                     )
                 }
             case .workout(let workoutID):
-                PlaceholderDetailView(
-                    title: "Workout",
-                    systemImage: "figure.run.circle",
-                    message: "Workout analytics for \(workoutID) will be added after the dashboard pass."
-                )
+                WorkoutDetailView(workoutID: workoutID, client: client)
             }
         }
     }

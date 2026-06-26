@@ -34,8 +34,32 @@ enum DashboardFormatters {
         if let date = ISO8601DateFormatter.backend.date(from: value) {
             return date
         }
-        return ISO8601DateFormatter.fractionalBackend.date(from: value)
+        if let date = ISO8601DateFormatter.fractionalBackend.date(from: value) {
+            return date
+        }
+        if let date = backendLocalDateTime.date(from: value) {
+            return date
+        }
+        return backendLocalFractionalDateTime.date(from: value)
     }
+
+    private static let backendLocalDateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter
+    }()
+
+    private static let backendLocalFractionalDateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+        return formatter
+    }()
 }
 
 extension ISO8601DateFormatter {

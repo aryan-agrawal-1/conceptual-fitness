@@ -91,7 +91,7 @@ struct StrainDetailView: View {
             if detail.timeframe != "day" {
                 StrainComponentPanel(components: detail.components)
             }
-            StrainContributorsPanel(workouts: detail.contributors, timeframe: timeframe)
+            StrainContributorsPanel(workouts: detail.contributors, timeframe: timeframe, client: client)
             StrainTrainingContextPanel(context: detail.trainingContext, timeframe: timeframe)
         }
     }
@@ -788,6 +788,7 @@ private struct StrainTrainingContextPanel: View {
 private struct StrainContributorsPanel: View {
     let workouts: [WorkoutSummary]
     let timeframe: StrainTimeframe
+    let client: DashboardAPIClient
     @State private var selectedGroup: WorkoutContributorGroup?
 
     private var shouldAggregate: Bool {
@@ -852,7 +853,7 @@ private struct StrainContributorsPanel: View {
             }
         }
         .sheet(item: $selectedGroup) { group in
-            WorkoutContributorGroupSheet(group: group)
+            WorkoutContributorGroupSheet(group: group, client: client)
         }
     }
 }
@@ -907,6 +908,7 @@ private struct WorkoutContributorGroupRow: View {
 
 private struct WorkoutContributorGroupSheet: View {
     let group: WorkoutContributorGroup
+    let client: DashboardAPIClient
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -948,11 +950,7 @@ private struct WorkoutContributorGroupSheet: View {
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
                 case .workout(let workoutID):
-                    PlaceholderDetailView(
-                        title: "Workout",
-                        systemImage: "figure.run.circle",
-                        message: "Workout analytics for \(workoutID) will be added after the dashboard pass."
-                    )
+                    WorkoutDetailView(workoutID: workoutID, client: client)
                 case .metric(let metric):
                     PlaceholderDetailView(
                         title: metric,

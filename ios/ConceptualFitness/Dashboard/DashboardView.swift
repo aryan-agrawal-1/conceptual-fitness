@@ -165,7 +165,7 @@ struct DashboardView: View {
                     Text(heroBriefText)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(heroTextColor.opacity(0.78))
-                        .lineLimit(8)
+                        .lineLimit(9)
                         .truncationMode(.tail)
                         .layoutPriority(1)
                         .frame(maxWidth: .infinity, alignment: .leading)

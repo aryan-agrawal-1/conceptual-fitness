@@ -31,6 +31,7 @@
 		010000000000000000000016 /* ReadinessDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000019 /* ReadinessDetailView.swift */; };
 		010000000000000000000017 /* ScoreRangeSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001A /* ScoreRangeSelector.swift */; };
 		010000000000000000000018 /* SleepDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001B /* SleepDetailView.swift */; };
+		010000000000000000000019 /* WorkoutDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001C /* WorkoutDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		020000000000000000000019 /* ReadinessDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessDetailView.swift; sourceTree = "<group>"; };
 		02000000000000000000001A /* ScoreRangeSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoreRangeSelector.swift; sourceTree = "<group>"; };
 		02000000000000000000001B /* SleepDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepDetailView.swift; sourceTree = "<group>"; };
+		02000000000000000000001C /* WorkoutDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,6 +125,7 @@
 				020000000000000000000018 /* StrainDetailView.swift */,
 				020000000000000000000019 /* ReadinessDetailView.swift */,
 				02000000000000000000001B /* SleepDetailView.swift */,
+				02000000000000000000001C /* WorkoutDetailView.swift */,
 			);
 			path = Dashboard;
 			sourceTree = "<group>";
@@ -263,6 +266,7 @@
 				010000000000000000000016 /* ReadinessDetailView.swift in Sources */,
 				010000000000000000000017 /* ScoreRangeSelector.swift in Sources */,
 				010000000000000000000018 /* SleepDetailView.swift in Sources */,
+				010000000000000000000019 /* WorkoutDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

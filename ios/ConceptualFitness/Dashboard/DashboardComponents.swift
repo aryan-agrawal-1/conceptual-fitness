@@ -489,9 +489,10 @@ extension WorkoutSummary {
 
     var summaryTint: Color {
         switch intensity?.lowercased() {
-        case "high": return .orange
+        case "peak": return .red
+        case "vigorous", "high": return .orange
         case "moderate": return .blue
-        case "low": return .green
+        case "light", "low": return .green
         default: return .indigo
         }
     }
