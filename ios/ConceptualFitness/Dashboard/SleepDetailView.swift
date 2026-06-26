@@ -654,6 +654,10 @@ private struct SleepDailyBarChart: View {
                             .position(x: proxy.size.width - 24, y: max(10, y - 10))
                     }
 
+                    if let selectedPoint, let selectedIndex = points.firstIndex(where: { $0.id == selectedPoint.id }) {
+                        selectionLine(x: barCenterX(for: selectedIndex, width: proxy.size.width), topPadding: 0, plotHeight: chartHeight)
+                    }
+
                     HStack(alignment: .bottom, spacing: points.count > 20 ? 4 : 7) {
                         ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
                             VStack(spacing: 6) {
@@ -677,6 +681,13 @@ private struct SleepDailyBarChart: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         }
                     }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                selectPoint(atX: value.location.x, width: proxy.size.width)
+                            }
+                    )
                 }
             }
         }
@@ -714,6 +725,18 @@ private struct SleepDailyBarChart: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func selectPoint(atX x: CGFloat, width: CGFloat) {
+        guard !points.isEmpty else { return }
+        let clampedX = min(max(x, 0), max(width, 1))
+        let index = Int((clampedX / max(width, 1) * CGFloat(points.count)).rounded(.down))
+        selectedID = points[min(max(index, 0), points.count - 1)].id
+    }
+
+    private func barCenterX(for index: Int, width: CGFloat) -> CGFloat {
+        guard !points.isEmpty else { return width / 2 }
+        return (CGFloat(index) + 0.5) / CGFloat(points.count) * width
     }
 }
 
@@ -756,6 +779,10 @@ private struct SleepMonthlyBarChart: View {
                             .position(x: proxy.size.width - 24, y: max(10, y - 10))
                     }
 
+                    if let selectedPoint, let selectedIndex = points.firstIndex(where: { $0.id == selectedPoint.id }) {
+                        selectionLine(x: barCenterX(for: selectedIndex, width: proxy.size.width), topPadding: 0, plotHeight: chartHeight)
+                    }
+
                     HStack(alignment: .bottom, spacing: 6) {
                         ForEach(points) { point in
                             VStack(spacing: 7) {
@@ -779,6 +806,13 @@ private struct SleepMonthlyBarChart: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         }
                     }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                selectPoint(atX: value.location.x, width: proxy.size.width)
+                            }
+                    )
                 }
             }
         }
@@ -806,6 +840,26 @@ private struct SleepMonthlyBarChart: View {
                 .foregroundStyle(.secondary)
         }
     }
+
+    private func selectPoint(atX x: CGFloat, width: CGFloat) {
+        guard !points.isEmpty else { return }
+        let clampedX = min(max(x, 0), max(width, 1))
+        let index = Int((clampedX / max(width, 1) * CGFloat(points.count)).rounded(.down))
+        selectedID = points[min(max(index, 0), points.count - 1)].id
+    }
+
+    private func barCenterX(for index: Int, width: CGFloat) -> CGFloat {
+        guard !points.isEmpty else { return width / 2 }
+        return (CGFloat(index) + 0.5) / CGFloat(points.count) * width
+    }
+}
+
+private func selectionLine(x: CGFloat, topPadding: CGFloat, plotHeight: CGFloat) -> some View {
+    Path { path in
+        path.move(to: CGPoint(x: x, y: topPadding))
+        path.addLine(to: CGPoint(x: x, y: topPadding + plotHeight))
+    }
+    .stroke(.primary.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 }
 
 private struct SleepDriverPanel: View {

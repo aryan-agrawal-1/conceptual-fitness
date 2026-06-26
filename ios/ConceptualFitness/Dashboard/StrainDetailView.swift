@@ -417,6 +417,11 @@ private struct WeeklyStrainLineChart: View {
                     }
                     .stroke(.orange.gradient, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
 
+                    if let selectedPoint {
+                        let selectedX = xPosition(for: selectedPoint.index, totalCount: chartPoints.count, width: plotWidth)
+                        selectionLine(x: selectedX, topPadding: topPadding, plotHeight: plotHeight)
+                    }
+
                     ForEach(chartPoints) { point in
                         let location = location(
                             for: point,
@@ -454,6 +459,13 @@ private struct WeeklyStrainLineChart: View {
                             )
                     }
                 }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            selectPoint(atX: value.location.x, plotWidth: plotWidth, points: chartPoints)
+                        }
+                )
             }
         }
     }
@@ -555,6 +567,14 @@ private struct WeeklyStrainLineChart: View {
     private func yPosition(for value: Double, maxValue: Double, plotHeight: CGFloat, topPadding: CGFloat) -> CGFloat {
         topPadding + plotHeight - (plotHeight * CGFloat(value / maxValue))
     }
+
+    private func selectPoint(atX x: CGFloat, plotWidth: CGFloat, points: [WeeklyLinePoint]) {
+        guard !points.isEmpty else { return }
+        let clampedX = min(max(x, 0), plotWidth)
+        let progress = plotWidth > 0 ? clampedX / plotWidth : 0
+        let index = Int((progress * CGFloat(points.count - 1)).rounded())
+        selectedID = points[min(max(index, 0), points.count - 1)].id
+    }
 }
 
 private struct WeeklyLinePoint: Identifiable {
@@ -584,38 +604,52 @@ private struct LoadBarChart: View {
 
             GeometryReader { proxy in
                 let maxValue = max(points.map(\.chartValue).max() ?? 1, 1)
-                HStack(alignment: .bottom, spacing: barSpacing(for: proxy.size.width)) {
-                    ForEach(points) { point in
-                        VStack(spacing: 7) {
-                            Button {
-                                selectedID = point.id
-                            } label: {
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(barColor(for: point).gradient)
-                                    .overlay {
-                                        if point.id == selectedPoint?.id {
-                                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                                .stroke(.primary.opacity(0.35), lineWidth: 2)
-                                        }
-                                    }
-                                    .frame(height: max(4, proxy.size.height * 0.68 * CGFloat(point.chartValue / maxValue)))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(point.label(for: timeframe)), \(point.readoutValue(for: timeframe).clean) load")
-
-                            Text(point.label(for: timeframe))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(point.id == selectedPoint?.id ? .primary : .secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.55)
-                                .frame(maxWidth: .infinity)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    selectedID = point.id
-                                }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                let chartHeight = max(1, proxy.size.height - 24)
+                ZStack(alignment: .bottomLeading) {
+                    if let selectedPoint, let selectedIndex = points.firstIndex(where: { $0.id == selectedPoint.id }) {
+                        selectionLine(x: barCenterX(for: selectedIndex, width: proxy.size.width), topPadding: 0, plotHeight: chartHeight)
                     }
+
+                    HStack(alignment: .bottom, spacing: barSpacing(for: proxy.size.width)) {
+                        ForEach(points) { point in
+                            VStack(spacing: 7) {
+                                Button {
+                                    selectedID = point.id
+                                } label: {
+                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                        .fill(barColor(for: point).gradient)
+                                        .overlay {
+                                            if point.id == selectedPoint?.id {
+                                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                                    .stroke(.primary.opacity(0.35), lineWidth: 2)
+                                            }
+                                        }
+                                        .frame(height: max(4, proxy.size.height * 0.68 * CGFloat(point.chartValue / maxValue)))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(point.label(for: timeframe)), \(point.readoutValue(for: timeframe).clean) load")
+
+                                Text(point.label(for: timeframe))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(point.id == selectedPoint?.id ? .primary : .secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.55)
+                                    .frame(maxWidth: .infinity)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        selectedID = point.id
+                                    }
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                selectPoint(atX: value.location.x, width: proxy.size.width)
+                            }
+                    )
                 }
             }
         }
@@ -646,6 +680,26 @@ private struct LoadBarChart: View {
     private func barSpacing(for width: CGFloat) -> CGFloat {
         timeframe == "year" && points.count > 8 ? 5 : 9
     }
+
+    private func selectPoint(atX x: CGFloat, width: CGFloat) {
+        guard !points.isEmpty else { return }
+        let clampedX = min(max(x, 0), max(width, 1))
+        let index = Int((clampedX / max(width, 1) * CGFloat(points.count)).rounded(.down))
+        selectedID = points[min(max(index, 0), points.count - 1)].id
+    }
+
+    private func barCenterX(for index: Int, width: CGFloat) -> CGFloat {
+        guard !points.isEmpty else { return width / 2 }
+        return (CGFloat(index) + 0.5) / CGFloat(points.count) * width
+    }
+}
+
+private func selectionLine(x: CGFloat, topPadding: CGFloat, plotHeight: CGFloat) -> some View {
+    Path { path in
+        path.move(to: CGPoint(x: x, y: topPadding))
+        path.addLine(to: CGPoint(x: x, y: topPadding + plotHeight))
+    }
+    .stroke(.primary.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 }
 
 private struct ComponentStackBar: View {

@@ -366,6 +366,12 @@ private struct ReadinessLineChart: View {
                     }
                     .stroke(Color.blue.gradient, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
 
+                    if let selectedPoint,
+                       let selectedIndex = plotPoints.firstIndex(where: { $0.id == selectedPoint.id }) {
+                        let selectedX = xPosition(for: selectedIndex, count: plotPoints.count, width: plotWidth)
+                        selectionLine(x: selectedX, topPadding: topPadding, plotHeight: plotHeight)
+                    }
+
                     ForEach(Array(plotPoints.enumerated()), id: \.element.id) { index, point in
                         let location = location(
                             for: point,
@@ -403,6 +409,13 @@ private struct ReadinessLineChart: View {
                             )
                     }
                 }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            selectPoint(atX: value.location.x, width: plotWidth, points: plotPoints)
+                        }
+                )
             }
         }
     }
@@ -489,6 +502,14 @@ private struct ReadinessLineChart: View {
     private func yPosition(for value: Double, height: CGFloat, topPadding: CGFloat) -> CGFloat {
         topPadding + height - (height * CGFloat(min(max(value / 100, 0), 1)))
     }
+
+    private func selectPoint(atX x: CGFloat, width: CGFloat, points: [ReadinessChartPoint]) {
+        guard !points.isEmpty else { return }
+        let clampedX = min(max(x, 0), max(width, 1))
+        let progress = clampedX / max(width, 1)
+        let index = Int((progress * CGFloat(points.count - 1)).rounded())
+        selectedID = points[min(max(index, 0), points.count - 1)].id
+    }
 }
 
 private struct MonthlyReadinessBars: View {
@@ -507,34 +528,48 @@ private struct MonthlyReadinessBars: View {
             selectedReadout
 
             GeometryReader { proxy in
-                HStack(alignment: .bottom, spacing: 6) {
-                    ForEach(points) { point in
-                        VStack(spacing: 7) {
-                            Button {
-                                selectedID = point.id
-                            } label: {
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(readinessColor(for: point.averageScore).gradient)
-                                    .opacity(point.averageScore == nil ? 0.22 : 1)
-                                    .overlay {
-                                        if point.id == selectedPoint?.id {
-                                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                                .stroke(.primary.opacity(0.35), lineWidth: 2)
-                                        }
-                                    }
-                                    .frame(height: max(4, proxy.size.height * 0.68 * CGFloat((point.averageScore ?? 0) / 100)))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(point.label(for: .year)), average readiness \(point.averageScore?.clean ?? "no data")")
-
-                            Text(point.label(for: .year))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(point.id == selectedPoint?.id ? .primary : .secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.6)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                let chartHeight = max(1, proxy.size.height - 24)
+                ZStack(alignment: .bottomLeading) {
+                    if let selectedPoint, let selectedIndex = points.firstIndex(where: { $0.id == selectedPoint.id }) {
+                        selectionLine(x: barCenterX(for: selectedIndex, width: proxy.size.width), topPadding: 0, plotHeight: chartHeight)
                     }
+
+                    HStack(alignment: .bottom, spacing: 6) {
+                        ForEach(points) { point in
+                            VStack(spacing: 7) {
+                                Button {
+                                    selectedID = point.id
+                                } label: {
+                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                        .fill(readinessColor(for: point.averageScore).gradient)
+                                        .opacity(point.averageScore == nil ? 0.22 : 1)
+                                        .overlay {
+                                            if point.id == selectedPoint?.id {
+                                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                                    .stroke(.primary.opacity(0.35), lineWidth: 2)
+                                            }
+                                        }
+                                        .frame(height: max(4, proxy.size.height * 0.68 * CGFloat((point.averageScore ?? 0) / 100)))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(point.label(for: .year)), average readiness \(point.averageScore?.clean ?? "no data")")
+
+                                Text(point.label(for: .year))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(point.id == selectedPoint?.id ? .primary : .secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.6)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                selectPoint(atX: value.location.x, width: proxy.size.width)
+                            }
+                    )
                 }
             }
         }
@@ -556,6 +591,26 @@ private struct MonthlyReadinessBars: View {
                 .foregroundStyle(.secondary)
         }
     }
+
+    private func selectPoint(atX x: CGFloat, width: CGFloat) {
+        guard !points.isEmpty else { return }
+        let clampedX = min(max(x, 0), max(width, 1))
+        let index = Int((clampedX / max(width, 1) * CGFloat(points.count)).rounded(.down))
+        selectedID = points[min(max(index, 0), points.count - 1)].id
+    }
+
+    private func barCenterX(for index: Int, width: CGFloat) -> CGFloat {
+        guard !points.isEmpty else { return width / 2 }
+        return (CGFloat(index) + 0.5) / CGFloat(points.count) * width
+    }
+}
+
+private func selectionLine(x: CGFloat, topPadding: CGFloat, plotHeight: CGFloat) -> some View {
+    Path { path in
+        path.move(to: CGPoint(x: x, y: topPadding))
+        path.addLine(to: CGPoint(x: x, y: topPadding + plotHeight))
+    }
+    .stroke(.primary.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 }
 
 private struct ReadinessDriverPanel: View {
