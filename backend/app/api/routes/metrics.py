@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from statistics import mean
@@ -26,9 +26,11 @@ from app.services.interval_totals import interval_totals_by_date
 from app.services.health_dates import (
     estimated_max_heart_rate,
     get_or_create_profile,
+    local_date_for_profile,
+    local_week_start,
     timezone_for_profile,
 )
-from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION
+from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION, _adjusted_sleep_need_minutes
 from app.services.metric_rollups import (
     HIGH_VOLUME_METRICS,
     RollupPoint,
@@ -347,9 +349,25 @@ def metric_series(
 def sleep_detail(
     session: DbSession,
     user: CurrentUser,
-    start: date = Query(...),
-    end: date = Query(...),
+    start: date | None = Query(default=None),
+    end: date | None = Query(default=None),
+    selected_date: date | None = Query(default=None, alias="date"),
+    timeframe: str | None = Query(default=None, pattern="^(day|week|month|year)$"),
 ) -> dict[str, object]:
+    if selected_date is not None or timeframe is not None or start is None or end is None:
+        profile = get_or_create_profile(session, user.id)
+        anchor = selected_date or local_date_for_profile(profile)
+        selected_timeframe = timeframe or "week"
+        period_start, period_end = _sleep_detail_window(anchor, selected_timeframe)
+        return _sleep_score_detail(
+            session,
+            user_id=user.id,
+            profile=profile,
+            timeframe=selected_timeframe,
+            start=period_start,
+            end=period_end,
+        )
+
     if end < start:
         raise HTTPException(status_code=422, detail="end must be on or after start")
 
@@ -376,6 +394,560 @@ def sleep_detail(
             for item in sessions
         ],
     }
+
+
+def _sleep_score_detail(
+    session: DbSession,
+    *,
+    user_id: str,
+    profile: UserProfile,
+    timeframe: str,
+    start: date,
+    end: date,
+) -> dict[str, object]:
+    sessions = _sleep_sessions_for_range(session, user_id, start, end)
+    main_by_date = _main_sleeps_by_date(sessions)
+    scores_by_date = _sleep_scores_by_date(session, user_id, start, end)
+    scores = [scores_by_date[day] for day in _date_range(start, end) if day in scores_by_date]
+    main_sleeps = [main_by_date[day] for day in _date_range(start, end) if day in main_by_date]
+    latest_sleep = main_sleeps[-1] if main_sleeps else None
+    latest_score = _latest_sleep_score(scores)
+
+    return {
+        "timeframe": timeframe,
+        "start": start,
+        "end": end,
+        "summary": _sleep_detail_summary(
+            session,
+            user_id=user_id,
+            profile=profile,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            main_by_date=main_by_date,
+            scores=scores,
+            latest_sleep=latest_sleep,
+            latest_score=latest_score,
+        ),
+        "chart": _sleep_detail_chart(
+            session,
+            user_id=user_id,
+            profile=profile,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            main_by_date=main_by_date,
+            scores_by_date=scores_by_date,
+            latest_sleep=latest_sleep,
+        ),
+        "components": _sleep_detail_components(scores),
+        "context": _sleep_detail_context(
+            session,
+            user_id=user_id,
+            profile=profile,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            main_by_date=main_by_date,
+            scores=scores,
+            latest_sleep=latest_sleep,
+            latest_score=latest_score,
+        ),
+        "guidance": _sleep_detail_guidance(timeframe, scores, main_sleeps),
+        "reasons": latest_score.reasons if latest_score else [],
+        "sessions": [_sleep_session_payload(profile, item) for item in sessions],
+        "data_quality": _sleep_detail_data_quality(scores, start, end),
+    }
+
+
+def _sleep_detail_window(anchor: date, timeframe: str) -> tuple[date, date]:
+    if timeframe == "day":
+        return anchor, anchor
+    if timeframe == "week":
+        start = local_week_start(anchor)
+        return start, start + timedelta(days=6)
+    if timeframe == "month":
+        start = anchor.replace(day=1)
+        next_month = (
+            date(anchor.year + 1, 1, 1)
+            if anchor.month == 12
+            else date(anchor.year, anchor.month + 1, 1)
+        )
+        return start, next_month - timedelta(days=1)
+    return date(anchor.year, 1, 1), date(anchor.year, 12, 31)
+
+
+def _sleep_detail_summary(
+    session: DbSession,
+    *,
+    user_id: str,
+    profile: UserProfile,
+    timeframe: str,
+    start: date,
+    end: date,
+    main_by_date: dict[date, SleepSession],
+    scores: list[DailyScore],
+    latest_sleep: SleepSession | None,
+    latest_score: DailyScore | None,
+) -> dict[str, object]:
+    stats = _sleep_period_stats(session, user_id, profile, start, end, main_by_date)
+    score_values = [float(score.value) for score in scores if score.value is not None]
+    average_score = round(mean(score_values), 1) if score_values else None
+    primary = latest_score.value if timeframe == "day" and latest_score else average_score
+    title = {
+        "day": "Last night's sleep",
+        "week": "Weekly sleep",
+        "month": "Monthly sleep",
+        "year": "Yearly sleep",
+    }[timeframe]
+
+    summary: dict[str, object] = {
+        "title": title,
+        "primary_value": primary,
+        "average_score": average_score,
+        "latest_score": latest_score.value if latest_score else None,
+        "sleep_band": _sleep_band(primary),
+        "status": latest_score.status.value if latest_score else "missing_data",
+        "valid_days": len(score_values),
+        "period_days": (end - start).days + 1,
+        "average_sleep_minutes": stats["average_sleep_minutes"],
+        "target_sleep_minutes": stats["average_target_minutes"],
+        "target_met_nights": stats["target_met_nights"],
+        "slept_nights": stats["slept_nights"],
+        "sleep_debt_minutes": stats["sleep_debt_minutes"],
+    }
+    if timeframe == "day":
+        target = _sleep_target_for_day(session, user_id, profile, start)
+        summary.update(
+            {
+                "sleep_minutes": latest_sleep.minutes_asleep if latest_sleep else None,
+                "target_sleep_minutes": target,
+                "bedtime": _local_clock_time(profile, latest_sleep.start_time) if latest_sleep else None,
+                "wake_time": _local_clock_time(profile, latest_sleep.end_time) if latest_sleep else None,
+                "data_quality": latest_score.data_quality if latest_score else "missing",
+            }
+        )
+    return summary
+
+
+def _sleep_detail_chart(
+    session: DbSession,
+    *,
+    user_id: str,
+    profile: UserProfile,
+    timeframe: str,
+    start: date,
+    end: date,
+    main_by_date: dict[date, SleepSession],
+    scores_by_date: dict[date, DailyScore],
+    latest_sleep: SleepSession | None,
+) -> dict[str, object]:
+    if timeframe == "day":
+        return {
+            "kind": "stage_timeline",
+            "points": _sleep_stage_timeline(profile, latest_sleep),
+            "stage_summary": _sleep_stages_summary(latest_sleep) if latest_sleep else [],
+        }
+    if timeframe in {"week", "month"}:
+        points = [
+            _sleep_daily_chart_point(
+                session,
+                user_id=user_id,
+                profile=profile,
+                day=day,
+                sleep=main_by_date.get(day),
+                score=scores_by_date.get(day),
+            )
+            for day in _date_range(start, end)
+        ]
+        return {
+            "kind": "weekly_sleep_pattern" if timeframe == "week" else "daily_sleep_bars",
+            "points": points,
+        }
+
+    sleeps_by_month: dict[date, dict[date, SleepSession]] = defaultdict(dict)
+    scores_by_month: dict[date, list[DailyScore]] = defaultdict(list)
+    for day, sleep in main_by_date.items():
+        sleeps_by_month[date(day.year, day.month, 1)][day] = sleep
+    for score in scores_by_date.values():
+        scores_by_month[date(score.score_date.year, score.score_date.month, 1)].append(score)
+
+    points = []
+    month = date(start.year, 1, 1)
+    while month <= date(start.year, 12, 1):
+        month_end = (
+            date(month.year + 1, 1, 1) - timedelta(days=1)
+            if month.month == 12
+            else date(month.year, month.month + 1, 1) - timedelta(days=1)
+        )
+        stats = _sleep_period_stats(
+            session,
+            user_id,
+            profile,
+            month,
+            min(month_end, end),
+            sleeps_by_month.get(month, {}),
+        )
+        values = [float(score.value) for score in scores_by_month.get(month, []) if score.value is not None]
+        points.append(
+            {
+                "month_start_date": month,
+                "average_sleep_minutes": stats["average_sleep_minutes"],
+                "target_sleep_minutes": stats["average_target_minutes"],
+                "target_met_nights": stats["target_met_nights"],
+                "sleep_debt_minutes": stats["sleep_debt_minutes"],
+                "average_score": round(mean(values), 1) if values else None,
+                "scored_days": len(values),
+            }
+        )
+        month = date(month.year + 1, 1, 1) if month.month == 12 else date(month.year, month.month + 1, 1)
+    return {"kind": "monthly_sleep_bars", "points": points}
+
+
+def _sleep_daily_chart_point(
+    session: DbSession,
+    *,
+    user_id: str,
+    profile: UserProfile,
+    day: date,
+    sleep: SleepSession | None,
+    score: DailyScore | None,
+) -> dict[str, object]:
+    target = _sleep_target_for_day(session, user_id, profile, day)
+    minutes = sleep.minutes_asleep if sleep else None
+    return {
+        "date": day,
+        "bedtime": _local_clock_time(profile, sleep.start_time) if sleep else None,
+        "wake_time": _local_clock_time(profile, sleep.end_time) if sleep else None,
+        "sleep_start_minute": _sleep_local_minute(profile, sleep.start_time) if sleep else None,
+        "sleep_end_minute": _sleep_local_minute(profile, sleep.end_time) if sleep else None,
+        "duration_minutes": minutes,
+        "target_sleep_minutes": target,
+        "sleep_debt_minutes": max(0, target - minutes) if minutes is not None else None,
+        "target_met": minutes >= target if minutes is not None else False,
+        "score": _rounded(score.value) if score and score.value is not None else None,
+        "sleep_band": _sleep_band(score.value if score else None),
+        "data_quality": score.data_quality if score else ("weak" if sleep else "missing"),
+    }
+
+
+def _sleep_stage_timeline(profile: UserProfile, sleep: SleepSession | None) -> list[dict[str, object]]:
+    if sleep is None:
+        return []
+    points = []
+    covered_minutes = 0.0
+    for stage in sleep.stages or []:
+        stage_type = stage.get("type") or stage.get("stage")
+        start_time = _parse_stage_datetime(stage.get("startTime"))
+        end_time = _parse_stage_datetime(stage.get("endTime"))
+        if not stage_type or start_time is None or end_time is None:
+            continue
+        minutes = max(0.0, (end_time - start_time).total_seconds() / 60)
+        if minutes <= 0:
+            continue
+        covered_minutes += minutes
+        points.append(
+            {
+                "stage": str(stage_type).upper(),
+                "start_time": start_time,
+                "end_time": end_time,
+                "start_clock": _local_clock_time(profile, start_time),
+                "end_clock": _local_clock_time(profile, end_time),
+                "start_minute": _sleep_local_minute(profile, start_time),
+                "end_minute": _sleep_local_minute(profile, end_time),
+                "offset_start_minutes": round(
+                    max(0.0, (start_time - sleep.start_time).total_seconds() / 60),
+                    1,
+                ),
+                "offset_end_minutes": round(
+                    max(0.0, (end_time - sleep.start_time).total_seconds() / 60),
+                    1,
+                ),
+                "duration_minutes": round(minutes, 1),
+            }
+        )
+    if not _stage_timeline_has_usable_coverage(sleep, covered_minutes):
+        return []
+    return points
+
+
+def _sleep_detail_components(scores: list[DailyScore]) -> dict[str, object]:
+    valid_scores = [score for score in scores if score.value is not None]
+    latest = _latest_sleep_score(scores)
+    latest_items = _sleep_component_items(latest)
+    averages: dict[str, list[float]] = defaultdict(list)
+    for score in valid_scores:
+        for item in _sleep_component_items(score):
+            component_score = item.get("score")
+            if isinstance(component_score, int | float):
+                averages[str(item["key"])].append(float(component_score))
+    return {
+        "items": latest_items,
+        "average_items": [
+            {
+                "key": key,
+                "label": _SLEEP_COMPONENT_LABELS.get(key, key.replace("_", " ").title()),
+                "score": round(mean(values), 1),
+                "weight": _SLEEP_COMPONENT_WEIGHTS.get(key),
+            }
+            for key, values in averages.items()
+            if values
+        ],
+    }
+
+
+def _sleep_component_items(score: DailyScore | None) -> list[dict[str, object]]:
+    if score is None:
+        return []
+    items = []
+    components = score.components or {}
+    for key, label in _SLEEP_COMPONENT_LABELS.items():
+        raw = components.get(key)
+        if not isinstance(raw, dict):
+            continue
+        component_score = raw.get("score")
+        if not isinstance(component_score, int | float):
+            continue
+        item: dict[str, object] = {
+            "key": key,
+            "label": label,
+            "score": round(float(component_score), 1),
+            "weight": _SLEEP_COMPONENT_WEIGHTS.get(key),
+            "message": _sleep_component_message(key, raw),
+        }
+        detail = {k: v for k, v in raw.items() if k != "score" and isinstance(v, int | float | str)}
+        if detail:
+            item["detail"] = detail
+        items.append(item)
+    return items
+
+
+def _sleep_component_message(key: str, component: dict[str, Any]) -> str | None:
+    if key == "duration":
+        minutes = component.get("minutes")
+        target = component.get("target_minutes")
+        if isinstance(minutes, int | float) and isinstance(target, int | float):
+            return f"{_hours_text(float(minutes))} slept against a {_hours_text(float(target))} target."
+    if key == "regularity":
+        drift = component.get("average_drift_minutes")
+        if isinstance(drift, int | float):
+            return f"Average bedtime/wake drift was {round(float(drift)):g} min."
+    if key == "continuity":
+        efficiency = component.get("sleep_efficiency")
+        if isinstance(efficiency, int | float):
+            return f"Sleep efficiency was {round(float(efficiency) * 100):g}%."
+    if key == "timing":
+        drift = component.get("start_drift_minutes")
+        if isinstance(drift, int | float):
+            return f"Sleep start drift was {round(float(drift)):g} min."
+    if key == "physiology":
+        return "Overnight physiology is compared with your baseline."
+    if key == "stages":
+        rem = component.get("rem_minutes")
+        deep = component.get("deep_minutes")
+        if isinstance(rem, int | float) or isinstance(deep, int | float):
+            return f"REM {_hours_text(float(rem or 0))}, deep {_hours_text(float(deep or 0))}."
+    return None
+
+
+def _sleep_detail_context(
+    session: DbSession,
+    *,
+    user_id: str,
+    profile: UserProfile,
+    timeframe: str,
+    start: date,
+    end: date,
+    main_by_date: dict[date, SleepSession],
+    scores: list[DailyScore],
+    latest_sleep: SleepSession | None,
+    latest_score: DailyScore | None,
+) -> dict[str, object]:
+    stats = _sleep_period_stats(session, user_id, profile, start, end, main_by_date)
+    context_stats = stats
+    if timeframe == "day":
+        debt_start = start - timedelta(days=6)
+        debt_sessions = _sleep_sessions_for_range(session, user_id, debt_start, start)
+        context_stats = _sleep_period_stats(
+            session,
+            user_id,
+            profile,
+            debt_start,
+            start,
+            _main_sleeps_by_date(debt_sessions),
+        )
+    latest_components = latest_score.components if latest_score and latest_score.components else {}
+    physiology = latest_components.get("physiology") if isinstance(latest_components.get("physiology"), dict) else {}
+    base_need = _base_sleep_need_minutes(profile)
+    return {
+        "sleep_target_minutes": profile.sleep_target_minutes,
+        "adjusted_sleep_need_minutes": _sleep_target_for_day(session, user_id, profile, start)
+        if timeframe == "day"
+        else stats["average_target_minutes"],
+        "base_sleep_need_minutes": base_need,
+        "sleep_debt_minutes": context_stats["sleep_debt_minutes"],
+        "sleep_debt_period_days": 7 if timeframe == "day" else (end - start).days + 1,
+        "target_met_nights": context_stats["target_met_nights"],
+        "slept_nights": context_stats["slept_nights"],
+        "strain_adjusted_nights": context_stats["strain_adjusted_nights"],
+        "hrv_baseline_relation": _sleep_physiology_relation(physiology, "hrv", higher_is_better=True),
+        "rhr_baseline_relation": _sleep_physiology_relation(physiology, "rhr", higher_is_better=False),
+        "confidence_phase": latest_score.confidence_phase if latest_score else None,
+        "data_quality": latest_score.data_quality if latest_score else ("weak" if latest_sleep else "missing"),
+    }
+
+
+def _sleep_period_stats(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    start: date,
+    end: date,
+    main_by_date: dict[date, SleepSession],
+) -> dict[str, object]:
+    slept_minutes: list[int] = []
+    targets: list[int] = []
+    target_met = 0
+    debt = 0
+    adjusted_nights = 0
+    base_need = _base_sleep_need_minutes(profile)
+    for day in _date_range(start, end):
+        sleep = main_by_date.get(day)
+        if sleep is None or sleep.minutes_asleep is None:
+            continue
+        target = _sleep_target_for_day(session, user_id, profile, day)
+        targets.append(target)
+        slept_minutes.append(sleep.minutes_asleep)
+        if sleep.minutes_asleep >= target:
+            target_met += 1
+        debt += max(0, target - sleep.minutes_asleep)
+        if target > base_need:
+            adjusted_nights += 1
+    return {
+        "average_sleep_minutes": round(mean(slept_minutes), 1) if slept_minutes else None,
+        "average_target_minutes": round(mean(targets), 1) if targets else base_need,
+        "target_met_nights": target_met,
+        "sleep_debt_minutes": debt,
+        "slept_nights": len(slept_minutes),
+        "strain_adjusted_nights": adjusted_nights,
+    }
+
+
+def _sleep_detail_guidance(
+    timeframe: str,
+    scores: list[DailyScore],
+    sleeps: list[SleepSession],
+) -> dict[str, object]:
+    latest = _latest_sleep_score(scores)
+    band = _sleep_band(latest.value if latest else None)
+    if not sleeps:
+        text = "Sleep detail will appear after a main sleep session is available for this period."
+    elif timeframe == "day":
+        if band == "good":
+            text = "This sleep was enough to support recovery. Keep the next night consistent to protect the trend."
+        elif band == "fair":
+            text = "This sleep covered part of the need. Watch accumulated debt before adding extra strain."
+        elif band == "low":
+            text = "Sleep was limited or disrupted. Bias toward recovery and an earlier wind-down tonight."
+        else:
+            text = "Use sleep duration, timing, and continuity together before judging the night."
+    else:
+        text = "Use the pattern of target-met nights and sleep debt to judge whether your routine is supporting recovery."
+    return {"message": text}
+
+
+def _sleep_detail_data_quality(scores: list[DailyScore], start: date, end: date) -> dict[str, object]:
+    expected_days = (end - start).days + 1
+    valid_scores = [score for score in scores if score.value is not None]
+    quality_counts = Counter(score.data_quality for score in scores if score.data_quality)
+    confidence_counts = Counter(score.confidence_phase for score in scores if score.confidence_phase)
+    status_counts = Counter(score.status.value for score in scores if score.status)
+    return {
+        "expected_days": expected_days,
+        "scored_days": len(valid_scores),
+        "completeness": round(len(valid_scores) / expected_days, 3) if expected_days else None,
+        "quality_counts": dict(quality_counts),
+        "confidence_counts": dict(confidence_counts),
+        "status_counts": dict(status_counts),
+    }
+
+
+def _latest_sleep_score(scores: list[DailyScore]) -> DailyScore | None:
+    return next((score for score in reversed(scores) if score.value is not None), scores[-1] if scores else None)
+
+
+def _sleep_target_for_day(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    day: date,
+) -> int:
+    return _adjusted_sleep_need_minutes(session, user_id, profile, day)
+
+
+def _base_sleep_need_minutes(profile: UserProfile) -> int:
+    return max(420, min(540, profile.sleep_target_minutes or 480))
+
+
+def _sleep_local_minute(profile: UserProfile, value: datetime) -> int:
+    local = value.astimezone(timezone_for_profile(profile))
+    return local.hour * 60 + local.minute
+
+
+def _sleep_band(value: float | None) -> str | None:
+    if value is None:
+        return None
+    if value >= 80:
+        return "good"
+    if value >= 60:
+        return "fair"
+    return "low"
+
+
+def _sleep_physiology_relation(
+    physiology: dict[str, Any],
+    key: str,
+    *,
+    higher_is_better: bool,
+) -> str | None:
+    item = physiology.get(key)
+    if not isinstance(item, dict):
+        return None
+    current = item.get("value")
+    baseline = item.get("baseline")
+    if not isinstance(current, int | float) or not isinstance(baseline, int | float):
+        return None
+    if abs(float(current) - float(baseline)) < 0.05:
+        return "at_baseline"
+    if higher_is_better:
+        return "above_baseline" if float(current) > float(baseline) else "below_baseline"
+    return "below_baseline" if float(current) < float(baseline) else "above_baseline"
+
+
+def _hours_text(minutes: float) -> str:
+    rounded = int(round(minutes))
+    hours = rounded // 60
+    mins = rounded % 60
+    return f"{hours}h {mins:02d}m"
+
+
+_SLEEP_COMPONENT_LABELS = {
+    "duration": "Duration",
+    "regularity": "Regularity",
+    "continuity": "Continuity",
+    "timing": "Timing",
+    "physiology": "Physiology",
+    "stages": "Stages",
+}
+
+_SLEEP_COMPONENT_WEIGHTS = {
+    "duration": 0.35,
+    "regularity": 0.25,
+    "continuity": 0.20,
+    "timing": 0.10,
+    "physiology": 0.05,
+    "stages": 0.05,
+}
 
 
 @router.get("/sleep")
@@ -608,16 +1180,17 @@ SLEEP_STAGE_ORDER = ("AWAKE", "LIGHT", "DEEP", "REM")
 
 
 def _sleep_stages_summary(sleep: SleepSession) -> list[dict[str, object]]:
-    from_timeline = _stage_summary_from_timeline(sleep.stages)
+    from_timeline = _stage_summary_from_timeline(sleep)
     if from_timeline:
         return from_timeline
     return _deduped_provider_stage_summary(sleep.stages_summary)
 
 
-def _stage_summary_from_timeline(stages: list[dict[str, Any]]) -> list[dict[str, object]]:
+def _stage_summary_from_timeline(sleep: SleepSession) -> list[dict[str, object]]:
     totals: dict[str, float] = defaultdict(float)
     counts: dict[str, int] = defaultdict(int)
-    for stage in stages:
+    covered_minutes = 0.0
+    for stage in sleep.stages:
         stage_type = stage.get("type") or stage.get("stage")
         start_time = _parse_stage_datetime(stage.get("startTime"))
         end_time = _parse_stage_datetime(stage.get("endTime"))
@@ -627,9 +1200,19 @@ def _stage_summary_from_timeline(stages: list[dict[str, Any]]) -> list[dict[str,
         if minutes <= 0:
             continue
         key = str(stage_type).upper()
+        covered_minutes += minutes
         totals[key] += minutes
         counts[key] += 1
+    if not _stage_timeline_has_usable_coverage(sleep, covered_minutes):
+        return []
     return _stage_summary_payloads(totals, counts)
+
+
+def _stage_timeline_has_usable_coverage(sleep: SleepSession, covered_minutes: float) -> bool:
+    expected = sleep.minutes_in_sleep_period or sleep.minutes_asleep
+    if not expected or expected <= 0:
+        return covered_minutes > 0
+    return covered_minutes >= expected * 0.65
 
 
 def _deduped_provider_stage_summary(items: list[dict[str, Any]]) -> list[dict[str, object]]:

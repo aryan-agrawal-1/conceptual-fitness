@@ -886,19 +886,11 @@ def _sleep_physiology_score(session: Session, user_id: str, day: date) -> dict[s
 
 def _stage_score(sleep: SleepSession) -> dict[str, Any] | None:
     total = sleep.minutes_asleep
-    if not total or not sleep.stages_summary:
+    if not total:
         return None
-    rem = 0.0
-    deep = 0.0
-    for item in sleep.stages_summary:
-        stage_type = str(item.get("type") or item.get("stage") or "").lower()
-        minutes = _to_float(item.get("minutes") or item.get("durationMinutes"))
-        if minutes is None:
-            continue
-        if "rem" in stage_type:
-            rem += minutes
-        if "deep" in stage_type or "slow" in stage_type:
-            deep += minutes
+    stage_totals = _stage_totals_for_score(sleep)
+    rem = stage_totals.get("rem", 0.0)
+    deep = stage_totals.get("deep", 0.0)
     if rem == 0 and deep == 0:
         return None
     rem_pct = rem / total
@@ -912,6 +904,64 @@ def _stage_score(sleep: SleepSession) -> dict[str, Any] | None:
         "rem_percent": round(rem_pct, 3),
         "deep_percent": round(deep_pct, 3),
     }
+
+
+def _stage_totals_for_score(sleep: SleepSession) -> dict[str, float]:
+    timeline_totals = _stage_totals_from_timeline(sleep)
+    if timeline_totals:
+        return timeline_totals
+    return _stage_totals_from_summary(sleep.stages_summary)
+
+
+def _stage_totals_from_timeline(sleep: SleepSession) -> dict[str, float]:
+    totals = {"rem": 0.0, "deep": 0.0}
+    covered_minutes = 0.0
+    for item in sleep.stages or []:
+        stage_type = str(item.get("type") or item.get("stage") or "").lower()
+        start = _parse_stage_datetime(item.get("startTime"))
+        end = _parse_stage_datetime(item.get("endTime"))
+        if start is None or end is None:
+            continue
+        minutes = max(0.0, (end - start).total_seconds() / 60)
+        if minutes <= 0:
+            continue
+        covered_minutes += minutes
+        if "rem" in stage_type:
+            totals["rem"] += minutes
+        if "deep" in stage_type or "slow" in stage_type:
+            totals["deep"] += minutes
+    expected = sleep.minutes_in_sleep_period or sleep.minutes_asleep
+    if not expected or covered_minutes < expected * 0.65:
+        return {}
+    return totals
+
+
+def _stage_totals_from_summary(items: list[dict[str, Any]]) -> dict[str, float]:
+    totals = {"rem": 0.0, "deep": 0.0}
+    seen: set[tuple[str, str, str]] = set()
+    for item in items or []:
+        stage_type = str(item.get("type") or item.get("stage") or "").lower()
+        minutes = _to_float(item.get("minutes") or item.get("durationMinutes"))
+        if minutes is None:
+            continue
+        dedupe_key = (stage_type, str(item.get("minutes")), str(item.get("count")))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        if "rem" in stage_type:
+            totals["rem"] += minutes
+        if "deep" in stage_type or "slow" in stage_type:
+            totals["deep"] += minutes
+    return totals
+
+
+def _parse_stage_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 # MY READINESS SCORE COMPONENTS
 def _readiness_sleep_component(

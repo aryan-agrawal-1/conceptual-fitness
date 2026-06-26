@@ -237,6 +237,73 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
     assert readiness.inputs["uses_same_day_strain"] is False
 
 
+def test_sleep_stage_score_uses_timeline_not_duplicated_summary(session) -> None:
+    user = _user_with_profile(session, birth_year=1990)
+    day = date.today()
+    start = _dt(day, 2, 28)
+    stages = [
+        ("AWAKE", 35),
+        ("LIGHT", 188),
+        ("DEEP", 87),
+        ("REM", 64),
+    ]
+    cursor = start
+    timeline = []
+    for stage, minutes in stages:
+        next_cursor = cursor + timedelta(minutes=minutes)
+        timeline.append(
+            {
+                "stage": stage,
+                "startTime": cursor.isoformat().replace("+00:00", "Z"),
+                "endTime": next_cursor.isoformat().replace("+00:00", "Z"),
+            }
+        )
+        cursor = next_cursor
+    session.add(
+        SleepSession(
+            user_id=user.id,
+            start_time=start,
+            end_time=cursor,
+            civil_date=day,
+            minutes_asleep=340,
+            minutes_awake=35,
+            minutes_in_sleep_period=375,
+            stages_summary=[
+                {"type": "AWAKE", "minutes": "35", "count": "1"},
+                {"type": "LIGHT", "minutes": "188", "count": "1"},
+                {"type": "DEEP", "minutes": "87", "count": "1"},
+                {"type": "REM", "minutes": "64", "count": "1"},
+                {"type": "AWAKE", "minutes": "35", "count": "1"},
+                {"type": "LIGHT", "minutes": "188", "count": "1"},
+                {"type": "DEEP", "minutes": "87", "count": "1"},
+                {"type": "REM", "minutes": "64", "count": "1"},
+            ],
+            stages=timeline,
+            is_main_sleep=True,
+        )
+    )
+    _add_summary(session, user, day, sleep_minutes=340)
+
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    session.commit()
+
+    sleep = session.scalar(
+        select(DailyScore).where(
+            DailyScore.user_id == user.id,
+            DailyScore.score_date == day,
+            DailyScore.score_type == "sleep",
+            DailyScore.algorithm_version == SLEEP_SCORE_VERSION,
+        )
+    )
+
+    stages_component = sleep.components["stages"]
+    assert stages_component["rem_minutes"] == 64
+    assert stages_component["deep_minutes"] == 87
+    assert stages_component["rem_percent"] == 0.188
+    assert stages_component["deep_percent"] == 0.256
+    assert stages_component["score"] > 90
+
+
 def test_strain_uses_observed_resting_hr_when_daily_rhr_missing(session) -> None:
     user = _user_with_profile(session, birth_year=2005)
     day = date.today() - timedelta(days=1)

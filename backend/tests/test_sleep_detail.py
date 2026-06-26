@@ -81,12 +81,17 @@ def _sleep_score(session, user: User, day: date, *, value: float = 84.2) -> None
             confidence_phase="personalized",
             data_quality="strong",
             components={
-                "duration": {"score": 90.0},
+                "duration": {"score": 90.0, "minutes": 450, "target_minutes": 480},
                 "regularity": {
                     "score": 86.4,
                     "average_drift_minutes": 18.0,
                     "start_minute": 1380,
                     "end_minute": 430,
+                },
+                "continuity": {
+                    "score": 88.0,
+                    "sleep_efficiency": 0.938,
+                    "minutes_awake": 30,
                 },
             },
             inputs={"main_sleep_id": "sleep-id"},
@@ -140,7 +145,8 @@ def test_sleep_detail_returns_current_score_consistency_series_and_sessions(sess
     assert payload["current"]["time_in_bed_minutes"] == 480
     assert payload["current"]["sleep_efficiency"] == 0.938
     assert payload["current"]["stages_summary"] == [
-        {"type": "LIGHT", "minutes": 60, "count": 1}
+        {"type": "DEEP", "minutes": 70, "count": 0},
+        {"type": "REM", "minutes": 90, "count": 0},
     ]
     assert payload["current"]["stages"] == current.stages
     assert payload["previous"]["id"] == first.id
@@ -210,3 +216,49 @@ def test_sleep_detail_uses_longest_sleep_when_no_provider_main_sleep(session, au
     assert payload["consistency"] is None
     assert payload["series"][0]["sleep_session_id"] == longer.id
     assert {item["id"] for item in payload["sessions"]} == {shorter.id, longer.id}
+
+
+def test_sleep_detail_returns_timeframe_scoped_score_page_payload(session, auth_headers) -> None:
+    user = _user(session)
+    day_1 = date(2026, 6, 18)
+    day_2 = date(2026, 6, 19)
+    first = _sleep(session, user, day_1, minutes_asleep=400, minutes_awake=50)
+    current = _sleep(
+        session,
+        user,
+        day_2,
+        start_hour=22,
+        start_minute=45,
+        minutes_asleep=450,
+        minutes_awake=30,
+    )
+    _sleep_score(session, user, day_1, value=78.0)
+    _sleep_score(session, user, day_2, value=84.0)
+    session.commit()
+
+    response = TestClient(app).get(
+        "/sleep/detail",
+        params={"date": day_2.isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["timeframe"] == "week"
+    assert payload["start"] == "2026-06-15"
+    assert payload["end"] == "2026-06-21"
+    assert payload["summary"]["title"] == "Weekly sleep"
+    assert payload["summary"]["primary_value"] == 81.0
+    assert payload["summary"]["average_sleep_minutes"] == 425.0
+    assert payload["summary"]["target_met_nights"] == 0
+    assert payload["summary"]["sleep_debt_minutes"] == 110
+    assert payload["chart"]["kind"] == "weekly_sleep_pattern"
+    assert len(payload["chart"]["points"]) == 7
+    assert payload["chart"]["points"][4]["date"] == "2026-06-19"
+    assert payload["chart"]["points"][4]["duration_minutes"] == 450
+    assert payload["components"]["items"][0]["key"] == "duration"
+    assert payload["components"]["average_items"][0]["key"] == "duration"
+    assert payload["context"]["adjusted_sleep_need_minutes"] == 480.0
+    assert payload["context"]["sleep_debt_minutes"] == 110
+    assert payload["reasons"] == [{"code": "sleep_regularity_strong"}]
+    assert [item["id"] for item in payload["sessions"]] == [first.id, current.id]

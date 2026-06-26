@@ -198,6 +198,8 @@ private extension View {
                     StrainDetailView(client: client)
                 } else if metric == "readiness" {
                     ReadinessDetailView(client: client)
+                } else if metric == "sleep" {
+                    SleepDetailView(client: client)
                 } else {
                     PlaceholderDetailView(
                         title: metric,

@@ -644,6 +644,229 @@ struct ReadinessDataQuality: Decodable {
     }
 }
 
+struct SleepDetail: Decodable {
+    let timeframe: String
+    let start: String
+    let end: String
+    let summary: SleepSummary
+    let chart: SleepChart
+    let components: SleepComponents
+    let context: SleepContext
+    let guidance: StrainGuidance
+    let reasons: [ScoreReason]
+    let sessions: [SleepSessionSummary]
+    let dataQuality: ReadinessDataQuality
+
+    enum CodingKeys: String, CodingKey {
+        case timeframe
+        case start
+        case end
+        case summary
+        case chart
+        case components
+        case context
+        case guidance
+        case reasons
+        case sessions
+        case dataQuality = "data_quality"
+    }
+}
+
+struct SleepSummary: Decodable {
+    let title: String?
+    let primaryValue: Double?
+    let averageScore: Double?
+    let latestScore: Double?
+    let sleepBand: String?
+    let status: String?
+    let validDays: Int?
+    let periodDays: Int?
+    let averageSleepMinutes: Double?
+    let sleepMinutes: Double?
+    let targetSleepMinutes: Double?
+    let targetMetNights: Int?
+    let sleptNights: Int?
+    let sleepDebtMinutes: Double?
+    let bedtime: String?
+    let wakeTime: String?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case primaryValue = "primary_value"
+        case averageScore = "average_score"
+        case latestScore = "latest_score"
+        case sleepBand = "sleep_band"
+        case status
+        case validDays = "valid_days"
+        case periodDays = "period_days"
+        case averageSleepMinutes = "average_sleep_minutes"
+        case sleepMinutes = "sleep_minutes"
+        case targetSleepMinutes = "target_sleep_minutes"
+        case targetMetNights = "target_met_nights"
+        case sleptNights = "slept_nights"
+        case sleepDebtMinutes = "sleep_debt_minutes"
+        case bedtime
+        case wakeTime = "wake_time"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct SleepChart: Decodable {
+    let kind: String
+    let points: [SleepChartPoint]
+    let stageSummary: [SleepStageSummary]?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case points
+        case stageSummary = "stage_summary"
+    }
+}
+
+struct SleepChartPoint: Decodable, Identifiable {
+    let date: String?
+    let monthStartDate: String?
+    let stage: String?
+    let startClock: String?
+    let endClock: String?
+    let startMinute: Int?
+    let endMinute: Int?
+    let offsetStartMinutes: Double?
+    let offsetEndMinutes: Double?
+    let sleepStartMinute: Int?
+    let sleepEndMinute: Int?
+    let bedtime: String?
+    let wakeTime: String?
+    let durationMinutes: Double?
+    let targetSleepMinutes: Double?
+    let sleepDebtMinutes: Double?
+    let targetMet: Bool?
+    let score: Double?
+    let averageScore: Double?
+    let averageSleepMinutes: Double?
+    let targetMetNights: Int?
+    let scoredDays: Int?
+    let sleepBand: String?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case monthStartDate = "month_start_date"
+        case stage
+        case startClock = "start_clock"
+        case endClock = "end_clock"
+        case startMinute = "start_minute"
+        case endMinute = "end_minute"
+        case offsetStartMinutes = "offset_start_minutes"
+        case offsetEndMinutes = "offset_end_minutes"
+        case sleepStartMinute = "sleep_start_minute"
+        case sleepEndMinute = "sleep_end_minute"
+        case bedtime
+        case wakeTime = "wake_time"
+        case durationMinutes = "duration_minutes"
+        case targetSleepMinutes = "target_sleep_minutes"
+        case sleepDebtMinutes = "sleep_debt_minutes"
+        case targetMet = "target_met"
+        case score
+        case averageScore = "average_score"
+        case averageSleepMinutes = "average_sleep_minutes"
+        case targetMetNights = "target_met_nights"
+        case scoredDays = "scored_days"
+        case sleepBand = "sleep_band"
+        case dataQuality = "data_quality"
+    }
+
+    var id: String {
+        date ?? monthStartDate ?? "\(stage ?? "stage")-\(startClock ?? "")-\(endClock ?? "")"
+    }
+}
+
+struct SleepStageSummary: Decodable, Identifiable {
+    let type: String
+    let minutes: Double
+    let count: Int?
+
+    var id: String { type }
+}
+
+struct SleepComponents: Decodable {
+    let items: [SleepComponentItem]
+    let averageItems: [SleepComponentItem]
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case averageItems = "average_items"
+    }
+}
+
+struct SleepComponentItem: Decodable, Identifiable {
+    let key: String
+    let label: String
+    let score: Double
+    let weight: Double?
+    let message: String?
+    let detail: [String: JSONValue]?
+
+    var id: String { key }
+}
+
+struct SleepContext: Decodable {
+    let sleepTargetMinutes: Double?
+    let adjustedSleepNeedMinutes: Double?
+    let baseSleepNeedMinutes: Double?
+    let sleepDebtMinutes: Double?
+    let sleepDebtPeriodDays: Int?
+    let targetMetNights: Int?
+    let sleptNights: Int?
+    let strainAdjustedNights: Int?
+    let hrvBaselineRelation: String?
+    let rhrBaselineRelation: String?
+    let confidencePhase: String?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sleepTargetMinutes = "sleep_target_minutes"
+        case adjustedSleepNeedMinutes = "adjusted_sleep_need_minutes"
+        case baseSleepNeedMinutes = "base_sleep_need_minutes"
+        case sleepDebtMinutes = "sleep_debt_minutes"
+        case sleepDebtPeriodDays = "sleep_debt_period_days"
+        case targetMetNights = "target_met_nights"
+        case sleptNights = "slept_nights"
+        case strainAdjustedNights = "strain_adjusted_nights"
+        case hrvBaselineRelation = "hrv_baseline_relation"
+        case rhrBaselineRelation = "rhr_baseline_relation"
+        case confidencePhase = "confidence_phase"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct SleepSessionSummary: Decodable, Identifiable {
+    let id: String
+    let date: String?
+    let bedtime: String?
+    let wakeTime: String?
+    let durationMinutes: Double?
+    let timeInBedMinutes: Double?
+    let minutesAwake: Double?
+    let sleepEfficiency: Double?
+    let isMainSleep: Bool?
+    let stagesSummary: [SleepStageSummary]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case date
+        case bedtime
+        case wakeTime = "wake_time"
+        case durationMinutes = "duration_minutes"
+        case timeInBedMinutes = "time_in_bed_minutes"
+        case minutesAwake = "minutes_awake"
+        case sleepEfficiency = "sleep_efficiency"
+        case isMainSleep = "is_main_sleep"
+        case stagesSummary = "stages_summary"
+    }
+}
+
 struct DashboardData {
     let snapshot: DashboardSnapshot
     let metricSummaries: [String: MetricDashboardSummary]
