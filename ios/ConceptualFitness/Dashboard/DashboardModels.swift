@@ -589,9 +589,13 @@ struct ReadinessComponentItem: Decodable, Identifiable {
 }
 
 struct ReadinessContext: Decodable {
+    let sleepDebtMinutes: Double?
     let sleepDebtMinutes7d: Double?
+    let sleepDebtPeriodDays: Int?
     let hrvScore: Double?
+    let hrvBaselineRelation: String?
     let rhrScore: Double?
+    let rhrBaselineRelation: String?
     let loadRatio: Double?
     let yesterdayLoad: Double?
     let validStrainDays: Int?
@@ -601,9 +605,13 @@ struct ReadinessContext: Decodable {
     let dataQuality: String?
 
     enum CodingKeys: String, CodingKey {
+        case sleepDebtMinutes = "sleep_debt_minutes"
         case sleepDebtMinutes7d = "sleep_debt_minutes_7d"
+        case sleepDebtPeriodDays = "sleep_debt_period_days"
         case hrvScore = "hrv_score"
+        case hrvBaselineRelation = "hrv_baseline_relation"
         case rhrScore = "rhr_score"
+        case rhrBaselineRelation = "rhr_baseline_relation"
         case loadRatio = "load_ratio"
         case yesterdayLoad = "yesterday_load"
         case validStrainDays = "valid_strain_days"
@@ -611,6 +619,10 @@ struct ReadinessContext: Decodable {
         case readinessCap = "readiness_cap"
         case confidencePhase = "confidence_phase"
         case dataQuality = "data_quality"
+    }
+
+    var sleepDebtValue: Double? {
+        sleepDebtMinutes ?? sleepDebtMinutes7d
     }
 }
 

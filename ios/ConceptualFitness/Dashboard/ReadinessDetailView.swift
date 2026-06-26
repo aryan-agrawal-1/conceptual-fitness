@@ -86,22 +86,16 @@ struct ReadinessDetailView: View {
     private func loadedContent(_ detail: ReadinessDetail) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             ReadinessSummaryPanel(detail: detail)
+            ReadinessExplanationPanel()
             ReadinessChartPanel(detail: detail, timeframe: timeframe)
-            ReadinessDriverPanel(components: detail.components, timeframe: timeframe)
-            ReadinessContextPanel(context: detail.context)
+            if timeframe != .day {
+                ReadinessDriverPanel(components: detail.components)
+            }
+            ReadinessContextPanel(context: detail.context, timeframe: timeframe)
             if !detail.reasons.isEmpty {
                 ReadinessReasonsPanel(reasons: detail.reasons)
             }
-            ReadinessGuidancePanel(message: detail.guidance.message)
-            if shouldShowDataQuality(detail.dataQuality) {
-                ReadinessDataQualityPanel(dataQuality: detail.dataQuality)
-            }
         }
-    }
-
-    private func shouldShowDataQuality(_ dataQuality: ReadinessDataQuality) -> Bool {
-        guard let completeness = dataQuality.completeness else { return true }
-        return completeness < 0.8
     }
 
     @MainActor
@@ -133,18 +127,10 @@ private struct ReadinessSummaryPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(detail.summary.title ?? "Readiness")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                    Text(primaryValue)
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-
+                Text(detail.summary.title ?? "Readiness")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
                 Spacer()
-
                 if let band = detail.summary.readinessBand {
                     Text(band.displayTitle)
                         .font(.caption.weight(.bold))
@@ -155,46 +141,103 @@ private struct ReadinessSummaryPanel: View {
                 }
             }
 
-            HStack(spacing: 12) {
-                SummaryChip(title: "Trend", value: detail.summary.trend?.displayTitle ?? "--", tint: trendColor(detail.summary.trend))
-                SummaryChip(title: "Low days", value: detail.summary.lowDays.map(String.init) ?? "--", tint: .red)
-                SummaryChip(title: "High days", value: detail.summary.highDays.map(String.init) ?? "--", tint: .green)
+            HStack(spacing: 18) {
+                ReadinessProgressCircle(
+                    value: detail.summary.primaryValue,
+                    band: detail.summary.readinessBand,
+                    label: detail.timeframe == "day" ? nil : "avg"
+                )
+                .frame(width: 112, height: 112)
+
+                if detail.timeframe == "day" {
+                    VStack(spacing: 9) {
+                        SummaryMetricRow(title: "Sleep debt (7d)", value: sleepDebtText(detail.context.sleepDebtValue), tint: .indigo)
+                        SummaryMetricRow(title: "HRV", value: baselineText(detail.context.hrvBaselineRelation), tint: .teal)
+                        SummaryMetricRow(title: "RHR", value: baselineText(detail.context.rhrBaselineRelation), tint: .teal)
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    VStack(spacing: 9) {
+                        SummaryMetricRow(title: "Trend", value: detail.summary.trend?.displayTitle, tint: trendColor(detail.summary.trend))
+                        SummaryMetricRow(title: "High days", value: detail.summary.highDays.map(String.init), tint: .green)
+                        SummaryMetricRow(title: "Low days", value: detail.summary.lowDays.map(String.init), tint: .red)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                Spacer(minLength: 0)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassSurface(cornerRadius: 20)
     }
+}
 
-    private var primaryValue: String {
-        guard let value = detail.summary.primaryValue else { return "--" }
-        if detail.timeframe == "day" {
-            return value.clean
+private struct ReadinessProgressCircle: View {
+    let value: Double?
+    let band: String?
+    let label: String?
+
+    private var ratio: Double {
+        min(max((value ?? 0) / 100, 0), 1)
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.55), lineWidth: 11)
+            Circle()
+                .trim(from: 0, to: ratio)
+                .stroke(readinessColor(band ?? "").gradient, style: StrokeStyle(lineWidth: 11, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+
+            VStack(spacing: 1) {
+                Text(value?.clean ?? "--")
+                    .font(.system(size: 31, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+                if let label {
+                    Text(label)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
-        return "\(value.clean) avg"
+        .accessibilityLabel("Readiness \(value?.clean ?? "no score")")
     }
 }
 
-private struct SummaryChip: View {
+private struct SummaryMetricRow: View {
     let title: String
-    let value: String
+    let value: String?
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        HStack {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(value)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .layoutPriority(1)
+            Spacer()
+            Text(value ?? "--")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .background(.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct ReadinessExplanationPanel: View {
+    var body: some View {
+        Text("Readiness is a 0-100 snapshot of how prepared your body looks for training today. Higher scores suggest you may tolerate more stress, while lower scores suggest giving recovery more priority.")
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineSpacing(3)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassSurface(cornerRadius: 16)
     }
 }
 
@@ -253,7 +296,7 @@ private struct ComponentScoreChart: View {
                             Capsule()
                                 .fill(.white.opacity(0.5))
                             Capsule()
-                                .fill(readinessColor(for: item.score).gradient)
+                                .fill(componentColor(item.key).gradient)
                                 .frame(width: proxy.size.width * CGFloat(min(max(item.score / 100, 0), 1)))
                         }
                     }
@@ -339,9 +382,9 @@ private struct ReadinessLineChart: View {
                                 .fill(point.id == selectedPoint?.id ? readinessColor(point.readinessBand ?? "") : Color.white)
                                 .overlay {
                                     Circle()
-                                        .stroke(readinessColor(point.readinessBand ?? ""), lineWidth: point.id == selectedPoint?.id ? 3 : 2)
+                                        .stroke(readinessColor(point.readinessBand ?? ""), lineWidth: nodeStrokeWidth(for: point))
                                 }
-                                .frame(width: point.id == selectedPoint?.id ? 16 : 12, height: point.id == selectedPoint?.id ? 16 : 12)
+                                .frame(width: nodeSize(for: point), height: nodeSize(for: point))
                         }
                         .buttonStyle(.plain)
                         .position(location)
@@ -408,6 +451,20 @@ private struct ReadinessLineChart: View {
         return points.enumerated().compactMap { index, point in
             index % 5 == 0 || index == points.count - 1 ? point : nil
         }
+    }
+
+    private func nodeSize(for point: ReadinessChartPoint) -> CGFloat {
+        if timeframe == .month {
+            return point.id == selectedPoint?.id ? 9 : 6
+        }
+        return point.id == selectedPoint?.id ? 12 : 8
+    }
+
+    private func nodeStrokeWidth(for point: ReadinessChartPoint) -> CGFloat {
+        if timeframe == .month {
+            return point.id == selectedPoint?.id ? 2 : 1.25
+        }
+        return point.id == selectedPoint?.id ? 2.5 : 1.75
     }
 
     private func location(
@@ -503,48 +560,17 @@ private struct MonthlyReadinessBars: View {
 
 private struct ReadinessDriverPanel: View {
     let components: ReadinessComponents
-    let timeframe: ScoreTimeframe
 
-    private var displayedItems: [ReadinessComponentItem] {
-        timeframe == .day ? components.items : components.averageItems
-    }
+    private var displayedItems: [ReadinessComponentItem] { components.averageItems }
 
     var body: some View {
-        ReadinessSection(title: timeframe == .day ? "What Moved It" : "Average Drivers", systemImage: "slider.horizontal.3") {
+        ReadinessSection(title: "Average Drivers", systemImage: "slider.horizontal.3") {
             if displayedItems.isEmpty {
                 Text("Readiness drivers will appear when recovery data is available.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(spacing: 12) {
-                    ForEach(displayedItems) { item in
-                        HStack(spacing: 12) {
-                            Image(systemName: iconName(for: item.key))
-                                .font(.headline)
-                                .foregroundStyle(componentColor(item.key))
-                                .frame(width: 30, height: 30)
-                                .background(componentColor(item.key).opacity(0.13), in: Circle())
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.label)
-                                    .font(.subheadline.weight(.bold))
-                                if let message = item.message, timeframe == .day {
-                                    Text(message)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                }
-                            }
-
-                            Spacer()
-
-                            Text(item.score.clean)
-                                .font(.title3.weight(.bold))
-                                .monospacedDigit()
-                                .foregroundStyle(readinessColor(for: item.score))
-                        }
-                    }
-                }
+                ComponentScoreChart(items: displayedItems)
             }
         }
     }
@@ -552,24 +578,34 @@ private struct ReadinessDriverPanel: View {
 
 private struct ReadinessContextPanel: View {
     let context: ReadinessContext
+    let timeframe: ScoreTimeframe
 
     var body: some View {
         ReadinessSection(title: "Recovery Context", systemImage: "waveform.path.ecg") {
             VStack(spacing: 10) {
-                ReadinessContextRow(title: "Sleep debt", value: sleepDebtText)
-                ReadinessContextRow(title: "HRV baseline score", value: context.hrvScore?.clean)
-                ReadinessContextRow(title: "Resting HR score", value: context.rhrScore?.clean)
+                ReadinessContextRow(title: sleepDebtTitle, value: sleepDebtText(context.sleepDebtValue))
+                ReadinessContextRow(title: "HRV", value: baselineText(context.hrvBaselineRelation))
+                ReadinessContextRow(title: "Resting HR", value: baselineText(context.rhrBaselineRelation))
                 ReadinessContextRow(title: "Recent load ratio", value: context.loadRatio.map { "\($0.clean)x" })
-                ReadinessContextRow(title: "Yesterday load", value: context.yesterdayLoad?.clean)
+                if timeframe == .day {
+                    ReadinessContextRow(title: "Yesterday load", value: context.yesterdayLoad?.clean)
+                }
                 ReadinessContextRow(title: "Confidence", value: context.confidencePhase?.displayTitle)
             }
         }
     }
 
-    private var sleepDebtText: String? {
-        guard let minutes = context.sleepDebtMinutes7d else { return nil }
-        return "\(round(minutes / 60 * 10) / 10)h"
+    private var sleepDebtTitle: String {
+        switch timeframe {
+        case .day, .week:
+            return "Sleep debt (7d)"
+        case .month:
+            return "Sleep debt (month)"
+        case .year:
+            return "Sleep debt (year)"
+        }
     }
+
 }
 
 private struct ReadinessReasonsPanel: View {
@@ -584,7 +620,7 @@ private struct ReadinessReasonsPanel: View {
                             .fill(reason.direction == "negative" ? Color.orange : Color.green)
                             .frame(width: 8, height: 8)
                             .padding(.top, 6)
-                        Text(reason.message ?? reason.code?.displayTitle ?? "Readiness changed.")
+                        Text(reasonMessage(reason))
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -593,42 +629,10 @@ private struct ReadinessReasonsPanel: View {
             }
         }
     }
-}
 
-private struct ReadinessGuidancePanel: View {
-    let message: String?
-
-    var body: some View {
-        Text(message ?? "Use readiness with recent strain and how you feel before choosing the day.")
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.secondary)
-            .lineSpacing(3)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 16)
-    }
-}
-
-private struct ReadinessDataQualityPanel: View {
-    let dataQuality: ReadinessDataQuality
-
-    var body: some View {
-        ReadinessSection(title: "Data Quality", systemImage: "checkmark.seal.fill") {
-            VStack(spacing: 10) {
-                ReadinessContextRow(title: "Scored days", value: scoredDaysText)
-                ReadinessContextRow(title: "Completeness", value: completenessText)
-            }
-        }
-    }
-
-    private var scoredDaysText: String? {
-        guard let scored = dataQuality.scoredDays, let expected = dataQuality.expectedDays else { return nil }
-        return "\(scored) / \(expected)"
-    }
-
-    private var completenessText: String? {
-        guard let completeness = dataQuality.completeness else { return nil }
-        return "\(Int((completeness * 100).rounded()))%"
+    private func reasonMessage(_ reason: ScoreReason) -> String {
+        let fallback = reason.code?.displayTitle ?? "Readiness changed."
+        return (reason.message ?? fallback).normalizedReasonText
     }
 }
 
@@ -658,10 +662,14 @@ private struct ReadinessContextRow: View {
             Text(title)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .layoutPriority(1)
             Spacer()
             Text(value ?? "--")
                 .font(.subheadline.weight(.bold))
                 .multilineTextAlignment(.trailing)
+                .lineLimit(1)
         }
     }
 }
@@ -734,6 +742,26 @@ private func iconName(for key: String) -> String {
     case "illness_anomaly_context": return "cross.case.fill"
     case "confidence": return "checkmark.seal.fill"
     default: return "circle.fill"
+    }
+}
+
+private func sleepDebtText(_ minutes: Double?) -> String? {
+    guard let minutes else { return nil }
+    return "\(round(minutes / 60 * 10) / 10)h"
+}
+
+private func baselineText(_ relation: String?) -> String? {
+    switch relation {
+    case "above_baseline": return "Above baseline"
+    case "below_baseline": return "Below baseline"
+    case "at_baseline": return "At baseline"
+    default: return nil
+    }
+}
+
+private extension String {
+    var normalizedReasonText: String {
+        replacingOccurrences(of: "_", with: " ")
     }
 }
 

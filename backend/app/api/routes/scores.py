@@ -12,7 +12,14 @@ from app.api.deps import CurrentUser, DbSession
 from app.api.routes.metrics import _workout_summary_payload
 from app.models import DailyScore, StrainTarget, Workout
 from app.services.health_dates import get_or_create_profile, local_date_for_profile, local_week_start
-from app.services.scores import READINESS_SCORE_VERSION, SCORE_VERSIONS, STRAIN_LOAD_VERSION, rebuild_derived_scores
+from app.services.scores import (
+    READINESS_SCORE_VERSION,
+    SCORE_VERSIONS,
+    STRAIN_LOAD_VERSION,
+    _adjusted_sleep_need_minutes,
+    _main_sleep,
+    rebuild_derived_scores,
+)
 
 
 router = APIRouter(tags=["scores"])
@@ -167,7 +174,7 @@ def readiness_detail(
         "summary": summary,
         "chart": _readiness_chart(timeframe, scores, start, end),
         "components": _readiness_components(scores),
-        "context": _readiness_context(scores),
+        "context": _readiness_context(session, user.id, profile, timeframe, scores, start, end),
         "guidance": _readiness_guidance(timeframe, summary, scores),
         "reasons": _readiness_reasons_payload(scores),
         "data_quality": _readiness_data_quality(scores, start, end),
@@ -633,14 +640,15 @@ def _readiness_detail_summary(
     average_score = round(mean(values), 1) if values else None
     low_days = sum(1 for value in values if value < 60)
     high_days = sum(1 for value in values if value >= 80)
+    trend = _readiness_period_trend(timeframe, valid_scores, values)
     summary: dict[str, object] = {
         "title": "Readiness",
         "primary_value": latest.value if timeframe == "day" and latest else average_score,
         "average_score": average_score,
         "latest_score": latest.value if latest else None,
         "status": latest.status.value if latest else "missing_data",
-        "readiness_band": _readiness_band(latest.value if latest else average_score),
-        "trend": _readiness_trend(values),
+        "readiness_band": _readiness_band((latest.value if latest else None) or average_score),
+        "trend": trend,
         "valid_days": len(valid_scores),
         "period_days": (end - start).days + 1,
         "low_days": low_days,
@@ -712,7 +720,7 @@ def _readiness_daily_point(day: date, score: DailyScore | None) -> dict[str, obj
 
 def _readiness_components(scores: list[DailyScore]) -> dict[str, object]:
     valid_scores = [score for score in scores if score.value is not None]
-    latest = _latest_score(scores)
+    latest = _latest_scored_score(scores) or _latest_score(scores)
     latest_items = _readiness_component_items(latest)
     averages: dict[str, list[float]] = defaultdict(list)
     for score in valid_scores:
@@ -812,25 +820,130 @@ def _readiness_component_detail(key: str, component: dict[str, Any]) -> dict[str
     return {}
 
 
-def _readiness_context(scores: list[DailyScore]) -> dict[str, object]:
-    latest = _latest_score(scores)
+def _readiness_context(
+    session: DbSession,
+    user_id: str,
+    profile: Any,
+    timeframe: str,
+    scores: list[DailyScore],
+    start: date,
+    end: date,
+) -> dict[str, object]:
+    valid_scores = [score for score in scores if score.value is not None]
+    latest = _latest_scored_score(scores) or _latest_score(scores)
     components = latest.components if latest and latest.components else {}
     sleep = components.get("sleep_adequacy_debt") if isinstance(components.get("sleep_adequacy_debt"), dict) else {}
-    autonomic = components.get("autonomic_recovery") if isinstance(components.get("autonomic_recovery"), dict) else {}
-    load_fit = components.get("recent_load_fit") if isinstance(components.get("recent_load_fit"), dict) else {}
     anomaly = components.get("illness_anomaly_context") if isinstance(components.get("illness_anomaly_context"), dict) else {}
+    hrv = _average_readiness_metric_context(valid_scores, "hrv", higher_is_better=True)
+    rhr = _average_readiness_metric_context(valid_scores, "rhr", higher_is_better=False)
+    load_ratio = _average_readiness_component_value(valid_scores, "recent_load_fit", "load_ratio")
+    prior_day_load = _average_readiness_component_value(valid_scores, "recent_load_fit", "yesterday_load")
+    sleep_debt = (
+        sleep.get("sleep_debt_minutes_7d")
+        if timeframe == "day" and isinstance(sleep, dict)
+        else _readiness_period_sleep_debt_minutes(session, user_id, profile, start, end)
+    )
+    sleep_debt_days = 7 if timeframe == "day" else (end - start).days + 1
     return {
-        "sleep_debt_minutes_7d": sleep.get("sleep_debt_minutes_7d") if isinstance(sleep, dict) else None,
-        "hrv_score": _nested_score(autonomic, "hrv"),
-        "rhr_score": _nested_score(autonomic, "rhr"),
-        "load_ratio": load_fit.get("load_ratio") if isinstance(load_fit, dict) else None,
-        "yesterday_load": load_fit.get("yesterday_load") if isinstance(load_fit, dict) else None,
-        "valid_strain_days": load_fit.get("valid_strain_days") if isinstance(load_fit, dict) else None,
-        "anomalies": anomaly.get("anomalies") if isinstance(anomaly, dict) else [],
+        "sleep_debt_minutes": sleep_debt,
+        "sleep_debt_minutes_7d": sleep_debt,
+        "sleep_debt_period_days": sleep_debt_days,
+        "hrv_score": hrv["score"],
+        "hrv_baseline_relation": hrv["baseline_relation"],
+        "rhr_score": rhr["score"],
+        "rhr_baseline_relation": rhr["baseline_relation"],
+        "load_ratio": load_ratio,
+        "yesterday_load": prior_day_load,
+        "valid_strain_days": _max_readiness_component_value(valid_scores, "recent_load_fit", "valid_strain_days"),
+        "anomalies": (anomaly.get("anomalies") if isinstance(anomaly, dict) else []) or [],
         "readiness_cap": anomaly.get("readiness_cap") if isinstance(anomaly, dict) else None,
         "confidence_phase": latest.confidence_phase if latest else None,
         "data_quality": latest.data_quality if latest else "missing",
     }
+
+
+def _readiness_period_sleep_debt_minutes(
+    session: DbSession,
+    user_id: str,
+    profile: Any,
+    start: date,
+    end: date,
+) -> int:
+    debt = 0
+    day = start
+    while day <= end:
+        sleep = _main_sleep(session, user_id, day)
+        if sleep is not None and sleep.minutes_asleep is not None:
+            target = _adjusted_sleep_need_minutes(session, user_id, profile, day)
+            debt += max(0, target - sleep.minutes_asleep)
+        day += timedelta(days=1)
+    return debt
+
+
+def _average_readiness_metric_context(
+    scores: list[DailyScore],
+    metric: str,
+    *,
+    higher_is_better: bool,
+) -> dict[str, object]:
+    component_scores: list[float] = []
+    values: list[float] = []
+    baselines: list[float] = []
+    for score in scores:
+        autonomic = _readiness_component(score, "autonomic_recovery")
+        nested = autonomic.get(metric) if isinstance(autonomic.get(metric), dict) else None
+        if not isinstance(nested, dict):
+            continue
+        component_score = nested.get("score")
+        if isinstance(component_score, int | float):
+            component_scores.append(float(component_score))
+        value = nested.get("value")
+        baseline = nested.get("baseline")
+        if isinstance(value, int | float) and isinstance(baseline, int | float):
+            values.append(float(value))
+            baselines.append(float(baseline))
+    average_value = mean(values) if values else None
+    average_baseline = mean(baselines) if baselines else None
+    return {
+        "score": round(mean(component_scores), 1) if component_scores else None,
+        "baseline_relation": _baseline_relation_from_values(
+            average_value,
+            average_baseline,
+            higher_is_better=higher_is_better,
+        ),
+    }
+
+
+def _average_readiness_component_value(
+    scores: list[DailyScore],
+    component_key: str,
+    value_key: str,
+) -> float | None:
+    values = [
+        float(value)
+        for score in scores
+        if isinstance((value := _readiness_component(score, component_key).get(value_key)), int | float)
+    ]
+    return round(mean(values), 3) if values else None
+
+
+def _max_readiness_component_value(
+    scores: list[DailyScore],
+    component_key: str,
+    value_key: str,
+) -> int | None:
+    values = [
+        int(value)
+        for score in scores
+        if isinstance((value := _readiness_component(score, component_key).get(value_key)), int | float)
+    ]
+    return max(values) if values else None
+
+
+def _readiness_component(score: DailyScore, key: str) -> dict[str, Any]:
+    components = score.components or {}
+    component = components.get(key)
+    return component if isinstance(component, dict) else {}
 
 
 def _nested_score(container: Any, key: str) -> object | None:
@@ -840,6 +953,34 @@ def _nested_score(container: Any, key: str) -> object | None:
     if not isinstance(value, dict):
         return None
     return value.get("score")
+
+
+def _baseline_relation_from_values(
+    current: float | None,
+    baseline: float | None,
+    *,
+    higher_is_better: bool,
+) -> str | None:
+    if current is None or baseline is None:
+        return None
+    if abs(current - baseline) < 0.05:
+        return "at_baseline"
+    if higher_is_better:
+        return "above_baseline" if current > baseline else "below_baseline"
+    return "below_baseline" if current < baseline else "above_baseline"
+
+
+def _baseline_relation(container: Any, key: str, *, higher_is_better: bool) -> str | None:
+    if not isinstance(container, dict):
+        return None
+    value = container.get(key)
+    if not isinstance(value, dict):
+        return None
+    current = value.get("value")
+    baseline = value.get("baseline")
+    if not isinstance(current, int | float) or not isinstance(baseline, int | float):
+        return None
+    return _baseline_relation_from_values(float(current), float(baseline), higher_is_better=higher_is_better)
 
 
 def _readiness_guidance(
@@ -896,6 +1037,10 @@ def _latest_score(scores: list[DailyScore]) -> DailyScore | None:
     return scores[-1] if scores else None
 
 
+def _latest_scored_score(scores: list[DailyScore]) -> DailyScore | None:
+    return next((score for score in reversed(scores) if score.value is not None), None)
+
+
 def _readiness_band(value: float | None) -> str | None:
     if value is None:
         return None
@@ -917,6 +1062,24 @@ def _readiness_trend(values: list[float]) -> str | None:
     if delta <= -4:
         return "declining"
     return "steady"
+
+
+def _readiness_period_trend(timeframe: str, scores: list[DailyScore], values: list[float]) -> str | None:
+    if timeframe == "day":
+        return None
+    if timeframe != "year":
+        return _readiness_trend(values)
+    scores_by_month: dict[date, list[DailyScore]] = defaultdict(list)
+    for score in scores:
+        scores_by_month[date(score.score_date.year, score.score_date.month, 1)].append(score)
+    monthly_values = [
+        mean([float(score.value) for score in month_scores if score.value is not None])
+        for _, month_scores in sorted(scores_by_month.items())
+        if any(score.value is not None for score in month_scores)
+    ]
+    if len(monthly_values) < 2:
+        return None
+    return _readiness_trend(monthly_values)
 
 
 _READINESS_COMPONENT_LABELS = {

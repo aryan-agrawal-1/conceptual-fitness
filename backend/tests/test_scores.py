@@ -11,6 +11,7 @@ from app.models import (
     DailySummary,
     GoogleAccount,
     MetricSample,
+    ScoreStatus,
     SleepSession,
     SyncCursor,
     SyncStatus,
@@ -484,17 +485,107 @@ def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_he
         "confidence",
     }
     assert payload["context"]["sleep_debt_minutes_7d"] is not None
+    assert payload["context"]["hrv_baseline_relation"] in {
+        "above_baseline",
+        "below_baseline",
+        "at_baseline",
+    }
+    assert payload["context"]["rhr_baseline_relation"] in {
+        "above_baseline",
+        "below_baseline",
+        "at_baseline",
+    }
     assert payload["context"]["load_ratio"] is not None
     assert payload["guidance"]["message"]
     assert payload["data_quality"]["expected_days"] == 7
     assert payload["data_quality"]["scored_days"] > 0
 
+    unscored_response = TestClient(app).get(
+        "/readiness/detail",
+        params={"date": (anchor + timedelta(days=1)).isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+    assert unscored_response.status_code == 200
+    unscored_payload = unscored_response.json()
+    assert unscored_payload["context"]["sleep_debt_minutes_7d"] is not None
+    assert unscored_payload["context"]["hrv_baseline_relation"] in {
+        "above_baseline",
+        "below_baseline",
+        "at_baseline",
+    }
+
+
+def test_readiness_context_uses_selected_period_aggregates(session, auth_headers) -> None:
+    user = _user_with_profile(session, birth_year=1990)
+    week_start = date(2026, 6, 15)
+    for offset in range(7):
+        day = week_start + timedelta(days=offset)
+        _add_sleep(session, user, day, minutes_asleep=450)
+        session.add(
+            DailyScore(
+                user_id=user.id,
+                score_date=day,
+                score_type="readiness",
+                algorithm_version=READINESS_SCORE_VERSION,
+                value=70 + offset,
+                value_unit="score_0_100",
+                status=ScoreStatus.scored,
+                confidence_phase="strong",
+                data_quality="strong",
+                components={
+                    "sleep_adequacy_debt": {
+                        "score": 80,
+                        "sleep_debt_minutes_7d": 999,
+                    },
+                    "autonomic_recovery": {
+                        "score": 80,
+                        "hrv": {
+                            "score": 70,
+                            "value": 40 + offset,
+                            "baseline": 50,
+                        },
+                        "rhr": {
+                            "score": 85,
+                            "value": 55,
+                            "baseline": 60,
+                        },
+                    },
+                    "recent_load_fit": {
+                        "score": 90,
+                        "load_ratio": 1.0 + offset * 0.1,
+                        "yesterday_load": 10 + offset * 2,
+                        "valid_strain_days": 14 + offset,
+                    },
+                },
+                inputs={},
+                reasons=[],
+            )
+        )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/readiness/detail",
+        params={"date": (week_start + timedelta(days=6)).isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    context = response.json()["context"]
+    assert context["sleep_debt_minutes"] == 210
+    assert context["sleep_debt_minutes_7d"] == 210
+    assert context["sleep_debt_period_days"] == 7
+    assert context["hrv_baseline_relation"] == "below_baseline"
+    assert context["rhr_baseline_relation"] == "below_baseline"
+    assert context["load_ratio"] == 1.3
+    assert context["yesterday_load"] == 16
+    assert context["valid_strain_days"] == 20
+
 
 def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers) -> None:
     user = _user_with_profile(session, birth_year=1990)
     anchor = date.today()
-    start = date(anchor.year, 1, 1)
-    for offset in range(0, 75):
+    start = anchor.replace(day=1)
+    for offset in range(0, 16):
         day = start + timedelta(days=offset)
         if day > anchor:
             break
@@ -503,7 +594,7 @@ def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers)
         if offset % 9 == 0:
             _add_hr_workout(session, user, day, bpm=148 + (offset % 8))
 
-    rebuild_derived_scores(session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=74)))
+    rebuild_derived_scores(session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=15)))
     session.commit()
 
     response = TestClient(app).get(
@@ -515,6 +606,7 @@ def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers)
     assert response.status_code == 200
     payload = response.json()
     assert payload["chart"]["kind"] == "monthly_average_scores"
+    assert payload["summary"]["trend"] is None
     assert len(payload["chart"]["points"]) == 12
-    assert payload["chart"]["points"][0]["month_start_date"] == start.isoformat()
-    assert payload["chart"]["points"][0]["average_score"] is not None
+    scored_month = next(point for point in payload["chart"]["points"] if point["average_score"] is not None)
+    assert scored_month["month_start_date"] == start.isoformat()
