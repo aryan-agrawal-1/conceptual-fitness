@@ -238,6 +238,8 @@ struct DashboardView: View {
                 return data.dateContext == .yesterday ? 358 : 330
             }
             return data.dateContext == .yesterday ? 318 : 290
+        case .loaded(let data) where data.dateContext == .yesterday:
+            return 580
         default:
             return 560
         }
