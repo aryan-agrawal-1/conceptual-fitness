@@ -373,7 +373,9 @@ struct MetricCard: View {
         .padding(14)
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .glassSurface(cornerRadius: 20, interactive: true)
+        .contentShape(Rectangle())
     }
 }
 

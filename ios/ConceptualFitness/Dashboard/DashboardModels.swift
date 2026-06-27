@@ -385,6 +385,176 @@ struct MetricPoint: Decodable {
     let date: String?
 }
 
+struct HRVDetail: Decodable {
+    let metric: String
+    let unit: String
+    let timeframe: String?
+    let range: MetricDetailRange
+    let current: MetricPoint?
+    let previous: MetricPoint?
+    let trend: MetricTrend
+    let baseline: MetricBaseline?
+    let summary: HRVSummary
+    let chart: HRVChart
+    let distribution: HRVDistribution
+    let coverage: MetricCoverage
+    let series: [HRVChartPoint]
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case metric
+        case unit
+        case timeframe
+        case range
+        case current
+        case previous
+        case trend
+        case baseline
+        case summary
+        case chart
+        case distribution
+        case coverage
+        case series
+        case dataQuality = "data_quality"
+    }
+}
+
+struct MetricDetailRange: Decodable {
+    let start: String
+    let end: String
+}
+
+struct MetricTrend: Decodable {
+    let direction: String?
+    let absoluteChange: Double?
+    let percentChange: Double?
+    let windowAverage: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case direction
+        case absoluteChange = "absolute_change"
+        case percentChange = "percent_change"
+        case windowAverage = "window_average"
+    }
+}
+
+struct MetricBaseline: Decodable {
+    let value: Double?
+    let lowerBound: Double?
+    let upperBound: Double?
+    let comparison: String?
+    let delta: Double?
+    let confidencePhase: String?
+
+    enum CodingKeys: String, CodingKey {
+        case value
+        case lowerBound = "lower_bound"
+        case upperBound = "upper_bound"
+        case comparison
+        case delta
+        case confidencePhase = "confidence_phase"
+    }
+}
+
+struct HRVSummary: Decodable {
+    let title: String?
+    let primaryValue: Double?
+    let latestValue: Double?
+    let previousPeriodValue: Double?
+    let baselineValue: Double?
+    let baselineLowerBound: Double?
+    let baselineUpperBound: Double?
+    let baselineRelation: String?
+    let baselineDelta: Double?
+    let confidencePhase: String?
+    let trend: String?
+    let absoluteChange: Double?
+    let validDays: Int?
+    let missingDays: Int?
+    let periodDays: Int?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case primaryValue = "primary_value"
+        case latestValue = "latest_value"
+        case previousPeriodValue = "previous_period_value"
+        case baselineValue = "baseline_value"
+        case baselineLowerBound = "baseline_lower_bound"
+        case baselineUpperBound = "baseline_upper_bound"
+        case baselineRelation = "baseline_relation"
+        case baselineDelta = "baseline_delta"
+        case confidencePhase = "confidence_phase"
+        case trend
+        case absoluteChange = "absolute_change"
+        case validDays = "valid_days"
+        case missingDays = "missing_days"
+        case periodDays = "period_days"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct HRVChart: Decodable {
+    let kind: String
+    let points: [HRVChartPoint]
+}
+
+struct HRVChartPoint: Decodable, Identifiable {
+    let date: String?
+    let value: Double?
+    let unit: String?
+    let dataQuality: String?
+    let baselineValue: Double?
+    let baselineLowerBound: Double?
+    let baselineUpperBound: Double?
+    let comparison: String?
+
+    var id: String { date ?? "hrv-\(value?.clean ?? "missing")" }
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case value
+        case unit
+        case dataQuality = "data_quality"
+        case baselineValue = "baseline_value"
+        case baselineLowerBound = "baseline_lower_bound"
+        case baselineUpperBound = "baseline_upper_bound"
+        case comparison
+    }
+}
+
+struct HRVDistribution: Decodable {
+    let withinCount: Int?
+    let belowCount: Int?
+    let aboveCount: Int?
+    let missingCount: Int?
+    let unknownCount: Int?
+    let longestBelowStreak: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case withinCount = "within_count"
+        case belowCount = "below_count"
+        case aboveCount = "above_count"
+        case missingCount = "missing_count"
+        case unknownCount = "unknown_count"
+        case longestBelowStreak = "longest_below_streak"
+    }
+}
+
+struct MetricCoverage: Decodable {
+    let expectedDays: Int?
+    let validDays: Int?
+    let completeness: Double?
+    let qualityCounts: [String: Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case expectedDays = "expected_days"
+        case validDays = "valid_days"
+        case completeness
+        case qualityCounts = "quality_counts"
+    }
+}
+
 struct StrainDetail: Decodable {
     let timeframe: String
     let start: String

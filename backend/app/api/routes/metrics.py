@@ -136,25 +136,70 @@ def metric_detail(
     session: DbSession,
     user: CurrentUser,
     metric: str,
-    start: date = Query(...),
-    end: date = Query(...),
+    start: date | None = Query(default=None),
+    end: date | None = Query(default=None),
+    selected_date: date | None = Query(default=None, alias="date"),
+    timeframe: str | None = Query(default=None, pattern="^(day|week|month|year)$"),
 ) -> dict[str, object]:
     config = METRIC_DETAIL_CONFIGS.get(metric)
     if config is None:
         raise HTTPException(status_code=404, detail="Unknown metric")
+    if selected_date is not None or timeframe is not None or start is None or end is None:
+        profile = get_or_create_profile(session, user.id)
+        anchor = selected_date or local_date_for_profile(profile)
+        selected_timeframe = timeframe or "week"
+        start, end = _metric_detail_window(anchor, selected_timeframe)
+    else:
+        selected_timeframe = None
+
     if end < start:
         raise HTTPException(status_code=422, detail="end must be on or after start")
 
-    summaries = _daily_summaries_by_date(session, user.id, start, end)
-    points = _daily_metric_points(session, user.id, config, start, end, summaries)
-    baselines = _baselines_by_date(session, user.id, config, start, end)
+    return _metric_detail_payload(
+        session,
+        user_id=user.id,
+        metric=metric,
+        config=config,
+        start=start,
+        end=end,
+        timeframe=selected_timeframe,
+    )
+
+
+def _metric_detail_payload(
+    session: DbSession,
+    *,
+    user_id: str,
+    metric: str,
+    config: MetricDetailConfig,
+    start: date,
+    end: date,
+    timeframe: str | None = None,
+) -> dict[str, object]:
+    summaries = _daily_summaries_by_date(session, user_id, start, end)
+    points = _daily_metric_points(session, user_id, config, start, end, summaries)
+    baselines = _baselines_by_date(session, user_id, config, start, end)
+    previous_points: list[dict[str, object]] = []
+    if timeframe is not None:
+        previous_start, previous_end = _previous_metric_detail_window(start, end, timeframe)
+        previous_summaries = _daily_summaries_by_date(session, user_id, previous_start, previous_end)
+        previous_points = _daily_metric_points(
+            session,
+            user_id,
+            config,
+            previous_start,
+            previous_end,
+            previous_summaries,
+        )
     populated = [point for point in points if point["value"] is not None]
     current = populated[-1] if populated else None
     previous = populated[-2] if len(populated) >= 2 else None
+    series = [_series_point_payload(point, baselines) for point in points]
 
     return {
         "metric": metric,
         "unit": config.unit,
+        "timeframe": timeframe,
         "range": {"start": start, "end": end},
         "current": _compact_point(current),
         "previous": _compact_point(previous),
@@ -162,7 +207,208 @@ def metric_detail(
         "baseline": _baseline_payload(current, _baseline_for_point(current, baselines)),
         "data_quality": current["data_quality"] if current else "missing",
         "higher_is_better": config.higher_is_better,
-        "series": [_series_point_payload(point, baselines) for point in points],
+        "summary": _metric_detail_summary(config, timeframe, points, previous_points, baselines, start, end),
+        "chart": {
+            "kind": _metric_chart_kind(config, timeframe),
+            "points": series,
+        },
+        "distribution": _metric_detail_distribution(series),
+        "coverage": _metric_detail_coverage(points, start, end),
+        "series": series,
+    }
+
+
+def _metric_detail_window(anchor: date, timeframe: str) -> tuple[date, date]:
+    if timeframe == "day":
+        return anchor, anchor
+    if timeframe == "week":
+        start = local_week_start(anchor)
+        return start, start + timedelta(days=6)
+    if timeframe == "month":
+        start = anchor.replace(day=1)
+        if anchor.month == 12:
+            next_month = date(anchor.year + 1, 1, 1)
+        else:
+            next_month = date(anchor.year, anchor.month + 1, 1)
+        return start, next_month - timedelta(days=1)
+    start = date(anchor.year, 1, 1)
+    return start, date(anchor.year, 12, 31)
+
+
+def _previous_metric_detail_window(start: date, end: date, timeframe: str) -> tuple[date, date]:
+    if timeframe == "day":
+        previous = start - timedelta(days=1)
+        return previous, previous
+    if timeframe == "week":
+        previous_start = start - timedelta(days=7)
+        return previous_start, previous_start + timedelta(days=6)
+    if timeframe == "month":
+        previous_end = start - timedelta(days=1)
+        previous_start = previous_end.replace(day=1)
+        return previous_start, previous_end
+    previous_start = date(start.year - 1, 1, 1)
+    return previous_start, date(start.year - 1, 12, 31)
+
+
+def _metric_detail_summary(
+    config: MetricDetailConfig,
+    timeframe: str | None,
+    points: list[dict[str, object]],
+    previous_points: list[dict[str, object]],
+    baselines: dict[date, DailyBaseline],
+    start: date,
+    end: date,
+) -> dict[str, object]:
+    populated = [point for point in points if point["value"] is not None]
+    values = [float(point["value"]) for point in populated if point["value"] is not None]
+    latest = populated[-1] if populated else None
+    latest_value = float(latest["value"]) if latest and latest["value"] is not None else None
+    current_average = mean(values) if values else None
+    previous_values = [float(point["value"]) for point in previous_points if point["value"] is not None]
+    previous_average = mean(previous_values) if previous_values else None
+    absolute_change = (
+        _rounded(current_average - previous_average)
+        if current_average is not None and previous_average is not None
+        else None
+    )
+    baseline = _period_baseline_payload(populated, baselines)
+    period_days = (end - start).days + 1
+
+    return {
+        "title": _metric_detail_title(config, timeframe),
+        "primary_value": _rounded(current_average),
+        "latest_value": _rounded(latest_value),
+        "previous_period_value": _rounded(previous_average),
+        "baseline_value": baseline["value"],
+        "baseline_lower_bound": baseline["lower_bound"],
+        "baseline_upper_bound": baseline["upper_bound"],
+        "baseline_relation": baseline["comparison"],
+        "baseline_delta": baseline["delta"],
+        "confidence_phase": baseline["confidence_phase"],
+        "trend": _trend_direction(absolute_change),
+        "absolute_change": absolute_change,
+        "valid_days": len(values),
+        "missing_days": period_days - len(values),
+        "period_days": period_days,
+        "data_quality": latest["data_quality"] if latest else "missing",
+    }
+
+
+def _metric_detail_title(config: MetricDetailConfig, timeframe: str | None) -> str:
+    if config.metric == "heart_rate_variability":
+        if timeframe == "year":
+            return "Yearly HRV"
+        if timeframe == "month":
+            return "Monthly HRV"
+        if timeframe == "week":
+            return "Weekly HRV"
+        if timeframe == "day":
+            return "Daily HRV"
+        return "HRV"
+    return config.metric.replace("_", " ").title()
+
+
+def _period_baseline_payload(
+    points: list[dict[str, object]],
+    baselines: dict[date, DailyBaseline],
+) -> dict[str, object]:
+    entries: list[DailyBaseline] = []
+    values: list[float] = []
+    for point in points:
+        point_date = point["date"]
+        if not isinstance(point_date, date) or point["value"] is None:
+            continue
+        baseline = baselines.get(point_date)
+        if baseline is None:
+            continue
+        entries.append(baseline)
+        values.append(float(point["value"]))
+
+    if not entries or not values:
+        return {
+            "value": None,
+            "lower_bound": None,
+            "upper_bound": None,
+            "comparison": "unknown",
+            "delta": None,
+            "confidence_phase": None,
+        }
+
+    baseline_value = _rounded_mean([item.median_value for item in entries if item.median_value is not None])
+    lower_bound = _rounded_mean([item.lower_bound for item in entries if item.lower_bound is not None])
+    upper_bound = _rounded_mean([item.upper_bound for item in entries if item.upper_bound is not None])
+    average_value = mean(values)
+    return {
+        "value": baseline_value,
+        "lower_bound": lower_bound,
+        "upper_bound": upper_bound,
+        "comparison": _baseline_comparison_for_bounds(average_value, lower_bound, upper_bound),
+        "delta": _rounded(average_value - baseline_value) if baseline_value is not None else None,
+        "confidence_phase": entries[-1].confidence_phase,
+    }
+
+
+def _baseline_comparison_for_bounds(
+    value: float | None,
+    lower_bound: float | None,
+    upper_bound: float | None,
+) -> str:
+    if value is None or lower_bound is None or upper_bound is None:
+        return "unknown"
+    if value < lower_bound:
+        return "below"
+    if value > upper_bound:
+        return "above"
+    return "normal"
+
+
+def _rounded_mean(values: list[float]) -> float | None:
+    return _rounded(mean(values)) if values else None
+
+
+def _metric_chart_kind(config: MetricDetailConfig, timeframe: str | None) -> str:
+    if config.metric == "heart_rate_variability":
+        return "daily_hrv_baseline" if timeframe != "year" else "yearly_hrv_baseline"
+    return "daily_metric_baseline"
+
+
+def _metric_detail_distribution(series: list[dict[str, object]]) -> dict[str, object]:
+    counts = Counter(point.get("comparison") for point in series)
+    return {
+        "within_count": counts.get("normal", 0),
+        "below_count": counts.get("below", 0),
+        "above_count": counts.get("above", 0),
+        "missing_count": len([point for point in series if point.get("value") is None]),
+        "unknown_count": counts.get("unknown", 0),
+        "longest_below_streak": _longest_comparison_streak(series, "below"),
+    }
+
+
+def _longest_comparison_streak(series: list[dict[str, object]], comparison: str) -> int:
+    longest = 0
+    current = 0
+    for point in series:
+        if point.get("comparison") == comparison:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def _metric_detail_coverage(
+    points: list[dict[str, object]],
+    start: date,
+    end: date,
+) -> dict[str, object]:
+    expected_days = (end - start).days + 1
+    valid_days = len([point for point in points if point["value"] is not None])
+    quality_counts = Counter(str(point["data_quality"]) for point in points if point.get("data_quality"))
+    return {
+        "expected_days": expected_days,
+        "valid_days": valid_days,
+        "completeness": round(valid_days / expected_days, 3) if expected_days else None,
+        "quality_counts": dict(quality_counts),
     }
 
 
@@ -1626,11 +1872,15 @@ def _series_point_payload(
     baselines: dict[date, DailyBaseline],
 ) -> dict[str, object]:
     baseline = _baseline_for_point(point, baselines)
-    return {
+    payload = {
         **point,
         "baseline_value": _series_baseline_value(baseline),
         "comparison": _series_baseline_comparison(point, baseline),
     }
+    if baseline is not None:
+        payload["baseline_lower_bound"] = _rounded(baseline.lower_bound)
+        payload["baseline_upper_bound"] = _rounded(baseline.upper_bound)
+    return payload
 
 
 def _series_baseline_comparison(

@@ -87,6 +87,101 @@ def test_metric_detail_returns_daily_points_trend_and_baseline(session, auth_hea
     assert payload["higher_is_better"] is True
     assert [point["value"] for point in payload["series"]] == [50.0, 54.0, 58.0]
     assert {point["comparison"] for point in payload["series"]} == {"normal"}
+    assert payload["chart"]["points"][0]["baseline_lower_bound"] == 46.0
+    assert payload["summary"]["primary_value"] == 54.0
+
+
+def test_hrv_metric_detail_accepts_timeframe_selector_payload(session, auth_headers) -> None:
+    user = _user(session)
+    week_start = date(2026, 6, 15)
+    previous_week_start = week_start - timedelta(days=7)
+    for offset in range(7):
+        day = previous_week_start + timedelta(days=offset)
+        session.add(
+            DailySummary(
+                user_id=user.id,
+                summary_date=day,
+                heart_rate_variability=45.0,
+                data_quality="strong",
+            )
+        )
+    values = [50.0, 44.0, 52.0, 55.0, 61.0, None, 54.0]
+    for offset, hrv in enumerate(values):
+        day = week_start + timedelta(days=offset)
+        session.add(
+            DailySummary(
+                user_id=user.id,
+                summary_date=day,
+                heart_rate_variability=hrv,
+                data_quality="strong" if hrv is not None else "missing",
+            )
+        )
+        session.add(
+            DailyBaseline(
+                user_id=user.id,
+                baseline_date=day,
+                metric="heart_rate_variability",
+                algorithm_version=BASELINE_VERSION,
+                window_days=28,
+                valid_day_count=20,
+                mean_value=52.0,
+                median_value=52.0,
+                spread_value=3.0,
+                lower_bound=46.0,
+                upper_bound=58.0,
+                confidence_phase="personalized",
+            )
+        )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/heart_rate_variability/detail",
+        params={"date": "2026-06-18", "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["timeframe"] == "week"
+    assert payload["range"] == {"start": "2026-06-15", "end": "2026-06-21"}
+    assert payload["summary"]["primary_value"] == 52.67
+    assert payload["summary"]["latest_value"] == 54.0
+    assert payload["summary"]["previous_period_value"] == 45.0
+    assert payload["summary"]["trend"] == "up"
+    assert payload["summary"]["absolute_change"] == 7.67
+    assert payload["summary"]["baseline_relation"] == "normal"
+    assert payload["distribution"]["within_count"] == 4
+    assert payload["distribution"]["below_count"] == 1
+    assert payload["distribution"]["above_count"] == 1
+    assert payload["distribution"]["missing_count"] == 1
+    assert payload["chart"]["kind"] == "daily_hrv_baseline"
+    assert payload["coverage"]["valid_days"] == 6
+
+
+def test_hrv_metric_detail_handles_missing_previous_period(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 15)
+    session.add(
+        DailySummary(
+            user_id=user.id,
+            summary_date=day,
+            heart_rate_variability=50.0,
+            data_quality="strong",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/heart_rate_variability/detail",
+        params={"date": day.isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["previous_period_value"] is None
+    assert payload["summary"]["trend"] == "unknown"
+    assert payload["summary"]["absolute_change"] is None
 
 
 def test_metrics_dashboard_summary_batches_metric_cards(session, auth_headers) -> None:

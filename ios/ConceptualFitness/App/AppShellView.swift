@@ -200,6 +200,8 @@ private extension View {
                     ReadinessDetailView(client: client)
                 } else if metric == "sleep" {
                     SleepDetailView(client: client)
+                } else if metric == "heart_rate_variability" {
+                    HRVDetailView(client: client)
                 } else {
                     PlaceholderDetailView(
                         title: metric,
