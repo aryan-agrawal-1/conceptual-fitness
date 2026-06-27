@@ -104,12 +104,14 @@ def dashboard_bundle(
     metric_names = [
         "heart_rate_variability",
         "resting_heart_rate",
+        "heart_rate",
+        "skin_temperature_variation",
         "oxygen_saturation",
         "respiratory_rate",
         "vo2_max",
         "sleep",
         "steps",
-        "active_calories",
+        "total_calories",
         "distance",
     ]
     metric_summaries = dashboard_metric_summaries(

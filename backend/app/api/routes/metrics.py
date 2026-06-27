@@ -86,6 +86,11 @@ METRIC_DETAIL_CONFIGS: dict[str, MetricDetailConfig] = {
         unit="bpm",
         sample_metric="heart_rate",
     ),
+    "skin_temperature_variation": MetricDetailConfig(
+        metric="skin_temperature_variation",
+        unit="celsius",
+        sample_metric="skin_temperature_variation",
+    ),
     "resting_heart_rate": MetricDetailConfig(
         metric="resting_heart_rate",
         unit="bpm",
@@ -164,12 +169,14 @@ def metric_detail(
 DEFAULT_DASHBOARD_METRICS = (
     "heart_rate_variability",
     "resting_heart_rate",
+    "heart_rate",
+    "skin_temperature_variation",
     "oxygen_saturation",
     "respiratory_rate",
     "vo2_max",
     "sleep",
     "steps",
-    "active_calories",
+    "total_calories",
     "distance",
 )
 
@@ -217,6 +224,15 @@ def dashboard_metric_summaries(
         if metric_name == "sleep":
             payload[metric_name] = _sleep_dashboard_summary(session, user_id, start, end)
             continue
+        if metric_name == "heart_rate":
+            payload[metric_name] = _latest_heart_rate_dashboard_summary(
+                session,
+                user_id=user_id,
+                start=start,
+                end=end,
+                summaries=summaries,
+            )
+            continue
 
         config = METRIC_DETAIL_CONFIGS.get(metric_name)
         if config is None:
@@ -237,6 +253,90 @@ def dashboard_metric_summaries(
             "higher_is_better": config.higher_is_better,
         }
     return payload
+
+
+def _latest_heart_rate_dashboard_summary(
+    session: DbSession,
+    *,
+    user_id: str,
+    start: date,
+    end: date,
+    summaries: dict[date, DailySummary],
+) -> dict[str, object]:
+    config = METRIC_DETAIL_CONFIGS["heart_rate"]
+    points = _latest_heart_rate_points(session, user_id=user_id, start=start, end=end, summaries=summaries)
+    if not points:
+        points = _daily_metric_points(session, user_id, config, start, end, summaries)
+    populated = [point for point in points if point["value"] is not None]
+    current = populated[-1] if populated else None
+    previous = populated[-2] if len(populated) >= 2 else None
+    return {
+        "metric": "heart_rate",
+        "unit": config.unit,
+        "current": _compact_point(current),
+        "previous": _compact_point(previous),
+        "trend": _trend_payload(current, previous, populated),
+        "baseline": None,
+        "data_quality": current["data_quality"] if current else "missing",
+        "higher_is_better": config.higher_is_better,
+    }
+
+
+def _latest_heart_rate_points(
+    session: DbSession,
+    *,
+    user_id: str,
+    start: date,
+    end: date,
+    summaries: dict[date, DailySummary],
+) -> list[dict[str, object]]:
+    rollups = [
+        row
+        for row in session.scalars(
+            select(MetricMinuteRollup)
+            .where(
+                MetricMinuteRollup.user_id == user_id,
+                MetricMinuteRollup.metric == "heart_rate",
+                MetricMinuteRollup.civil_date >= start,
+                MetricMinuteRollup.civil_date <= end,
+                MetricMinuteRollup.avg_value.is_not(None),
+            )
+            .order_by(MetricMinuteRollup.bucket_start.desc())
+            .limit(2)
+        ).all()
+        if row.avg_value is not None
+    ]
+    if rollups:
+        return [
+            {
+                "date": row.bucket_start,
+                "value": _rounded(row.avg_value),
+                "unit": row.unit,
+                "data_quality": _point_quality(summaries.get(row.civil_date), row.avg_value),
+            }
+            for row in reversed(rollups)
+        ]
+
+    samples = session.scalars(
+        select(MetricSample)
+        .where(
+            MetricSample.user_id == user_id,
+            MetricSample.metric == "heart_rate",
+            MetricSample.civil_date >= start,
+            MetricSample.civil_date <= end,
+        )
+        .order_by(MetricSample.observed_at.desc())
+        .limit(2)
+    ).all()
+    return [
+        {
+            "date": sample.observed_at,
+            "value": _rounded(sample.value),
+            "unit": sample.unit,
+            "data_quality": _point_quality(summaries.get(sample.civil_date), sample.value),
+        }
+        for sample in reversed(samples)
+    ]
 
 
 def _parse_dashboard_metric_names(metrics: str | None) -> list[str]:

@@ -305,7 +305,7 @@ def _measurement_row(
     source: dict[str, Any],
     device: dict[str, Any],
 ) -> dict[str, Any] | None:
-    value = _extract_numeric_value(payload)
+    value = _metric_numeric_value(spec, payload)
     if spec.storage == "interval":
         start_time, end_time = _record_times(payload)
         if value is None and start_time is not None and end_time is not None:
@@ -360,7 +360,7 @@ def _high_volume_record(
 
     start_time, end_time = _record_times(payload)
     civil_date = _record_civil_date(payload) or (start_time.date() if start_time else None)
-    value = _extract_numeric_value(payload)
+    value = _metric_numeric_value(spec, payload)
     if spec.storage == "sample":
         observed_at = _sample_time(payload)
         if observed_at is None or value is None:
@@ -471,7 +471,7 @@ def _normalize_interval(
     payload: dict[str, Any],
 ) -> None:
     start_time, end_time = _record_times(payload)
-    value = _extract_numeric_value(payload)
+    value = _metric_numeric_value(spec, payload)
     if value is None and start_time is not None and end_time is not None:
         value = max(0.0, (end_time - start_time).total_seconds())
     if start_time is None or end_time is None or value is None:
@@ -507,7 +507,7 @@ def _normalize_sample(
     payload: dict[str, Any],
 ) -> None:
     observed_at = _sample_time(payload)
-    value = _extract_numeric_value(payload)
+    value = _metric_numeric_value(spec, payload)
     if observed_at is None or value is None:
         return
     value = _normalize_sample_value(spec, payload, value)
@@ -532,6 +532,16 @@ def _normalize_sample_value(spec: DataTypeSpec, payload: dict[str, Any], value: 
     if spec.metric == "weight" and "weightGrams" in payload and "weightKilograms" not in payload:
         return value / 1000
     return value
+
+
+def _metric_numeric_value(spec: DataTypeSpec, payload: dict[str, Any]) -> float | None:
+    if spec.metric == "skin_temperature_variation":
+        nightly = _to_float(payload.get("nightlyTemperatureCelsius"))
+        baseline = _to_float(payload.get("baselineTemperatureCelsius"))
+        if nightly is None or baseline is None:
+            return None
+        return nightly - baseline
+    return _extract_numeric_value(payload)
 
 
 def _normalize_sleep(

@@ -423,6 +423,16 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
     session.add(
         MetricSample(
             user_id=user.id,
+            metric="skin_temperature_variation",
+            observed_at=_dt(day, 0),
+            civil_date=day,
+            value=0.24,
+            unit="celsius",
+        )
+    )
+    session.add(
+        MetricSample(
+            user_id=user.id,
             metric="vo2_max",
             observed_at=_dt(day, 7, 30),
             civil_date=day,
@@ -463,6 +473,32 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
         "date": day.isoformat(),
         "value": 48.2,
         "unit": "ml_per_kg_min",
+    }
+    assert list(payload["metric_summaries"]) == [
+        "heart_rate_variability",
+        "resting_heart_rate",
+        "heart_rate",
+        "skin_temperature_variation",
+        "oxygen_saturation",
+        "respiratory_rate",
+        "vo2_max",
+        "sleep",
+        "steps",
+        "total_calories",
+        "distance",
+    ]
+    assert payload["metric_summaries"]["total_calories"]["current"] == {
+        "date": day.isoformat(),
+        "value": 2300.0,
+        "unit": "kcal",
+    }
+    assert payload["metric_summaries"]["heart_rate"]["current"]["value"] == 152.0
+    assert payload["metric_summaries"]["heart_rate"]["current"]["unit"] == "bpm"
+    assert payload["metric_summaries"]["heart_rate"]["current"]["date"].startswith(day.isoformat())
+    assert payload["metric_summaries"]["skin_temperature_variation"]["current"] == {
+        "date": day.isoformat(),
+        "value": 0.24,
+        "unit": "celsius",
     }
     assert payload["metric_summaries"]["steps"]["current"]["value"] == 6500.0
     assert payload["data_quality"]["sections"]["sync"] == "strong"

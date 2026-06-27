@@ -985,7 +985,10 @@ struct DashboardData {
     ) -> DashboardData {
         DashboardData(
             snapshot: .sample,
-            metricSummaries: [:],
+            metricSummaries: [
+                "heart_rate": MetricDashboardSummary(current: MetricPoint(value: 75, date: "2026-06-22"), dataQuality: "strong"),
+                "skin_temperature_variation": MetricDashboardSummary(current: MetricPoint(value: 0.2, date: "2026-06-22"), dataQuality: "strong")
+            ],
             workouts: WorkoutSummary.samples,
             vo2Max: VO2MaxDetail(current: MetricPoint(value: 48.2, date: "2026-06-22"), dataQuality: "strong"),
             connections: DashboardConnections(googleHealth: [

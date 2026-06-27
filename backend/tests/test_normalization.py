@@ -550,6 +550,37 @@ def test_unchanged_raw_record_with_missing_normalized_row_is_rebuilt(session) ->
     assert rebuilt.value == 96.6
 
 
+def test_normalizes_skin_temperature_variation_from_daily_derivation(session) -> None:
+    account = _account(session)
+    day = date(2026, 6, 26)
+    data_point = {
+        "name": "users/me/dataTypes/daily-sleep-temperature-derivations/dailyRollUp/2026-06-26",
+        "dataSource": {"platform": "FITBIT"},
+        "dailySleepTemperatureDerivations": {
+            "date": {"year": day.year, "month": day.month, "day": day.day},
+            "nightlyTemperatureCelsius": 34.5008,
+            "baselineTemperatureCelsius": 34.39593679458238,
+            "relativeNightlyStddev30dCelsius": 0.7109127654436406,
+        },
+    }
+
+    raw_record = upsert_raw_and_normalized(
+        session,
+        account=account,
+        data_type="daily-sleep-temperature-derivations",
+        data_point=data_point,
+    )
+    session.flush()
+
+    sample = session.scalar(select(MetricSample).where(MetricSample.raw_record_id == raw_record.id))
+    assert sample is not None
+    assert sample.metric == "skin_temperature_variation"
+    assert sample.civil_date == day
+    assert sample.observed_at.date() == day
+    assert sample.value == 34.5008 - 34.39593679458238
+    assert sample.unit == "celsius"
+
+
 def test_normalizes_body_metrics_and_updates_profile(session) -> None:
     account = _account(session)
     session.add(UserProfile(user_id=account.user_id, timezone="UTC", sleep_target_minutes=480))

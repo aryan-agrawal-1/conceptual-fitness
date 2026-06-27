@@ -5,7 +5,15 @@ from datetime import UTC, date, datetime, time, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import DailyBaseline, DailySummary, MetricInterval, MetricSample, User
+from app.models import (
+    DailyBaseline,
+    DailySummary,
+    MetricDailyRollup,
+    MetricInterval,
+    MetricMinuteRollup,
+    MetricSample,
+    User,
+)
 from app.services.scores import BASELINE_VERSION
 
 
@@ -135,6 +143,112 @@ def test_metrics_dashboard_summary_batches_metric_cards(session, auth_headers) -
     assert payload["metrics"]["heart_rate_variability"]["baseline"]["comparison"] == "normal"
     assert payload["metrics"]["heart_rate_variability"]["trend"]["absolute_change"] == 4.0
     assert payload["metrics"]["steps"]["current"]["value"] == 8000.0
+
+
+def test_metrics_dashboard_summary_default_metric_order(session, auth_headers) -> None:
+    user = _user(session)
+
+    response = TestClient(app).get(
+        "/metrics/dashboard-summary",
+        params={"date": "2026-06-19", "window_days": 3},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    assert list(response.json()["metrics"]) == [
+        "heart_rate_variability",
+        "resting_heart_rate",
+        "heart_rate",
+        "skin_temperature_variation",
+        "oxygen_saturation",
+        "respiratory_rate",
+        "vo2_max",
+        "sleep",
+        "steps",
+        "total_calories",
+        "distance",
+    ]
+
+
+def test_metrics_dashboard_summary_includes_heart_rate_and_skin_temperature(
+    session,
+    auth_headers,
+) -> None:
+    user = _user(session)
+    day = date(2026, 6, 19)
+    session.add(
+        MetricDailyRollup(
+            user_id=user.id,
+            metric="heart_rate",
+            civil_date=day,
+            avg_value=72.5,
+            min_value=51,
+            max_value=154,
+            sum_value=8700,
+            sample_count=120,
+            unit="bpm",
+        )
+    )
+    session.add(
+        MetricMinuteRollup(
+            user_id=user.id,
+            metric="heart_rate",
+            bucket_start=_dt(day, 8, 0),
+            civil_date=day,
+            avg_value=80,
+            min_value=80,
+            max_value=80,
+            sum_value=80,
+            sample_count=1,
+            unit="bpm",
+        )
+    )
+    session.add(
+        MetricMinuteRollup(
+            user_id=user.id,
+            metric="heart_rate",
+            bucket_start=_dt(day, 8, 1),
+            civil_date=day,
+            avg_value=81,
+            min_value=81,
+            max_value=81,
+            sum_value=81,
+            sample_count=1,
+            unit="bpm",
+        )
+    )
+    session.add(
+        MetricSample(
+            user_id=user.id,
+            metric="skin_temperature_variation",
+            observed_at=_dt(day, 0),
+            civil_date=day,
+            value=0.42,
+            unit="celsius",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/dashboard-summary",
+        params={
+            "metrics": "heart_rate,skin_temperature_variation",
+            "date": day.isoformat(),
+            "window_days": 1,
+        },
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["metrics"]
+    assert payload["heart_rate"]["current"]["value"] == 81.0
+    assert payload["heart_rate"]["current"]["unit"] == "bpm"
+    assert payload["heart_rate"]["current"]["date"].startswith("2026-06-19T08:01:00")
+    assert payload["skin_temperature_variation"]["current"] == {
+        "date": "2026-06-19",
+        "value": 0.42,
+        "unit": "celsius",
+    }
 
 
 def test_heart_rate_metric_detail_aggregates_daily_samples(session, auth_headers) -> None:

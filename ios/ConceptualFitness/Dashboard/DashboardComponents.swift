@@ -409,6 +409,8 @@ struct MetricCardItem: Identifiable {
         var items: [MetricCardItem] = [
             item("heart_rate_variability", "HRV", value(for: "heart_rate_variability", in: data, fallback: metrics?.heartRateVariability), "ms", "waveform.path.ecg", .purple, quality(for: "heart_rate_variability", in: data, fallback: metrics?.dataQuality)),
             item("resting_heart_rate", "Resting HR", value(for: "resting_heart_rate", in: data, fallback: metrics?.restingHeartRate), "bpm", "heart.fill", .red, quality(for: "resting_heart_rate", in: data, fallback: metrics?.dataQuality)),
+            item("heart_rate", "Heart Rate", value(for: "heart_rate", in: data, fallback: nil), "bpm", "heart.text.square.fill", .pink, quality(for: "heart_rate", in: data, fallback: metrics?.dataQuality)),
+            item("skin_temperature_variation", "Skin Temp Variation", value(for: "skin_temperature_variation", in: data, fallback: nil), "C", "thermometer", .brown, quality(for: "skin_temperature_variation", in: data, fallback: metrics?.dataQuality)),
             item("oxygen_saturation", "SpO2", value(for: "oxygen_saturation", in: data, fallback: metrics?.oxygenSaturation), "%", "lungs.fill", .cyan, quality(for: "oxygen_saturation", in: data, fallback: metrics?.dataQuality)),
             item("respiratory_rate", "Respiratory", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), "br/min", "wind", .teal, quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality))
         ]
@@ -421,7 +423,7 @@ struct MetricCardItem: Identifiable {
         items += [
             item("sleep", "Sleep", value(for: "sleep", in: data, fallback: metrics?.sleepMinutes.map(Double.init)), "min", "bed.double.fill", .indigo, quality(for: "sleep", in: data, fallback: metrics?.dataQuality)),
             item("steps", "Steps", value(for: "steps", in: data, fallback: metrics?.steps.map(Double.init)), "", "shoeprints.fill", .blue, quality(for: "steps", in: data, fallback: metrics?.dataQuality)),
-            item("active_calories", "Active Calories", value(for: "active_calories", in: data, fallback: metrics?.activeCalories), "kcal", "flame.fill", .orange, quality(for: "active_calories", in: data, fallback: metrics?.dataQuality)),
+            item("total_calories", "Calories Burned", value(for: "total_calories", in: data, fallback: metrics?.totalCalories), "kcal", "flame.fill", .orange, quality(for: "total_calories", in: data, fallback: metrics?.dataQuality)),
             item("distance", "Distance", distanceKilometers(from: data, fallbackMeters: metrics?.distanceMeters), "km", "point.topleft.down.curvedto.point.bottomright.up", .mint, quality(for: "distance", in: data, fallback: metrics?.dataQuality))
         ]
 

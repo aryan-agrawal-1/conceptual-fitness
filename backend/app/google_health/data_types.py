@@ -214,8 +214,8 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
     "daily-sleep-temperature-derivations": DataTypeSpec(
         data_type="daily-sleep-temperature-derivations",
         payload_key="dailySleepTemperatureDerivations",
-        metric="sleep_temperature_derivation",
-        storage="raw",
+        metric="skin_temperature_variation",
+        storage="sample",
         unit="celsius",
         filter_time_path="daily_sleep_temperature_derivations.date",
         page_size=10000,
