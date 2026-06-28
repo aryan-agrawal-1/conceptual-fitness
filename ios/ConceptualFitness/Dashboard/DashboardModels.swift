@@ -541,6 +541,127 @@ struct HRVDistribution: Decodable {
     }
 }
 
+struct RestingHeartRateDetail: Decodable {
+    let metric: String
+    let unit: String
+    let timeframe: String?
+    let range: MetricDetailRange
+    let current: MetricPoint?
+    let previous: MetricPoint?
+    let trend: MetricTrend
+    let baseline: MetricBaseline?
+    let summary: BaselineMetricSummary
+    let chart: BaselineMetricChart
+    let distribution: BaselineMetricDistribution
+    let coverage: MetricCoverage
+    let series: [BaselineMetricChartPoint]
+    let dataQuality: String?
+    let higherIsBetter: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case metric
+        case unit
+        case timeframe
+        case range
+        case current
+        case previous
+        case trend
+        case baseline
+        case summary
+        case chart
+        case distribution
+        case coverage
+        case series
+        case dataQuality = "data_quality"
+        case higherIsBetter = "higher_is_better"
+    }
+}
+
+struct BaselineMetricSummary: Decodable {
+    let title: String?
+    let primaryValue: Double?
+    let latestValue: Double?
+    let previousPeriodValue: Double?
+    let baselineValue: Double?
+    let baselineLowerBound: Double?
+    let baselineUpperBound: Double?
+    let baselineRelation: String?
+    let baselineDelta: Double?
+    let confidencePhase: String?
+    let trend: String?
+    let absoluteChange: Double?
+    let validDays: Int?
+    let missingDays: Int?
+    let periodDays: Int?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case primaryValue = "primary_value"
+        case latestValue = "latest_value"
+        case previousPeriodValue = "previous_period_value"
+        case baselineValue = "baseline_value"
+        case baselineLowerBound = "baseline_lower_bound"
+        case baselineUpperBound = "baseline_upper_bound"
+        case baselineRelation = "baseline_relation"
+        case baselineDelta = "baseline_delta"
+        case confidencePhase = "confidence_phase"
+        case trend
+        case absoluteChange = "absolute_change"
+        case validDays = "valid_days"
+        case missingDays = "missing_days"
+        case periodDays = "period_days"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct BaselineMetricChart: Decodable {
+    let kind: String
+    let points: [BaselineMetricChartPoint]
+}
+
+struct BaselineMetricChartPoint: Decodable, Identifiable {
+    let date: String?
+    let value: Double?
+    let unit: String?
+    let dataQuality: String?
+    let baselineValue: Double?
+    let baselineLowerBound: Double?
+    let baselineUpperBound: Double?
+    let comparison: String?
+
+    var id: String { date ?? "metric-\(value?.clean ?? "missing")" }
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case value
+        case unit
+        case dataQuality = "data_quality"
+        case baselineValue = "baseline_value"
+        case baselineLowerBound = "baseline_lower_bound"
+        case baselineUpperBound = "baseline_upper_bound"
+        case comparison
+    }
+}
+
+struct BaselineMetricDistribution: Decodable {
+    let withinCount: Int?
+    let belowCount: Int?
+    let aboveCount: Int?
+    let missingCount: Int?
+    let unknownCount: Int?
+    let longestBelowStreak: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case withinCount = "within_count"
+        case belowCount = "below_count"
+        case aboveCount = "above_count"
+        case missingCount = "missing_count"
+        case unknownCount = "unknown_count"
+        case longestBelowStreak = "longest_below_streak"
+    }
+}
+
 struct MetricCoverage: Decodable {
     let expectedDays: Int?
     let validDays: Int?

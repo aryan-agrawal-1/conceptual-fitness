@@ -33,6 +33,7 @@
 		010000000000000000000018 /* SleepDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001B /* SleepDetailView.swift */; };
 		010000000000000000000019 /* WorkoutDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001C /* WorkoutDetailView.swift */; };
 		01000000000000000000001A /* HRVDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001D /* HRVDetailView.swift */; };
+		01000000000000000000001B /* RestingHeartRateDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001E /* RestingHeartRateDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -65,6 +66,7 @@
 		02000000000000000000001B /* SleepDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepDetailView.swift; sourceTree = "<group>"; };
 		02000000000000000000001C /* WorkoutDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutDetailView.swift; sourceTree = "<group>"; };
 		02000000000000000000001D /* HRVDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HRVDetailView.swift; sourceTree = "<group>"; };
+		02000000000000000000001E /* RestingHeartRateDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestingHeartRateDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +130,7 @@
 				020000000000000000000019 /* ReadinessDetailView.swift */,
 				02000000000000000000001B /* SleepDetailView.swift */,
 				02000000000000000000001D /* HRVDetailView.swift */,
+				02000000000000000000001E /* RestingHeartRateDetailView.swift */,
 				02000000000000000000001C /* WorkoutDetailView.swift */,
 			);
 			path = Dashboard;
@@ -271,6 +274,7 @@
 				010000000000000000000018 /* SleepDetailView.swift in Sources */,
 				010000000000000000000019 /* WorkoutDetailView.swift in Sources */,
 				01000000000000000000001A /* HRVDetailView.swift in Sources */,
+				01000000000000000000001B /* RestingHeartRateDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

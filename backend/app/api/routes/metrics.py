@@ -305,6 +305,16 @@ def _metric_detail_title(config: MetricDetailConfig, timeframe: str | None) -> s
         if timeframe == "day":
             return "Daily HRV"
         return "HRV"
+    if config.metric == "resting_heart_rate":
+        if timeframe == "year":
+            return "Yearly Resting HR"
+        if timeframe == "month":
+            return "Monthly Resting HR"
+        if timeframe == "week":
+            return "Weekly Resting HR"
+        if timeframe == "day":
+            return "Daily Resting HR"
+        return "Resting HR"
     return config.metric.replace("_", " ").title()
 
 
