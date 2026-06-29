@@ -14,6 +14,7 @@ from app.models import (
     DailyBaseline,
     DailyScore,
     DailySummary,
+    MetricDailyRollup,
     MetricInterval,
     MetricMinuteRollup,
     MetricSample,
@@ -32,6 +33,7 @@ from app.services.health_dates import (
 )
 from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION, _adjusted_sleep_need_minutes
 from app.services.metric_rollups import (
+    HEART_RATE_MINUTE_RETENTION_DAYS,
     HIGH_VOLUME_METRICS,
     RollupPoint,
     SUM_METRICS,
@@ -196,7 +198,7 @@ def _metric_detail_payload(
     previous = populated[-2] if len(populated) >= 2 else None
     series = [_series_point_payload(point, baselines) for point in points]
 
-    return {
+    payload: dict[str, object] = {
         "metric": metric,
         "unit": config.unit,
         "timeframe": timeframe,
@@ -216,6 +218,10 @@ def _metric_detail_payload(
         "coverage": _metric_detail_coverage(points, start, end),
         "series": series,
     }
+    if metric == "heart_rate":
+        profile = get_or_create_profile(session, user_id)
+        payload.update(_heart_rate_detail_extras(session, user_id, profile, start, end, timeframe))
+    return payload
 
 
 def _metric_detail_window(anchor: date, timeframe: str) -> tuple[date, date]:
@@ -419,6 +425,152 @@ def _metric_detail_coverage(
         "valid_days": valid_days,
         "completeness": round(valid_days / expected_days, 3) if expected_days else None,
         "quality_counts": dict(quality_counts),
+    }
+
+
+def _heart_rate_detail_extras(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    start: date,
+    end: date,
+    timeframe: str | None,
+) -> dict[str, object]:
+    intraday_points = _heart_rate_intraday_points(session, user_id, start, end, timeframe)
+    workouts = _heart_rate_workouts(session, user_id, profile, start, end)
+    return {
+        "intraday": {
+            "available": bool(intraday_points),
+            "retention_days": HEART_RATE_MINUTE_RETENTION_DAYS,
+            "points": intraday_points,
+        },
+        "drivers": {
+            "sleep": _heart_rate_sleep_driver(session, user_id, profile, start, end),
+            "workouts": workouts,
+        },
+        "zones": {
+            "source": "workouts",
+            "items": _heart_rate_period_zones(workouts),
+        },
+    }
+
+
+def _heart_rate_intraday_points(
+    session: DbSession,
+    user_id: str,
+    start: date,
+    end: date,
+    timeframe: str | None,
+) -> list[dict[str, object]]:
+    if timeframe != "day" or start != end:
+        return []
+    return [
+        {
+            "observed_at": point.observed_at,
+            "date": point.civil_date,
+            "value": _rounded(point.value),
+            "unit": point.unit,
+            "source_platform": point.source_platform,
+            "source_device": point.source_device,
+        }
+        for point in rollup_points_for_metric(
+            session,
+            user_id=user_id,
+            metric="heart_rate",
+            start=start,
+            end=end,
+        )
+    ]
+
+
+def _heart_rate_workouts(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    start: date,
+    end: date,
+) -> list[dict[str, object]]:
+    workouts = session.scalars(
+        select(Workout)
+        .where(
+            Workout.user_id == user_id,
+            Workout.civil_date >= start,
+            Workout.civil_date <= end,
+        )
+        .order_by(Workout.start_time.desc())
+        .limit(12)
+    ).all()
+    return [_workout_summary_payload(session, user_id, profile, workout) for workout in workouts]
+
+
+def _heart_rate_period_zones(workouts: list[dict[str, object]]) -> list[dict[str, object]]:
+    totals = _empty_zone_totals()
+    source_zones: dict[str, set[str]] = defaultdict(set)
+    source = "missing"
+    for workout in workouts:
+        zones = workout.get("heart_rate_zones")
+        if not isinstance(zones, list):
+            continue
+        zone_source = workout.get("zone_source")
+        if isinstance(zone_source, str) and zone_source != "missing":
+            source = "mixed_workouts" if source not in {"missing", zone_source} else zone_source
+        for item in zones:
+            if not isinstance(item, dict):
+                continue
+            zone = str(item.get("zone"))
+            if zone not in totals:
+                continue
+            seconds = item.get("seconds")
+            if isinstance(seconds, int | float):
+                totals[zone] += float(seconds)
+            for source_zone in item.get("source_zones") or []:
+                source_zones[zone].add(str(source_zone))
+    payloads = _zone_payloads_from_totals(totals, source, source_zones)
+    return payloads or _empty_zone_payloads("missing")
+
+
+def _heart_rate_sleep_driver(
+    session: DbSession,
+    user_id: str,
+    profile: UserProfile,
+    start: date,
+    end: date,
+) -> dict[str, object]:
+    sessions = _sleep_sessions_for_range(session, user_id, start, end)
+    main_by_date = _main_sleeps_by_date(sessions)
+    stats = _sleep_period_stats(session, user_id, profile, start, end, main_by_date)
+    scores_by_date = _sleep_scores_by_date(session, user_id, start, end)
+    score_values = [
+        float(score.value)
+        for score in scores_by_date.values()
+        if score.value is not None
+    ]
+    latest_sleep = next(
+        (main_by_date[day] for day in reversed(_date_range(start, end)) if day in main_by_date),
+        None,
+    )
+    latest_score = next(
+        (scores_by_date[day] for day in reversed(_date_range(start, end)) if day in scores_by_date),
+        None,
+    )
+    short_sleep_nights = 0
+    for day, sleep in main_by_date.items():
+        if sleep.minutes_asleep is None:
+            continue
+        if sleep.minutes_asleep < _sleep_target_for_day(session, user_id, profile, day):
+            short_sleep_nights += 1
+
+    return {
+        "sleep_minutes": latest_sleep.minutes_asleep if latest_sleep else None,
+        "average_sleep_minutes": stats["average_sleep_minutes"],
+        "target_sleep_minutes": stats["average_target_minutes"],
+        "sleep_debt_minutes": stats["sleep_debt_minutes"],
+        "target_met_nights": stats["target_met_nights"],
+        "short_sleep_nights": short_sleep_nights,
+        "slept_nights": stats["slept_nights"],
+        "period_days": (end - start).days + 1,
+        "latest_score": _rounded(latest_score.value) if latest_score and latest_score.value is not None else None,
+        "average_score": _rounded(mean(score_values)) if score_values else None,
     }
 
 
@@ -1690,6 +1842,11 @@ def _daily_metric_points(
         if config.sample_metric in HIGH_VOLUME_METRICS
         else {}
     )
+    sample_counts = (
+        _daily_rollup_sample_counts(session, user_id, config.sample_metric, start, end)
+        if config.sample_metric in HIGH_VOLUME_METRICS
+        else {}
+    )
     points: list[dict[str, object]] = []
     current = start
     while current <= end:
@@ -1708,9 +1865,30 @@ def _daily_metric_points(
         if config.metric == "heart_rate":
             point["min_value"] = _rounded(sample_mins.get(current) or (min(samples) if samples else None))
             point["max_value"] = _rounded(sample_maxes.get(current) or (max(samples) if samples else None))
+            point["sample_count"] = sample_counts.get(current, len(samples))
         points.append(point)
         current = date.fromordinal(current.toordinal() + 1)
     return points
+
+
+def _daily_rollup_sample_counts(
+    session: DbSession,
+    user_id: str,
+    metric: str | None,
+    start: date,
+    end: date,
+) -> dict[date, int]:
+    if metric is None:
+        return {}
+    rows = session.scalars(
+        select(MetricDailyRollup).where(
+            MetricDailyRollup.user_id == user_id,
+            MetricDailyRollup.metric == metric,
+            MetricDailyRollup.civil_date >= start,
+            MetricDailyRollup.civil_date <= end,
+        )
+    ).all()
+    return {row.civil_date: row.sample_count for row in rows}
 
 
 def _sample_values_by_date(

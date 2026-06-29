@@ -300,7 +300,7 @@ private struct WorkoutHeartRateChart: View {
                                 topPadding: topPadding
                             ))
                         }
-                        .stroke(zoneColor(segment.zone), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                        .stroke(heartRateZoneColor(segment.zone), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     }
 
                     if let selectedPoint {
@@ -318,7 +318,7 @@ private struct WorkoutHeartRateChart: View {
                         .stroke(.primary.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
                         Circle()
-                            .fill(zoneColor(zone(for: selectedPoint.value, in: bands)))
+                            .fill(heartRateZoneColor(zone(for: selectedPoint.value, in: bands)))
                             .overlay {
                                 Circle().stroke(.white, lineWidth: 2)
                             }
@@ -387,7 +387,7 @@ private struct WorkoutHeartRateChart: View {
         let height = max(1, bottom - top)
         ZStack(alignment: .topLeading) {
             Rectangle()
-                .fill(zoneColor(band.zone).opacity(0.1))
+                .fill(heartRateZoneColor(band.zone).opacity(0.1))
                 .frame(width: plotWidth, height: height)
                 .position(x: plotWidth / 2, y: top + height / 2)
 
@@ -399,7 +399,7 @@ private struct WorkoutHeartRateChart: View {
 
             Text(band.shortLabel)
                 .font(.caption2.weight(.bold))
-                .foregroundStyle(zoneColor(band.zone))
+                .foregroundStyle(heartRateZoneColor(band.zone))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .position(x: plotWidth + labelGutter / 2, y: top + height / 2)
@@ -488,13 +488,7 @@ private struct WorkoutZoneBand: Identifiable {
     var id: String { zone }
 
     var shortLabel: String {
-        switch zone {
-        case "zone_1": return "Z1"
-        case "zone_2": return "Z2"
-        case "zone_3": return "Z3"
-        case "zone_4": return "Z4"
-        default: return zone.displayTitle
-        }
+        heartRateZoneShortLabel(zone)
     }
 }
 
@@ -560,7 +554,7 @@ private struct WorkoutZoneStackedBar: View {
             HStack(spacing: 3) {
                 ForEach(zones) { zone in
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(zoneColor(zone.zone).gradient)
+                        .fill(heartRateZoneColor(zone.zone).gradient)
                         .frame(width: max(4, proxy.size.width * CGFloat(zone.seconds) / CGFloat(max(1, totalSeconds))))
                 }
             }
@@ -580,7 +574,7 @@ private struct WorkoutZoneRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(zoneColor(zone.zone))
+                .fill(heartRateZoneColor(zone.zone))
                 .frame(width: 10, height: 10)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -822,15 +816,6 @@ private func distanceText(meters: Double) -> String {
     return "\(meters.clean) m"
 }
 
-private func zoneColor(_ zone: String) -> Color {
-    switch zone {
-    case "zone_1": return .teal
-    case "zone_2": return .green
-    case "zone_3": return .orange
-    case "zone_4": return .red
-    default: return .secondary
-    }
-}
 
 private func intensityTint(_ intensity: String?) -> Color {
     switch intensity?.lowercased() {

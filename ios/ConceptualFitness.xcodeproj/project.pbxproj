@@ -34,6 +34,8 @@
 		010000000000000000000019 /* WorkoutDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001C /* WorkoutDetailView.swift */; };
 		01000000000000000000001A /* HRVDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001D /* HRVDetailView.swift */; };
 		01000000000000000000001B /* RestingHeartRateDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001E /* RestingHeartRateDetailView.swift */; };
+		01000000000000000000001C /* HeartRateDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001F /* HeartRateDetailView.swift */; };
+		01000000000000000000001D /* HeartRateZones.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000020 /* HeartRateZones.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -67,6 +69,8 @@
 		02000000000000000000001C /* WorkoutDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutDetailView.swift; sourceTree = "<group>"; };
 		02000000000000000000001D /* HRVDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HRVDetailView.swift; sourceTree = "<group>"; };
 		02000000000000000000001E /* RestingHeartRateDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestingHeartRateDetailView.swift; sourceTree = "<group>"; };
+		02000000000000000000001F /* HeartRateDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateDetailView.swift; sourceTree = "<group>"; };
+		020000000000000000000020 /* HeartRateZones.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateZones.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +135,7 @@
 				02000000000000000000001B /* SleepDetailView.swift */,
 				02000000000000000000001D /* HRVDetailView.swift */,
 				02000000000000000000001E /* RestingHeartRateDetailView.swift */,
+				02000000000000000000001F /* HeartRateDetailView.swift */,
 				02000000000000000000001C /* WorkoutDetailView.swift */,
 			);
 			path = Dashboard;
@@ -153,6 +158,7 @@
 				020000000000000000000005 /* GlassPanel.swift */,
 				020000000000000000000006 /* Formatters.swift */,
 				02000000000000000000001A /* ScoreRangeSelector.swift */,
+				020000000000000000000020 /* HeartRateZones.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -275,6 +281,8 @@
 				010000000000000000000019 /* WorkoutDetailView.swift in Sources */,
 				01000000000000000000001A /* HRVDetailView.swift in Sources */,
 				01000000000000000000001B /* RestingHeartRateDetailView.swift in Sources */,
+				01000000000000000000001C /* HeartRateDetailView.swift in Sources */,
+				01000000000000000000001D /* HeartRateZones.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

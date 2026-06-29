@@ -234,6 +234,14 @@ enum ScoreDateFormatters {
         return formatter
     }()
 
+    static let dayOfMonth: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "d"
+        return formatter
+    }()
+
     static func weekdayLabel(from value: String) -> String {
         guard let date = apiDate.date(from: value) else { return value }
         return weekday.string(from: date)

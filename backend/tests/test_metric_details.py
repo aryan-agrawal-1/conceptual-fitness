@@ -12,7 +12,9 @@ from app.models import (
     MetricInterval,
     MetricMinuteRollup,
     MetricSample,
+    SleepSession,
     User,
+    Workout,
 )
 from app.services.scores import BASELINE_VERSION
 
@@ -379,10 +381,94 @@ def test_heart_rate_metric_detail_aggregates_daily_samples(session, auth_headers
             "data_quality": "weak",
             "min_value": 60.0,
             "max_value": 80.0,
+            "sample_count": 3,
             "baseline_value": None,
             "comparison": "unknown",
         }
     ]
+
+
+def test_heart_rate_detail_includes_intraday_sleep_and_workout_drivers(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 19)
+    session.add(
+        DailySummary(
+            user_id=user.id,
+            summary_date=day,
+            sleep_minutes=405,
+            data_quality="strong",
+        )
+    )
+    session.add(
+        MetricDailyRollup(
+            user_id=user.id,
+            metric="heart_rate",
+            civil_date=day,
+            avg_value=82.0,
+            min_value=54.0,
+            max_value=173.0,
+            sample_count=3,
+            unit="bpm",
+        )
+    )
+    for minute, bpm in enumerate([70.0, 86.0, 124.0]):
+        session.add(
+            MetricMinuteRollup(
+                user_id=user.id,
+                metric="heart_rate",
+                bucket_start=_dt(day, 8, minute),
+                civil_date=day,
+                avg_value=bpm,
+                min_value=bpm,
+                max_value=bpm,
+                sum_value=bpm,
+                sample_count=1,
+                unit="bpm",
+            )
+        )
+    session.add(
+        SleepSession(
+            user_id=user.id,
+            start_time=_dt(day, 0),
+            end_time=_dt(day, 7),
+            civil_date=day,
+            minutes_asleep=405,
+            minutes_in_sleep_period=420,
+            is_main_sleep=True,
+        )
+    )
+    workout = Workout(
+        user_id=user.id,
+        workout_type="run",
+        start_time=_dt(day, 8),
+        end_time=_dt(day, 9),
+        civil_date=day,
+        duration_seconds=3600,
+        raw_summary={"heartRateZoneDurations": {"lightTime": 600, "vigorousTime": 1200}},
+    )
+    session.add(workout)
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/heart_rate/detail",
+        params={"date": day.isoformat(), "timeframe": "day"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["primary_value"] == 82.0
+    assert payload["series"][0]["sample_count"] == 3
+    assert payload["series"][0]["min_value"] == 54.0
+    assert payload["series"][0]["max_value"] == 173.0
+    assert payload["intraday"]["available"] is True
+    assert payload["intraday"]["retention_days"] == 14
+    assert [point["value"] for point in payload["intraday"]["points"]] == [70.0, 86.0, 124.0]
+    assert payload["drivers"]["sleep"]["sleep_minutes"] == 405
+    assert payload["drivers"]["sleep"]["short_sleep_nights"] == 1
+    assert payload["drivers"]["workouts"][0]["id"] == workout.id
+    assert payload["zones"]["items"][0]["seconds"] == 600
+    assert payload["zones"]["items"][2]["seconds"] == 1200
 
 
 def test_metric_detail_prefers_fitbit_activity_interval_totals(session, auth_headers) -> None:

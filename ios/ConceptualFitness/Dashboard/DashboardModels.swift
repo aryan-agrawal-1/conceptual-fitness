@@ -577,6 +577,163 @@ struct RestingHeartRateDetail: Decodable {
     }
 }
 
+struct HeartRateDetail: Decodable {
+    let metric: String
+    let unit: String
+    let timeframe: String?
+    let range: MetricDetailRange
+    let current: MetricPoint?
+    let previous: MetricPoint?
+    let trend: MetricTrend
+    let summary: HeartRateSummaryDetail
+    let chart: HeartRateChart
+    let coverage: MetricCoverage
+    let series: [HeartRateChartPoint]
+    let intraday: HeartRateIntraday
+    let drivers: HeartRateDrivers
+    let zones: HeartRateZonesSummary
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case metric
+        case unit
+        case timeframe
+        case range
+        case current
+        case previous
+        case trend
+        case summary
+        case chart
+        case coverage
+        case series
+        case intraday
+        case drivers
+        case zones
+        case dataQuality = "data_quality"
+    }
+}
+
+struct HeartRateSummaryDetail: Decodable {
+    let title: String?
+    let primaryValue: Double?
+    let latestValue: Double?
+    let previousPeriodValue: Double?
+    let trend: String?
+    let absoluteChange: Double?
+    let validDays: Int?
+    let missingDays: Int?
+    let periodDays: Int?
+    let dataQuality: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case primaryValue = "primary_value"
+        case latestValue = "latest_value"
+        case previousPeriodValue = "previous_period_value"
+        case trend
+        case absoluteChange = "absolute_change"
+        case validDays = "valid_days"
+        case missingDays = "missing_days"
+        case periodDays = "period_days"
+        case dataQuality = "data_quality"
+    }
+}
+
+struct HeartRateChart: Decodable {
+    let kind: String
+    let points: [HeartRateChartPoint]
+}
+
+struct HeartRateChartPoint: Decodable, Identifiable {
+    let date: String?
+    let value: Double?
+    let unit: String?
+    let dataQuality: String?
+    let minValue: Double?
+    let maxValue: Double?
+    let sampleCount: Int?
+
+    var id: String { date ?? "heart-rate-\(value?.clean ?? "missing")" }
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case value
+        case unit
+        case dataQuality = "data_quality"
+        case minValue = "min_value"
+        case maxValue = "max_value"
+        case sampleCount = "sample_count"
+    }
+}
+
+struct HeartRateIntraday: Decodable {
+    let available: Bool
+    let retentionDays: Int?
+    let points: [HeartRateIntradayPoint]
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case retentionDays = "retention_days"
+        case points
+    }
+}
+
+struct HeartRateIntradayPoint: Decodable, Identifiable {
+    let observedAt: String?
+    let date: String?
+    let value: Double?
+    let unit: String?
+    let sourcePlatform: String?
+    let sourceDevice: String?
+
+    var id: String { "\(observedAt ?? "point")-\(value?.clean ?? "--")" }
+
+    enum CodingKeys: String, CodingKey {
+        case observedAt = "observed_at"
+        case date
+        case value
+        case unit
+        case sourcePlatform = "source_platform"
+        case sourceDevice = "source_device"
+    }
+}
+
+struct HeartRateDrivers: Decodable {
+    let sleep: HeartRateSleepDriver
+    let workouts: [WorkoutSummary]
+}
+
+struct HeartRateSleepDriver: Decodable {
+    let sleepMinutes: Double?
+    let averageSleepMinutes: Double?
+    let targetSleepMinutes: Double?
+    let sleepDebtMinutes: Double?
+    let targetMetNights: Int?
+    let shortSleepNights: Int?
+    let sleptNights: Int?
+    let periodDays: Int?
+    let latestScore: Double?
+    let averageScore: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case sleepMinutes = "sleep_minutes"
+        case averageSleepMinutes = "average_sleep_minutes"
+        case targetSleepMinutes = "target_sleep_minutes"
+        case sleepDebtMinutes = "sleep_debt_minutes"
+        case targetMetNights = "target_met_nights"
+        case shortSleepNights = "short_sleep_nights"
+        case sleptNights = "slept_nights"
+        case periodDays = "period_days"
+        case latestScore = "latest_score"
+        case averageScore = "average_score"
+    }
+}
+
+struct HeartRateZonesSummary: Decodable {
+    let source: String?
+    let items: [WorkoutHeartRateZone]
+}
+
 struct BaselineMetricSummary: Decodable {
     let title: String?
     let primaryValue: Double?
