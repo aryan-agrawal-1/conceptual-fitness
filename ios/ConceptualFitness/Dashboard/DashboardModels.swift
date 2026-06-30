@@ -577,6 +577,8 @@ struct RestingHeartRateDetail: Decodable {
     }
 }
 
+typealias SkinTemperatureVariationDetail = RestingHeartRateDetail
+
 struct HeartRateDetail: Decodable {
     let metric: String
     let unit: String

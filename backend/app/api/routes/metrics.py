@@ -92,6 +92,7 @@ METRIC_DETAIL_CONFIGS: dict[str, MetricDetailConfig] = {
         metric="skin_temperature_variation",
         unit="celsius",
         sample_metric="skin_temperature_variation",
+        baseline_metric="skin_temperature_variation",
     ),
     "resting_heart_rate": MetricDetailConfig(
         metric="resting_heart_rate",

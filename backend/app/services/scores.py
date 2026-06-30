@@ -52,6 +52,7 @@ BASELINE_METRICS = (
     "sleep_efficiency",
     "heart_rate_variability",
     "resting_heart_rate",
+    "skin_temperature_variation",
     "respiratory_rate",
     "oxygen_saturation",
     "strain_load",
@@ -461,6 +462,16 @@ def _metric_value_for_baseline(
             return dt.hour * 60 + dt.minute
         local = dt.astimezone(tz)
         return local.hour * 60 + local.minute
+    if metric == "skin_temperature_variation":
+        values = session.scalars(
+            select(MetricSample.value).where(
+                MetricSample.user_id == user_id,
+                MetricSample.metric == "skin_temperature_variation",
+                MetricSample.civil_date == day,
+                MetricSample.value.is_not(None),
+            )
+        ).all()
+        return float(mean(values)) if values else None
     if summary is None:
         return None
     value = getattr(summary, metric, None)
