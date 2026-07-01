@@ -55,6 +55,11 @@ struct DashboardAPIClient {
         return try await fetch("/metrics/skin_temperature_variation/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
     }
 
+    func loadOxygenSaturationDetail(date: Date = Date(), timeframe: ScoreTimeframe) async throws -> OxygenSaturationDetail {
+        let dateString = Self.apiDate.string(from: date)
+        return try await fetch("/metrics/oxygen_saturation/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
+    }
+
     func loadHeartRateDetail(date: Date = Date(), timeframe: ScoreTimeframe) async throws -> HeartRateDetail {
         let dateString = Self.apiDate.string(from: date)
         return try await fetch("/metrics/heart_rate/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")

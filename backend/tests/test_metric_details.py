@@ -186,6 +186,32 @@ def test_hrv_metric_detail_handles_missing_previous_period(session, auth_headers
     assert payload["summary"]["absolute_change"] is None
 
 
+def test_oxygen_saturation_metric_detail_uses_spo2_title(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 15)
+    session.add(
+        DailySummary(
+            user_id=user.id,
+            summary_date=day,
+            oxygen_saturation=97.0,
+            data_quality="strong",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/oxygen_saturation/detail",
+        params={"date": day.isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "Weekly SpO2"
+    assert payload["metric"] == "oxygen_saturation"
+    assert payload["unit"] == "percent"
+
+
 def test_metrics_dashboard_summary_batches_metric_cards(session, auth_headers) -> None:
     user = _user(session)
     start = date(2026, 6, 17)

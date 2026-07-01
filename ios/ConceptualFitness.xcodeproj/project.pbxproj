@@ -37,6 +37,7 @@
 		01000000000000000000001C /* HeartRateDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000001F /* HeartRateDetailView.swift */; };
 		01000000000000000000001D /* HeartRateZones.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000020 /* HeartRateZones.swift */; };
 		01000000000000000000001E /* SkinTemperatureVariationDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000021 /* SkinTemperatureVariationDetailView.swift */; };
+		01000000000000000000001F /* OxygenSaturationDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000022 /* OxygenSaturationDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +74,7 @@
 		02000000000000000000001F /* HeartRateDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateDetailView.swift; sourceTree = "<group>"; };
 		020000000000000000000020 /* HeartRateZones.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartRateZones.swift; sourceTree = "<group>"; };
 		020000000000000000000021 /* SkinTemperatureVariationDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkinTemperatureVariationDetailView.swift; sourceTree = "<group>"; };
+		020000000000000000000022 /* OxygenSaturationDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OxygenSaturationDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -138,6 +140,7 @@
 				02000000000000000000001D /* HRVDetailView.swift */,
 				02000000000000000000001E /* RestingHeartRateDetailView.swift */,
 				020000000000000000000021 /* SkinTemperatureVariationDetailView.swift */,
+				020000000000000000000022 /* OxygenSaturationDetailView.swift */,
 				02000000000000000000001F /* HeartRateDetailView.swift */,
 				02000000000000000000001C /* WorkoutDetailView.swift */,
 			);
@@ -287,6 +290,7 @@
 				01000000000000000000001C /* HeartRateDetailView.swift in Sources */,
 				01000000000000000000001D /* HeartRateZones.swift in Sources */,
 				01000000000000000000001E /* SkinTemperatureVariationDetailView.swift in Sources */,
+				01000000000000000000001F /* OxygenSaturationDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
