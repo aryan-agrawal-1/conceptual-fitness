@@ -208,6 +208,8 @@ private extension View {
                     SkinTemperatureVariationDetailView(client: client)
                 } else if metric == "oxygen_saturation" {
                     OxygenSaturationDetailView(client: client)
+                } else if metric == "respiratory_rate" {
+                    RespiratoryRateDetailView(client: client)
                 } else if metric == "heart_rate" {
                     HeartRateDetailView(client: client)
                 } else {

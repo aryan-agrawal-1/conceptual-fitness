@@ -332,6 +332,16 @@ def _metric_detail_title(config: MetricDetailConfig, timeframe: str | None) -> s
         if timeframe == "day":
             return "Daily SpO2"
         return "SpO2"
+    if config.metric == "respiratory_rate":
+        if timeframe == "year":
+            return "Yearly Respiratory Rate"
+        if timeframe == "month":
+            return "Monthly Respiratory Rate"
+        if timeframe == "week":
+            return "Weekly Respiratory Rate"
+        if timeframe == "day":
+            return "Daily Respiratory Rate"
+        return "Respiratory Rate"
     return config.metric.replace("_", " ").title()
 
 

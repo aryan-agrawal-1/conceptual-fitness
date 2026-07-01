@@ -579,6 +579,7 @@ struct RestingHeartRateDetail: Decodable {
 
 typealias SkinTemperatureVariationDetail = RestingHeartRateDetail
 typealias OxygenSaturationDetail = RestingHeartRateDetail
+typealias RespiratoryRateDetail = RestingHeartRateDetail
 
 struct HeartRateDetail: Decodable {
     let metric: String

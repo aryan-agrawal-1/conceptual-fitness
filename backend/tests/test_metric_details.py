@@ -212,6 +212,32 @@ def test_oxygen_saturation_metric_detail_uses_spo2_title(session, auth_headers) 
     assert payload["unit"] == "percent"
 
 
+def test_respiratory_rate_metric_detail_uses_readable_title(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 15)
+    session.add(
+        DailySummary(
+            user_id=user.id,
+            summary_date=day,
+            respiratory_rate=14.6,
+            data_quality="strong",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/respiratory_rate/detail",
+        params={"date": day.isoformat(), "timeframe": "week"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "Weekly Respiratory Rate"
+    assert payload["metric"] == "respiratory_rate"
+    assert payload["unit"] == "breaths_per_min"
+
+
 def test_metrics_dashboard_summary_batches_metric_cards(session, auth_headers) -> None:
     user = _user(session)
     start = date(2026, 6, 17)
