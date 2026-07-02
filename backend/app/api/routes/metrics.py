@@ -35,9 +35,11 @@ from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION, _adjusted
 from app.services.metric_rollups import (
     HEART_RATE_MINUTE_RETENTION_DAYS,
     HIGH_VOLUME_METRICS,
+    STEP_HOURLY_RETENTION_DAYS,
     RollupPoint,
     SUM_METRICS,
     daily_rollup_values,
+    hourly_rollup_points_for_metric,
     rollup_points_for_metric,
 )
 
@@ -222,6 +224,8 @@ def _metric_detail_payload(
     if metric == "heart_rate":
         profile = get_or_create_profile(session, user_id)
         payload.update(_heart_rate_detail_extras(session, user_id, profile, start, end, timeframe))
+    if metric == "steps":
+        payload.update(_steps_detail_extras(session, user_id, start, end, timeframe))
     return payload
 
 
@@ -522,6 +526,52 @@ def _heart_rate_workouts(
         .limit(12)
     ).all()
     return [_workout_summary_payload(session, user_id, profile, workout) for workout in workouts]
+
+
+def _steps_detail_extras(
+    session: DbSession,
+    user_id: str,
+    start: date,
+    end: date,
+    timeframe: str | None,
+) -> dict[str, object]:
+    intraday_points = _steps_intraday_points(session, user_id, start, end, timeframe)
+    return {
+        "intraday": {
+            "available": bool(intraday_points),
+            "retention_days": STEP_HOURLY_RETENTION_DAYS,
+            "bucket": "hour",
+            "points": intraday_points,
+        },
+    }
+
+
+def _steps_intraday_points(
+    session: DbSession,
+    user_id: str,
+    start: date,
+    end: date,
+    timeframe: str | None,
+) -> list[dict[str, object]]:
+    if timeframe != "day" or start != end:
+        return []
+    return [
+        {
+            "bucket_start": point.observed_at,
+            "date": point.civil_date,
+            "value": _rounded(point.value),
+            "unit": point.unit,
+            "source_platform": point.source_platform,
+            "source_device": point.source_device,
+        }
+        for point in hourly_rollup_points_for_metric(
+            session,
+            user_id=user_id,
+            metric="steps",
+            start=start,
+            end=end,
+        )
+    ]
 
 
 def _heart_rate_period_zones(workouts: list[dict[str, object]]) -> list[dict[str, object]]:

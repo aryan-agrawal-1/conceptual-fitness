@@ -9,6 +9,7 @@ from app.models import (
     DailyBaseline,
     DailySummary,
     MetricDailyRollup,
+    MetricHourlyRollup,
     MetricInterval,
     MetricMinuteRollup,
     MetricSample,
@@ -521,6 +522,65 @@ def test_heart_rate_detail_includes_intraday_sleep_and_workout_drivers(session, 
     assert payload["drivers"]["workouts"][0]["id"] == workout.id
     assert payload["zones"]["items"][0]["seconds"] == 600
     assert payload["zones"]["items"][2]["seconds"] == 1200
+
+
+def test_steps_metric_detail_includes_hourly_intraday_points(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 19)
+    session.add(
+        DailySummary(
+            user_id=user.id,
+            summary_date=day,
+            steps=1500,
+            data_quality="strong",
+        )
+    )
+    session.add(
+        MetricHourlyRollup(
+            user_id=user.id,
+            metric="steps",
+            bucket_start=_dt(day, 8),
+            civil_date=day,
+            avg_value=400,
+            min_value=400,
+            max_value=400,
+            sum_value=400,
+            sample_count=1,
+            unit="count",
+            source_platform="FITBIT",
+        )
+    )
+    session.add(
+        MetricHourlyRollup(
+            user_id=user.id,
+            metric="steps",
+            bucket_start=_dt(day, 9),
+            civil_date=day,
+            avg_value=1100,
+            min_value=1100,
+            max_value=1100,
+            sum_value=1100,
+            sample_count=1,
+            unit="count",
+            source_platform="FITBIT",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/steps/detail",
+        params={"date": day.isoformat(), "timeframe": "day"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["primary_value"] == 1500.0
+    assert payload["intraday"]["available"] is True
+    assert payload["intraday"]["bucket"] == "hour"
+    assert payload["intraday"]["retention_days"] == 90
+    assert [point["value"] for point in payload["intraday"]["points"]] == [400.0, 1100.0]
+    assert payload["intraday"]["points"][0]["source_platform"] == "FITBIT"
 
 
 def test_metric_detail_prefers_fitbit_activity_interval_totals(session, auth_headers) -> None:

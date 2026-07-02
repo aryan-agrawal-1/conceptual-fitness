@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -8,6 +8,7 @@ from app.models import (
     DailySummary,
     GoogleAccount,
     MetricDailyRollup,
+    MetricHourlyRollup,
     MetricInterval,
     MetricSample,
     RawHealthRecord,
@@ -15,7 +16,12 @@ from app.models import (
     User,
     UserProfile,
 )
-from app.services.metric_rollups import HighVolumeRecord, replace_high_volume_rollups
+from app.services.metric_rollups import (
+    STEP_HOURLY_RETENTION_DAYS,
+    HighVolumeRecord,
+    cleanup_high_volume_storage,
+    replace_high_volume_rollups,
+)
 from app.services.normalization import _content_hash, upsert_raw_and_normalized
 from app.services.summaries import rebuild_daily_summaries
 
@@ -458,6 +464,101 @@ def test_high_volume_daily_rollups_prefer_fitbit_activity_totals(session) -> Non
     assert summary.steps == 1200
     assert summary.distance_meters == 1500
     assert summary.active_calories == 220
+
+
+def test_steps_high_volume_rollups_store_hourly_buckets_with_source_priority(session) -> None:
+    account = _account(session)
+    day = date(2026, 6, 15)
+
+    replace_high_volume_rollups(
+        session,
+        account=account,
+        metric="steps",
+        records=[
+            HighVolumeRecord(
+                data_type="steps",
+                metric="steps",
+                value=1200,
+                unit="count",
+                source_platform="FITBIT",
+                source_device=None,
+                civil_date=day,
+                start_time=datetime(2026, 6, 15, 8, 30, tzinfo=UTC),
+                end_time=datetime(2026, 6, 15, 10, 30, tzinfo=UTC),
+            ),
+            HighVolumeRecord(
+                data_type="steps",
+                metric="steps",
+                value=800,
+                unit="count",
+                source_platform="HEALTH_KIT",
+                source_device=None,
+                civil_date=day,
+                start_time=datetime(2026, 6, 15, 8, 30, tzinfo=UTC),
+                end_time=datetime(2026, 6, 15, 10, 30, tzinfo=UTC),
+            ),
+            HighVolumeRecord(
+                data_type="steps",
+                metric="steps",
+                value=200,
+                unit="count",
+                source_platform="HEALTH_KIT",
+                source_device=None,
+                civil_date=day,
+                start_time=datetime(2026, 6, 15, 11, tzinfo=UTC),
+                end_time=datetime(2026, 6, 15, 12, tzinfo=UTC),
+            ),
+        ],
+        range_start=datetime(2026, 6, 15, tzinfo=UTC),
+        range_end=datetime(2026, 6, 16, tzinfo=UTC),
+    )
+    session.commit()
+
+    hourly = session.scalars(
+        select(MetricHourlyRollup)
+        .where(MetricHourlyRollup.metric == "steps")
+        .order_by(MetricHourlyRollup.bucket_start)
+    ).all()
+    assert [(row.bucket_start.hour, row.sum_value, row.source_platform) for row in hourly] == [
+        (8, 300, "FITBIT"),
+        (9, 600, "FITBIT"),
+        (10, 300, "FITBIT"),
+        (11, 200, "HEALTH_KIT"),
+    ]
+
+    daily = session.scalar(select(MetricDailyRollup).where(MetricDailyRollup.metric == "steps"))
+    assert daily is not None
+    assert daily.sum_value == 1400
+
+
+def test_cleanup_high_volume_storage_retains_recent_hourly_steps(session) -> None:
+    account = _account(session)
+    today = date(2026, 6, 15)
+    old_day = today - timedelta(days=STEP_HOURLY_RETENTION_DAYS + 1)
+    kept_day = today - timedelta(days=STEP_HOURLY_RETENTION_DAYS)
+
+    for metric, day in (("steps", old_day), ("steps", kept_day), ("distance", today)):
+        session.add(
+            MetricHourlyRollup(
+                user_id=account.user_id,
+                metric=metric,
+                bucket_start=datetime.combine(day, datetime.min.time(), tzinfo=UTC),
+                civil_date=day,
+                sum_value=100,
+                sample_count=1,
+                unit="count",
+            )
+        )
+    session.commit()
+
+    counts = cleanup_high_volume_storage(session, today=today)
+    session.commit()
+
+    remaining = session.scalars(
+        select(MetricHourlyRollup).order_by(MetricHourlyRollup.metric, MetricHourlyRollup.civil_date)
+    ).all()
+    assert counts["metric_hourly_rollups"] == 2
+    assert [(row.metric, row.civil_date) for row in remaining] == [("steps", kept_day)]
 
 
 def test_daily_summary_prefers_daily_derived_samples(session) -> None:

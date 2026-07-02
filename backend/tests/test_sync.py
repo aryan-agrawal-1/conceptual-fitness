@@ -15,6 +15,7 @@ from app.models import (
     ConnectionStatus,
     GoogleAccount,
     MetricDailyRollup,
+    MetricHourlyRollup,
     MetricInterval,
     MetricMinuteRollup,
     MetricSample,
@@ -717,6 +718,11 @@ async def test_heart_rate_failure_does_not_block_other_data_types(session) -> No
         select(MetricMinuteRollup).where(MetricMinuteRollup.metric == "steps")
     ).all()
     assert steps_minute_rollups == []
+    steps_hourly_rollups = session.scalars(
+        select(MetricHourlyRollup).where(MetricHourlyRollup.metric == "steps")
+    ).all()
+    assert len(steps_hourly_rollups) == 1
+    assert sum(row.sum_value or 0 for row in steps_hourly_rollups) == 100
     steps_daily_rollups = session.scalars(
         select(MetricDailyRollup).where(MetricDailyRollup.metric == "steps")
     ).all()
