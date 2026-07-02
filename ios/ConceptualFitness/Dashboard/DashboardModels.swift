@@ -581,6 +581,76 @@ typealias SkinTemperatureVariationDetail = RestingHeartRateDetail
 typealias OxygenSaturationDetail = RestingHeartRateDetail
 typealias RespiratoryRateDetail = RestingHeartRateDetail
 
+struct StepsDetail: Decodable {
+    let metric: String
+    let unit: String
+    let timeframe: String?
+    let range: MetricDetailRange
+    let current: MetricPoint?
+    let previous: MetricPoint?
+    let trend: MetricTrend
+    let summary: BaselineMetricSummary
+    let chart: BaselineMetricChart
+    let distribution: BaselineMetricDistribution
+    let coverage: MetricCoverage
+    let series: [BaselineMetricChartPoint]
+    let intraday: StepsIntraday
+    let dataQuality: String?
+    let higherIsBetter: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case metric
+        case unit
+        case timeframe
+        case range
+        case current
+        case previous
+        case trend
+        case summary
+        case chart
+        case distribution
+        case coverage
+        case series
+        case intraday
+        case dataQuality = "data_quality"
+        case higherIsBetter = "higher_is_better"
+    }
+}
+
+struct StepsIntraday: Decodable {
+    let available: Bool
+    let retentionDays: Int?
+    let bucket: String?
+    let points: [StepsIntradayPoint]
+
+    enum CodingKeys: String, CodingKey {
+        case available
+        case retentionDays = "retention_days"
+        case bucket
+        case points
+    }
+}
+
+struct StepsIntradayPoint: Decodable, Identifiable {
+    let bucketStart: String?
+    let date: String?
+    let value: Double?
+    let unit: String?
+    let sourcePlatform: String?
+    let sourceDevice: String?
+
+    var id: String { "\(bucketStart ?? "hour")-\(value?.clean ?? "--")" }
+
+    enum CodingKeys: String, CodingKey {
+        case bucketStart = "bucket_start"
+        case date
+        case value
+        case unit
+        case sourcePlatform = "source_platform"
+        case sourceDevice = "source_device"
+    }
+}
+
 struct HeartRateDetail: Decodable {
     let metric: String
     let unit: String

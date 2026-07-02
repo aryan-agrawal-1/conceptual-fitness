@@ -70,6 +70,11 @@ struct DashboardAPIClient {
         return try await fetch("/metrics/heart_rate/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
     }
 
+    func loadStepsDetail(date: Date = Date(), timeframe: ScoreTimeframe) async throws -> StepsDetail {
+        let dateString = Self.apiDate.string(from: date)
+        return try await fetch("/metrics/steps/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
+    }
+
     func loadWorkoutDetail(id: String) async throws -> WorkoutDetail {
         try await fetch("/workouts/\(id)")
     }
