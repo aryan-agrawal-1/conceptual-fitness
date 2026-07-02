@@ -583,6 +583,64 @@ def test_steps_metric_detail_includes_hourly_intraday_points(session, auth_heade
     assert payload["intraday"]["points"][0]["source_platform"] == "FITBIT"
 
 
+def test_total_calories_metric_detail_includes_hourly_intraday_points(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 19)
+    session.add(
+        DailySummary(
+            user_id=user.id,
+            summary_date=day,
+            total_calories=330,
+            data_quality="strong",
+        )
+    )
+    session.add(
+        MetricHourlyRollup(
+            user_id=user.id,
+            metric="total_calories",
+            bucket_start=_dt(day, 8),
+            civil_date=day,
+            avg_value=120,
+            min_value=120,
+            max_value=120,
+            sum_value=120,
+            sample_count=1,
+            unit="kcal",
+            source_platform="FITBIT",
+        )
+    )
+    session.add(
+        MetricHourlyRollup(
+            user_id=user.id,
+            metric="total_calories",
+            bucket_start=_dt(day, 9),
+            civil_date=day,
+            avg_value=210,
+            min_value=210,
+            max_value=210,
+            sum_value=210,
+            sample_count=1,
+            unit="kcal",
+            source_platform="FITBIT",
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).get(
+        "/metrics/total_calories/detail",
+        params={"date": day.isoformat(), "timeframe": "day"},
+        headers=auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["primary_value"] == 330.0
+    assert payload["intraday"]["available"] is True
+    assert payload["intraday"]["bucket"] == "hour"
+    assert payload["intraday"]["retention_days"] == 90
+    assert [point["value"] for point in payload["intraday"]["points"]] == [120.0, 210.0]
+
+
 def test_metric_detail_prefers_fitbit_activity_interval_totals(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)

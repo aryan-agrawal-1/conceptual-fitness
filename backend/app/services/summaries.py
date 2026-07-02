@@ -50,7 +50,7 @@ def rebuild_daily_summaries(
             end=end,
             value_kind="sum",
         )
-        for metric in ("steps", "active_calories", "distance")
+        for metric in ("steps", "active_calories", "total_calories", "distance")
     }
     rollup_sample_averages = {
         metric: daily_rollup_values(
@@ -114,7 +114,9 @@ def rebuild_daily_summaries(
         summary.active_calories = _optional_float(
             totals.get("active_calories") or rollup_totals["active_calories"].get(day)
         )
-        summary.total_calories = _optional_float(totals.get("total_calories"))
+        summary.total_calories = _optional_float(
+            totals.get("total_calories") or rollup_totals["total_calories"].get(day)
+        )
         summary.distance_meters = _optional_float(
             totals.get("distance") or rollup_totals["distance"].get(day)
         )

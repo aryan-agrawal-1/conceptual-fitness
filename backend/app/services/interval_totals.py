@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import MetricInterval, RawHealthRecord
 
 
-FITBIT_PREFERRED_ACTIVITY_METRICS = {"steps", "distance", "active_calories"}
+FITBIT_PREFERRED_ACTIVITY_METRICS = {"steps", "distance", "active_calories", "total_calories"}
 
 
 def interval_totals_by_date(

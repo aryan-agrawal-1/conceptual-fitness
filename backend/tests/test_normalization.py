@@ -366,6 +366,7 @@ def test_daily_summary_prefers_fitbit_activity_totals(session) -> None:
         ("steps", "count", 1200, 800),
         ("distance", "meters", 1500, 1000),
         ("active_calories", "kcal", 220, 110),
+        ("total_calories", "kcal", 2300, 1900),
     ):
         session.add(
             MetricInterval(
@@ -404,6 +405,7 @@ def test_daily_summary_prefers_fitbit_activity_totals(session) -> None:
     assert summary.steps == 1200
     assert summary.distance_meters == 1500
     assert summary.active_calories == 220
+    assert summary.total_calories == 2300
 
 
 def test_high_volume_daily_rollups_prefer_fitbit_activity_totals(session) -> None:
@@ -416,6 +418,7 @@ def test_high_volume_daily_rollups_prefer_fitbit_activity_totals(session) -> Non
         ("steps", "count", 1200, 800),
         ("distance", "meters", 1500, 1000),
         ("active_calories", "kcal", 220, 110),
+        ("total_calories", "kcal", 2300, 1900),
     ):
         replace_high_volume_rollups(
             session,
@@ -459,27 +462,31 @@ def test_high_volume_daily_rollups_prefer_fitbit_activity_totals(session) -> Non
     assert rollups["steps"].sum_value == 1200
     assert rollups["distance"].sum_value == 1500
     assert rollups["active_calories"].sum_value == 220
+    assert rollups["total_calories"].sum_value == 2300
 
     summary = session.scalar(select(DailySummary))
     assert summary.steps == 1200
     assert summary.distance_meters == 1500
     assert summary.active_calories == 220
+    assert summary.total_calories == 2300
 
 
-def test_steps_high_volume_rollups_store_hourly_buckets_with_source_priority(session) -> None:
+def test_total_calories_high_volume_rollups_store_hourly_buckets_with_source_priority(
+    session,
+) -> None:
     account = _account(session)
     day = date(2026, 6, 15)
 
     replace_high_volume_rollups(
         session,
         account=account,
-        metric="steps",
+        metric="total_calories",
         records=[
             HighVolumeRecord(
-                data_type="steps",
-                metric="steps",
+                data_type="total-calories",
+                metric="total_calories",
                 value=1200,
-                unit="count",
+                unit="kcal",
                 source_platform="FITBIT",
                 source_device=None,
                 civil_date=day,
@@ -487,10 +494,10 @@ def test_steps_high_volume_rollups_store_hourly_buckets_with_source_priority(ses
                 end_time=datetime(2026, 6, 15, 10, 30, tzinfo=UTC),
             ),
             HighVolumeRecord(
-                data_type="steps",
-                metric="steps",
+                data_type="total-calories",
+                metric="total_calories",
                 value=800,
-                unit="count",
+                unit="kcal",
                 source_platform="HEALTH_KIT",
                 source_device=None,
                 civil_date=day,
@@ -498,10 +505,10 @@ def test_steps_high_volume_rollups_store_hourly_buckets_with_source_priority(ses
                 end_time=datetime(2026, 6, 15, 10, 30, tzinfo=UTC),
             ),
             HighVolumeRecord(
-                data_type="steps",
-                metric="steps",
+                data_type="total-calories",
+                metric="total_calories",
                 value=200,
-                unit="count",
+                unit="kcal",
                 source_platform="HEALTH_KIT",
                 source_device=None,
                 civil_date=day,
@@ -516,7 +523,7 @@ def test_steps_high_volume_rollups_store_hourly_buckets_with_source_priority(ses
 
     hourly = session.scalars(
         select(MetricHourlyRollup)
-        .where(MetricHourlyRollup.metric == "steps")
+        .where(MetricHourlyRollup.metric == "total_calories")
         .order_by(MetricHourlyRollup.bucket_start)
     ).all()
     assert [(row.bucket_start.hour, row.sum_value, row.source_platform) for row in hourly] == [
@@ -526,18 +533,24 @@ def test_steps_high_volume_rollups_store_hourly_buckets_with_source_priority(ses
         (11, 200, "HEALTH_KIT"),
     ]
 
-    daily = session.scalar(select(MetricDailyRollup).where(MetricDailyRollup.metric == "steps"))
+    daily = session.scalar(select(MetricDailyRollup).where(MetricDailyRollup.metric == "total_calories"))
     assert daily is not None
     assert daily.sum_value == 1400
 
 
-def test_cleanup_high_volume_storage_retains_recent_hourly_steps(session) -> None:
+def test_cleanup_high_volume_storage_retains_recent_hourly_activity_rollups(session) -> None:
     account = _account(session)
     today = date(2026, 6, 15)
     old_day = today - timedelta(days=STEP_HOURLY_RETENTION_DAYS + 1)
     kept_day = today - timedelta(days=STEP_HOURLY_RETENTION_DAYS)
 
-    for metric, day in (("steps", old_day), ("steps", kept_day), ("distance", today)):
+    for metric, day in (
+        ("steps", old_day),
+        ("steps", kept_day),
+        ("distance", today),
+        ("active_calories", today),
+        ("total_calories", today),
+    ):
         session.add(
             MetricHourlyRollup(
                 user_id=account.user_id,
@@ -558,7 +571,11 @@ def test_cleanup_high_volume_storage_retains_recent_hourly_steps(session) -> Non
         select(MetricHourlyRollup).order_by(MetricHourlyRollup.metric, MetricHourlyRollup.civil_date)
     ).all()
     assert counts["metric_hourly_rollups"] == 2
-    assert [(row.metric, row.civil_date) for row in remaining] == [("steps", kept_day)]
+    assert [(row.metric, row.civil_date) for row in remaining] == [
+        ("distance", today),
+        ("steps", kept_day),
+        ("total_calories", today),
+    ]
 
 
 def test_daily_summary_prefers_daily_derived_samples(session) -> None:

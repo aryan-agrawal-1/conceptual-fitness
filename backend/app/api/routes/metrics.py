@@ -33,9 +33,9 @@ from app.services.health_dates import (
 )
 from app.services.scores import BASELINE_VERSION, SLEEP_SCORE_VERSION, _adjusted_sleep_need_minutes
 from app.services.metric_rollups import (
+    ACTIVITY_HOURLY_RETENTION_DAYS,
     HEART_RATE_MINUTE_RETENTION_DAYS,
     HIGH_VOLUME_METRICS,
-    STEP_HOURLY_RETENTION_DAYS,
     RollupPoint,
     SUM_METRICS,
     daily_rollup_values,
@@ -224,8 +224,8 @@ def _metric_detail_payload(
     if metric == "heart_rate":
         profile = get_or_create_profile(session, user_id)
         payload.update(_heart_rate_detail_extras(session, user_id, profile, start, end, timeframe))
-    if metric == "steps":
-        payload.update(_steps_detail_extras(session, user_id, start, end, timeframe))
+    if metric in {"steps", "total_calories", "distance"}:
+        payload.update(_activity_detail_extras(session, user_id, metric, start, end, timeframe))
     return payload
 
 
@@ -528,27 +528,29 @@ def _heart_rate_workouts(
     return [_workout_summary_payload(session, user_id, profile, workout) for workout in workouts]
 
 
-def _steps_detail_extras(
+def _activity_detail_extras(
     session: DbSession,
     user_id: str,
+    metric: str,
     start: date,
     end: date,
     timeframe: str | None,
 ) -> dict[str, object]:
-    intraday_points = _steps_intraday_points(session, user_id, start, end, timeframe)
+    intraday_points = _activity_intraday_points(session, user_id, metric, start, end, timeframe)
     return {
         "intraday": {
             "available": bool(intraday_points),
-            "retention_days": STEP_HOURLY_RETENTION_DAYS,
+            "retention_days": ACTIVITY_HOURLY_RETENTION_DAYS,
             "bucket": "hour",
             "points": intraday_points,
         },
     }
 
 
-def _steps_intraday_points(
+def _activity_intraday_points(
     session: DbSession,
     user_id: str,
+    metric: str,
     start: date,
     end: date,
     timeframe: str | None,
@@ -567,7 +569,7 @@ def _steps_intraday_points(
         for point in hourly_rollup_points_for_metric(
             session,
             user_id=user_id,
-            metric="steps",
+            metric=metric,
             start=start,
             end=end,
         )

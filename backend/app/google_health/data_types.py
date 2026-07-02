@@ -19,7 +19,9 @@ class DataTypeSpec:
     unit: str
     filter_time_path: str
     prefer_reconcile: bool = False
+    prefer_rollup: bool = False
     prefer_daily_rollup: bool = False
+    rollup_window_seconds: int = 3600
     supports_filter: bool = True
     chunk_days: int | None = None
     page_size: int | None = None
@@ -73,7 +75,8 @@ DATA_TYPE_SPECS: dict[str, DataTypeSpec] = {
         storage="interval",
         unit="kcal",
         filter_time_path="total_calories.interval.civil_start_time",
-        prefer_daily_rollup=True,
+        prefer_rollup=True,
+        page_size=336,
     ),
     "heart-rate": DataTypeSpec(
         data_type="heart-rate",

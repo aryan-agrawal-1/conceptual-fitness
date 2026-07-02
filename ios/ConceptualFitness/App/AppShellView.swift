@@ -214,6 +214,8 @@ private extension View {
                     HeartRateDetailView(client: client)
                 } else if metric == "steps" {
                     StepsDetailView(client: client)
+                } else if metric == "total_calories" {
+                    CaloriesBurnedDetailView(client: client)
                 } else {
                     PlaceholderDetailView(
                         title: metric,

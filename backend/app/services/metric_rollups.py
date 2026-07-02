@@ -24,6 +24,7 @@ HIGH_VOLUME_DATA_TYPES = {
     "heart-rate",
     "time-in-heart-rate-zone",
     "active-energy-burned",
+    "total-calories",
     "oxygen-saturation",
     "steps",
     "distance",
@@ -32,13 +33,14 @@ HIGH_VOLUME_METRICS = {
     "heart_rate",
     "time_in_heart_rate_zone",
     "active_calories",
+    "total_calories",
     "oxygen_saturation",
     "steps",
     "distance",
 }
 MINUTE_ROLLUP_METRICS = {"heart_rate"}
-HOURLY_ROLLUP_METRICS = {"steps"}
-SUM_METRICS = {"time_in_heart_rate_zone", "active_calories", "steps", "distance"}
+HOURLY_ROLLUP_METRICS = {"distance", "steps", "total_calories"}
+SUM_METRICS = {"time_in_heart_rate_zone", "active_calories", "total_calories", "steps", "distance"}
 SOURCE_PLATFORM_PRIORITY = {
     "FITBIT": 0,
     "HEALTH_KIT": 1,
@@ -50,7 +52,8 @@ EPHEMERAL_RAW_DATA_TYPES = HIGH_VOLUME_DATA_TYPES | {
 EPHEMERAL_INTERVAL_METRICS = HIGH_VOLUME_METRICS | {"active_zone_minutes"}
 RAW_RECORD_RETENTION_DAYS = 2
 HEART_RATE_MINUTE_RETENTION_DAYS = 14
-STEP_HOURLY_RETENTION_DAYS = 90
+ACTIVITY_HOURLY_RETENTION_DAYS = 90
+STEP_HOURLY_RETENTION_DAYS = ACTIVITY_HOURLY_RETENTION_DAYS
 BASELINE_RETENTION_DAYS = 180
 
 
@@ -244,7 +247,7 @@ def cleanup_high_volume_storage(
 ) -> dict[str, int]:
     raw_cutoff = today - timedelta(days=RAW_RECORD_RETENTION_DAYS)
     heart_rate_minute_cutoff = today - timedelta(days=HEART_RATE_MINUTE_RETENTION_DAYS)
-    step_hourly_cutoff = today - timedelta(days=STEP_HOURLY_RETENTION_DAYS)
+    activity_hourly_cutoff = today - timedelta(days=ACTIVITY_HOURLY_RETENTION_DAYS)
     baseline_cutoff = today - timedelta(days=BASELINE_RETENTION_DAYS)
     counts: dict[str, int] = {}
     counts["metric_samples"] = _delete_count(
@@ -290,7 +293,7 @@ def cleanup_high_volume_storage(
         session,
         delete(MetricHourlyRollup).where(
             (MetricHourlyRollup.metric.not_in(HOURLY_ROLLUP_METRICS))
-            | (MetricHourlyRollup.civil_date < step_hourly_cutoff)
+            | (MetricHourlyRollup.civil_date < activity_hourly_cutoff)
         ),
     )
     counts["daily_baselines"] = _delete_count(

@@ -249,7 +249,15 @@ async def sync_google_account_range(
 
     for data_type in data_types:
         spec = DATA_TYPE_SPECS[data_type]
-        endpoint = "daily_rollup" if spec.prefer_daily_rollup else "reconcile" if spec.prefer_reconcile else "list"
+        endpoint = (
+            "rollup"
+            if spec.prefer_rollup
+            else "daily_rollup"
+            if spec.prefer_daily_rollup
+            else "reconcile"
+            if spec.prefer_reconcile
+            else "list"
+        )
         if profile:
             profile.start_type(data_type, endpoint)
         type_started = perf_counter()
@@ -370,6 +378,69 @@ async def _sync_data_type(
     spec = DATA_TYPE_SPECS[data_type]
     records_seen = 0
     records_stored = 0
+
+    if spec.prefer_rollup:
+        for chunk_start, chunk_end in _rollup_physical_chunks(
+            _range_start_datetime(session, account, spec.filter_time_path, bounds.start),
+            _range_end_datetime(session, account, spec.filter_time_path, bounds.end),
+        ):
+            if profile:
+                profile.record_chunk(data_type)
+            page_token: str | None = None
+            chunk_points: list[dict[str, object]] = []
+            while True:
+                points, next_page_token = await anext(
+                    client.iter_rollup_data_point_pages_with_tokens(
+                        data_type,
+                        access_token,
+                        start_time=_google_datetime(chunk_start),
+                        end_time=_google_datetime(chunk_end),
+                        window_size=f"{spec.rollup_window_seconds}s",
+                        page_size=spec.page_size,
+                        page_token=page_token,
+                    )
+                )
+                if profile:
+                    profile.record_page(data_type)
+                records_seen += len(points)
+                chunk_points.extend(
+                    _physical_rollup_data_points(
+                        data_type,
+                        spec.payload_key,
+                        points,
+                        timezone=_account_timezone(session, account),
+                    )
+                )
+                page_token = next_page_token
+                if not page_token:
+                    break
+            store_started = perf_counter()
+            records = high_volume_records_for_points(
+                data_type=data_type,
+                points=chunk_points,
+            )
+            stored = replace_high_volume_rollups(
+                session,
+                account=account,
+                metric=spec.metric,
+                records=records,
+                range_start=chunk_start,
+                range_end=chunk_end,
+            )
+            records_stored += stored
+            if profile:
+                profile.record_store(
+                    data_type,
+                    seconds=perf_counter() - store_started,
+                    seen=len(chunk_points),
+                    stored=stored,
+                )
+            cursor.last_successful_start = bounds.start
+            cursor.last_successful_end = bounds.end
+            cursor.last_page_token = None
+            session.add(cursor)
+            session.commit()
+        return records_seen, records_stored
 
     if spec.prefer_daily_rollup:
         for chunk_start, chunk_end in _rollup_chunks(bounds.start, bounds.end):
@@ -989,6 +1060,79 @@ def _rollup_chunks(start: date, end: date) -> list[tuple[date, date]]:
         chunks.append((current, chunk_end))
         current = chunk_end + timedelta(days=1)
     return chunks
+
+
+def _physical_rollup_data_points(
+    data_type: str,
+    payload_key: str,
+    items: list[dict[str, object]],
+    *,
+    timezone: ZoneInfo,
+) -> list[dict[str, object]]:
+    points: list[dict[str, object]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        start_time = _parse_google_datetime(item.get("startTime"))
+        end_time = _parse_google_datetime(item.get("endTime"))
+        if start_time is None or end_time is None:
+            continue
+        value_payload = dict(item.get(payload_key) or {})
+        value_payload["interval"] = {
+            "startTime": _google_datetime(start_time),
+            "endTime": _google_datetime(end_time),
+            "civilStartTime": _civil_datetime_payload(start_time.astimezone(timezone)),
+            "civilEndTime": _civil_datetime_payload(end_time.astimezone(timezone)),
+        }
+        source_id = (
+            f"users/me/dataTypes/{data_type}/rollUp/"
+            f"{start_time.isoformat().replace('+00:00', 'Z') or index}"
+        )
+        points.append(
+            {
+                "name": source_id,
+                "dataSource": {"platform": "GOOGLE_HEALTH_ROLLUP"},
+                payload_key: value_payload,
+            }
+        )
+    return points
+
+
+def _rollup_physical_chunks(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    chunks: list[tuple[datetime, datetime]] = []
+    current = start
+    while current < end:
+        chunk_end = min(end, current + timedelta(days=14))
+        chunks.append((current, chunk_end))
+        current = chunk_end
+    return chunks
+
+
+def _parse_google_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return _ensure_aware(parsed, UTC).astimezone(UTC)
+
+
+def _google_datetime(value: datetime) -> str:
+    return _ensure_aware(value, UTC).astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _civil_datetime_payload(value: datetime) -> dict[str, object]:
+    return {
+        "date": {
+            "year": value.year,
+            "month": value.month,
+            "day": value.day,
+        },
+        "time": {
+            "hours": value.hour,
+            "minutes": value.minute,
+            "seconds": value.second,
+            "nanos": value.microsecond * 1000,
+        },
+    }
 
 
 def _list_chunks(start: date, end: date, *, chunk_days: int | None) -> list[tuple[date, date]]:

@@ -40,3 +40,37 @@ async def test_daily_rollup_uses_closed_open_civil_range(monkeypatch) -> None:
     }
     assert captured["body"]["windowSizeDays"] == 1
     assert captured["body"]["pageSize"] == 14
+
+
+@pytest.mark.asyncio
+async def test_roll_up_uses_physical_range_and_window_size(monkeypatch) -> None:
+    client = GoogleHealthClient()
+    captured: dict[str, Any] = {}
+
+    async def fake_post_json(path: str, access_token: str, body: dict[str, Any]) -> dict[str, Any]:
+        captured["path"] = path
+        captured["access_token"] = access_token
+        captured["body"] = body
+        return {"rollupDataPoints": []}
+
+    monkeypatch.setattr(client, "_post_json", fake_post_json)
+
+    await client.roll_up(
+        "total-calories",
+        "access-token",
+        start_time="2026-06-18T00:00:00Z",
+        end_time="2026-06-19T00:00:00Z",
+        window_size="3600s",
+        page_size=24,
+    )
+
+    assert captured["path"] == "/users/me/dataTypes/total-calories/dataPoints:rollUp"
+    assert captured["access_token"] == "access-token"
+    assert captured["body"] == {
+        "range": {
+            "startTime": "2026-06-18T00:00:00Z",
+            "endTime": "2026-06-19T00:00:00Z",
+        },
+        "windowSize": "3600s",
+        "pageSize": 24,
+    }

@@ -195,6 +195,81 @@ class FakeHeartRateFailureClient:
         ], None
 
 
+class FakeActivityMetricsClient:
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, str]:
+        return {"access_token": "access-token"}
+
+    async def iter_data_point_pages(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        filter_expr: str | None = None,
+        prefer_reconcile: bool = False,
+        page_size: int | None = None,
+    ):
+        async for points, _next_page_token in self.iter_data_point_pages_with_tokens(
+            data_type,
+            access_token,
+            filter_expr=filter_expr,
+            prefer_reconcile=prefer_reconcile,
+            page_size=page_size,
+        ):
+            yield points
+
+    async def iter_data_point_pages_with_tokens(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        filter_expr: str | None = None,
+        prefer_reconcile: bool = False,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ):
+        yield [
+            {
+                "name": "users/me/dataTypes/distance/dataPoints/1",
+                "dataSource": {"platform": "FITBIT"},
+                "distance": {
+                    "interval": {
+                        "startTime": "2026-06-18T08:00:00Z",
+                        "endTime": "2026-06-18T10:00:00Z",
+                        "civilStartTime": {"date": {"year": 2026, "month": 6, "day": 18}},
+                    },
+                    "meters": "1000",
+                },
+            }
+        ], None
+
+    async def iter_rollup_data_point_pages_with_tokens(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        start_time: str,
+        end_time: str,
+        window_size: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ):
+        assert data_type == "total-calories"
+        assert window_size == "3600s"
+        assert page_size == 336
+        yield [
+            {
+                "startTime": "2026-06-18T08:00:00Z",
+                "endTime": "2026-06-18T09:00:00Z",
+                "totalCalories": {"kcalSum": 120},
+            },
+            {
+                "startTime": "2026-06-18T09:00:00Z",
+                "endTime": "2026-06-18T10:00:00Z",
+                "totalCalories": {"kcalSum": 120},
+            },
+        ], None
+
+
 class FakeResumeGoogleHealthClient:
     def __init__(self) -> None:
         self.page_tokens: list[str | None] = []
@@ -745,6 +820,41 @@ async def test_heart_rate_failure_does_not_block_other_data_types(session) -> No
     )
     assert steps_cursor.status.value == "succeeded"
     assert session.get(GoogleAccount, account.id).status == ConnectionStatus.connected
+
+
+@pytest.mark.asyncio
+async def test_activity_metrics_sync_total_calories_to_hourly_and_daily_rollups(session) -> None:
+    account = _connected_account(session)
+
+    result = await sync_google_account_range(
+        session,
+        account=account,
+        start=date(2026, 6, 18),
+        end=date(2026, 6, 18),
+        data_types=("total-calories", "distance"),
+        client=FakeActivityMetricsClient(),
+    )
+
+    assert result.data_types == ["total-calories", "distance"]
+    assert session.scalars(select(MetricInterval)).all() == []
+
+    hourly = session.scalars(
+        select(MetricHourlyRollup).order_by(MetricHourlyRollup.metric, MetricHourlyRollup.bucket_start)
+    ).all()
+    assert [(row.metric, row.bucket_start.hour, row.sum_value) for row in hourly] == [
+        ("distance", 8, 500.0),
+        ("distance", 9, 500.0),
+        ("total_calories", 8, 120.0),
+        ("total_calories", 9, 120.0),
+    ]
+
+    daily = session.scalars(
+        select(MetricDailyRollup).order_by(MetricDailyRollup.metric)
+    ).all()
+    assert [(row.metric, row.sum_value) for row in daily] == [
+        ("distance", 1000.0),
+        ("total_calories", 240.0),
+    ]
 
 
 @pytest.mark.asyncio

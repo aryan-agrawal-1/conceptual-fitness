@@ -163,6 +163,61 @@ class GoogleHealthClient:
             body,
         )
 
+    async def roll_up(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        start_time: str,
+        end_time: str,
+        window_size: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "range": {
+                "startTime": start_time,
+                "endTime": end_time,
+            },
+            "windowSize": window_size,
+            "pageSize": page_size if page_size is not None else self.settings.google_health_page_size,
+        }
+        if page_token:
+            body["pageToken"] = page_token
+        return await self._post_json(
+            f"/users/me/dataTypes/{data_type}/dataPoints:rollUp",
+            access_token,
+            body,
+        )
+
+    async def iter_rollup_data_point_pages_with_tokens(
+        self,
+        data_type: str,
+        access_token: str,
+        *,
+        start_time: str,
+        end_time: str,
+        window_size: str,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> AsyncIterator[tuple[list[dict[str, Any]], str | None]]:
+        while True:
+            payload = await self.roll_up(
+                data_type,
+                access_token,
+                start_time=start_time,
+                end_time=end_time,
+                window_size=window_size,
+                page_size=page_size,
+                page_token=page_token,
+            )
+            next_page_token = payload.get("nextPageToken") or None
+            yield payload.get("rollupDataPoints", []), next_page_token
+            page_token = next_page_token
+            if not next_page_token:
+                return
+            await asyncio.sleep(0.1)
+
     async def iter_data_points(
         self,
         data_type: str,
