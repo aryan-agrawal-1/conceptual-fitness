@@ -16,6 +16,10 @@ struct ConceptualFitnessApp: App {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-FoundationModelsSmokeTest") {
             FoundationModelsSmokeTestView()
+        } else if ProcessInfo.processInfo.arguments.contains("-VO2MaxDetailPreview") {
+            NavigationStack {
+                VO2MaxDetailView(client: DashboardAPIClient(), previewDetail: VO2PreviewData.detail(for: .year))
+            }
         } else if let previewState = DashboardPreviewLaunchState.current {
             previewState.view
         } else {

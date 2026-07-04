@@ -42,6 +42,7 @@
 		010000000000000000000021 /* StepsDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000024 /* StepsDetailView.swift */; };
 		010000000000000000000022 /* CaloriesBurnedDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000025 /* CaloriesBurnedDetailView.swift */; };
 		010000000000000000000023 /* DistanceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000026 /* DistanceDetailView.swift */; };
+		010000000000000000000024 /* VO2MaxDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000027 /* VO2MaxDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -83,6 +84,7 @@
 		020000000000000000000024 /* StepsDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StepsDetailView.swift; sourceTree = "<group>"; };
 		020000000000000000000025 /* CaloriesBurnedDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaloriesBurnedDetailView.swift; sourceTree = "<group>"; };
 		020000000000000000000026 /* DistanceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DistanceDetailView.swift; sourceTree = "<group>"; };
+		020000000000000000000027 /* VO2MaxDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VO2MaxDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -150,6 +152,7 @@
 				020000000000000000000021 /* SkinTemperatureVariationDetailView.swift */,
 				020000000000000000000022 /* OxygenSaturationDetailView.swift */,
 				020000000000000000000023 /* RespiratoryRateDetailView.swift */,
+				020000000000000000000027 /* VO2MaxDetailView.swift */,
 				02000000000000000000001F /* HeartRateDetailView.swift */,
 				020000000000000000000024 /* StepsDetailView.swift */,
 				020000000000000000000025 /* CaloriesBurnedDetailView.swift */,
@@ -304,6 +307,7 @@
 				01000000000000000000001E /* SkinTemperatureVariationDetailView.swift in Sources */,
 				01000000000000000000001F /* OxygenSaturationDetailView.swift in Sources */,
 				010000000000000000000020 /* RespiratoryRateDetailView.swift in Sources */,
+				010000000000000000000024 /* VO2MaxDetailView.swift in Sources */,
 				010000000000000000000021 /* StepsDetailView.swift in Sources */,
 				010000000000000000000022 /* CaloriesBurnedDetailView.swift in Sources */,
 				010000000000000000000023 /* DistanceDetailView.swift in Sources */,

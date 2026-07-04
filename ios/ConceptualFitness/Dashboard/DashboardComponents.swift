@@ -414,13 +414,9 @@ struct MetricCardItem: Identifiable {
             item("heart_rate", "Heart Rate", value(for: "heart_rate", in: data, fallback: nil), "bpm", "heart.text.square.fill", .pink, quality(for: "heart_rate", in: data, fallback: metrics?.dataQuality)),
             item("skin_temperature_variation", "Skin Temp Variation", value(for: "skin_temperature_variation", in: data, fallback: nil), "C", "thermometer", .brown, quality(for: "skin_temperature_variation", in: data, fallback: metrics?.dataQuality)),
             item("oxygen_saturation", "SpO2", value(for: "oxygen_saturation", in: data, fallback: metrics?.oxygenSaturation), "%", "lungs.fill", .cyan, quality(for: "oxygen_saturation", in: data, fallback: metrics?.dataQuality)),
-            item("respiratory_rate", "Respiratory", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), "br/min", "wind", .teal, quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality))
+            item("respiratory_rate", "Respiratory", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), "br/min", "wind", .teal, quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality)),
+            item("vo2_max", "VO2 Max", data.vo2Max?.current?.value ?? value(for: "vo2_max", in: data, fallback: nil), "ml/kg/min", "figure.run", .green, data.vo2Max?.dataQuality ?? quality(for: "vo2_max", in: data, fallback: nil))
         ]
-
-        let vo2 = data.vo2Max?.current?.value ?? value(for: "vo2_max", in: data, fallback: nil)
-        if let vo2 {
-            items.append(item("vo2_max", "VO2 Max", vo2, "ml/kg/min", "figure.run", .green, data.vo2Max?.dataQuality ?? quality(for: "vo2_max", in: data, fallback: nil)))
-        }
 
         items += [
             item("sleep", "Sleep", value(for: "sleep", in: data, fallback: metrics?.sleepMinutes.map(Double.init)), "min", "bed.double.fill", .indigo, quality(for: "sleep", in: data, fallback: metrics?.dataQuality)),

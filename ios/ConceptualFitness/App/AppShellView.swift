@@ -210,6 +210,8 @@ private extension View {
                     OxygenSaturationDetailView(client: client)
                 } else if metric == "respiratory_rate" {
                     RespiratoryRateDetailView(client: client)
+                } else if metric == "vo2_max" {
+                    VO2MaxDetailView(client: client)
                 } else if metric == "heart_rate" {
                     HeartRateDetailView(client: client)
                 } else if metric == "steps" {
