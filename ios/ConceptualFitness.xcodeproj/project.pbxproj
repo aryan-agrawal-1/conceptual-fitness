@@ -43,6 +43,10 @@
 		010000000000000000000022 /* CaloriesBurnedDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000025 /* CaloriesBurnedDetailView.swift */; };
 		010000000000000000000023 /* DistanceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000026 /* DistanceDetailView.swift */; };
 		010000000000000000000024 /* VO2MaxDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000027 /* VO2MaxDetailView.swift */; };
+		010000000000000000000025 /* CircularProgressMetric.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000028 /* CircularProgressMetric.swift */; };
+		010000000000000000000026 /* MetricDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000029 /* MetricDetailScreen.swift */; };
+		010000000000000000000027 /* MetricDetailComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002A /* MetricDetailComponents.swift */; };
+		010000000000000000000028 /* SharedChartGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002B /* SharedChartGeometry.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -85,6 +89,10 @@
 		020000000000000000000025 /* CaloriesBurnedDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaloriesBurnedDetailView.swift; sourceTree = "<group>"; };
 		020000000000000000000026 /* DistanceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DistanceDetailView.swift; sourceTree = "<group>"; };
 		020000000000000000000027 /* VO2MaxDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VO2MaxDetailView.swift; sourceTree = "<group>"; };
+		020000000000000000000028 /* CircularProgressMetric.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CircularProgressMetric.swift; sourceTree = "<group>"; };
+		020000000000000000000029 /* MetricDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricDetailScreen.swift; sourceTree = "<group>"; };
+		02000000000000000000002A /* MetricDetailComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricDetailComponents.swift; sourceTree = "<group>"; };
+		02000000000000000000002B /* SharedChartGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedChartGeometry.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -177,6 +185,10 @@
 			isa = PBXGroup;
 			children = (
 				020000000000000000000005 /* GlassPanel.swift */,
+				020000000000000000000028 /* CircularProgressMetric.swift */,
+				020000000000000000000029 /* MetricDetailScreen.swift */,
+				02000000000000000000002A /* MetricDetailComponents.swift */,
+				02000000000000000000002B /* SharedChartGeometry.swift */,
 				020000000000000000000006 /* Formatters.swift */,
 				02000000000000000000001A /* ScoreRangeSelector.swift */,
 				020000000000000000000020 /* HeartRateZones.swift */,
@@ -283,6 +295,10 @@
 				010000000000000000000003 /* AppShellView.swift in Sources */,
 				010000000000000000000004 /* PlaceholderViews.swift in Sources */,
 				010000000000000000000005 /* GlassPanel.swift in Sources */,
+				010000000000000000000025 /* CircularProgressMetric.swift in Sources */,
+				010000000000000000000026 /* MetricDetailScreen.swift in Sources */,
+				010000000000000000000027 /* MetricDetailComponents.swift in Sources */,
+				010000000000000000000028 /* SharedChartGeometry.swift in Sources */,
 				010000000000000000000006 /* Formatters.swift in Sources */,
 				010000000000000000000007 /* DashboardModels.swift in Sources */,
 				010000000000000000000008 /* DashboardAPIClient.swift in Sources */,
