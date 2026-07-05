@@ -9,7 +9,7 @@ struct SleepDetailView: View {
             metricName: "Sleep",
             timeframeAccessibilityLabel: "Sleep timeframe",
             timeframes: ScoreTimeframe.allCases,
-            initialTimeframe: .week,
+            initialTimeframe: .day,
             backendBaseURL: client.baseURL,
             load: { date, timeframe in
                 try await client.loadSleepDetail(date: date, timeframe: timeframe)

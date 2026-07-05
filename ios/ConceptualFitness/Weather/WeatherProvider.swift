@@ -11,6 +11,12 @@ struct WeatherProvider {
             return fallback
         }
 
+        #if targetEnvironment(simulator)
+        var simulatorFallback = WeatherData.fallback
+        simulatorFallback.locationName = locationName ?? "Simulator weather preview"
+        simulatorFallback.date = Date()
+        return simulatorFallback
+        #else
         do {
             let weather = try await WeatherService.shared.weather(for: location)
             let current = weather.currentWeather
@@ -34,5 +40,6 @@ struct WeatherProvider {
             fallback.date = Date()
             return fallback
         }
+        #endif
     }
 }
