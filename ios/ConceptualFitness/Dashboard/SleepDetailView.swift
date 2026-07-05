@@ -18,6 +18,9 @@ struct SleepDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 SleepSummaryPanel(detail: detail)
                 SleepChartPanel(detail: detail, timeframe: timeframe)
+                if detail.chart.kind == "stage_timeline", !detail.chart.points.isEmpty {
+                    SleepStageTotalsPanel(points: detail.chart.points)
+                }
                 SleepDriverPanel(components: detail.components, timeframe: timeframe)
                 SleepContextPanel(context: detail.context, timeframe: timeframe)
                 if !detail.reasons.isEmpty {
@@ -190,97 +193,325 @@ private struct SleepChartPanel: View {
 
 private struct StageLaneTimelineChart: View {
     let points: [SleepChartPoint]
+    @State private var selectedIndex: Int?
 
     private let lanes = ["AWAKE", "REM", "LIGHT", "DEEP"]
-
-    private var visibleLanes: [String] {
-        let present = Set(points.compactMap { normalizedStage($0.stage) })
-        return lanes.filter { present.contains($0) }
-    }
+    private let labelWidth: CGFloat = 54
 
     private var totalMinutes: Double {
-        max(1, points.compactMap(\.offsetEndMinutes).max() ?? points.reduce(0) { $0 + ($1.durationMinutes ?? 0) })
+        max(1, sortedPoints.compactMap(\.offsetEndMinutes).max() ?? sortedPoints.reduce(0) { $0 + ($1.durationMinutes ?? 0) })
+    }
+
+    private var sortedPoints: [SleepChartPoint] {
+        points.sorted {
+            ($0.offsetStartMinutes ?? 0, $0.offsetEndMinutes ?? 0) < ($1.offsetStartMinutes ?? 0, $1.offsetEndMinutes ?? 0)
+        }
+    }
+
+    private var selectedPoint: SleepChartPoint? {
+        guard let selectedIndex = selectedSafeIndex else { return nil }
+        return sortedPoints[selectedIndex]
+    }
+
+    private var selectedSafeIndex: Int? {
+        guard !sortedPoints.isEmpty, let selectedIndex else { return nil }
+        return min(max(selectedIndex, 0), sortedPoints.count - 1)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(visibleLanes, id: \.self) { lane in
-                StageLaneRow(
-                    lane: lane,
-                    points: points.filter { normalizedStage($0.stage) == lane },
-                    totalMinutes: totalMinutes
+            selectedReadout
+
+            GeometryReader { proxy in
+                let axisHeight: CGFloat = 22
+                let plotHeight = max(1, proxy.size.height - axisHeight)
+                let plotWidth = max(1, proxy.size.width - labelWidth)
+
+                ZStack(alignment: .topLeading) {
+                    laneLabels(plotHeight: plotHeight)
+                    plotBackground(width: plotWidth, height: plotHeight)
+                        .offset(x: labelWidth)
+
+                    ForEach(Array(sortedPoints.enumerated().dropFirst()), id: \.offset) { index, point in
+                        if let previousStage = normalizedStage(sortedPoints[index - 1].stage),
+                           let currentStage = normalizedStage(point.stage),
+                           previousStage != currentStage,
+                           lanes.contains(previousStage),
+                           lanes.contains(currentStage) {
+                            transitionConnector(
+                                from: previousStage,
+                                to: currentStage,
+                                point: point,
+                                plotWidth: plotWidth,
+                                plotHeight: plotHeight
+                            )
+                            .offset(x: labelWidth)
+                        }
+                    }
+
+                    ForEach(Array(sortedPoints.enumerated()), id: \.offset) { index, point in
+                        if let stage = normalizedStage(point.stage), lanes.contains(stage) {
+                            stageSegment(
+                                point: point,
+                                stage: stage,
+                                isSelected: index == selectedSafeIndex,
+                                plotWidth: plotWidth,
+                                plotHeight: plotHeight
+                            )
+                            .offset(x: labelWidth)
+                        }
+                    }
+
+                    if let selectedIndex = selectedSafeIndex {
+                        selectionLine(
+                            x: labelWidth + xPosition(for: sortedPoints[selectedIndex], width: plotWidth),
+                            topPadding: 0,
+                            plotHeight: plotHeight
+                        )
+                    }
+
+                    timelineAxis(plotWidth: plotWidth)
+                        .offset(x: labelWidth, y: plotHeight)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            selectSegment(atX: value.location.x - labelWidth, width: plotWidth)
+                        }
                 )
             }
-
-            timelineAxis
         }
     }
 
     @ViewBuilder
-    private var timelineAxis: some View {
-        if let first = points.first, let last = points.last {
-            HStack {
-                Text(first.startClock ?? "--")
-                Spacer()
-                Text(midpointClock)
-                Spacer()
-                Text(last.endClock ?? "--")
+    private var selectedReadout: some View {
+        if let selectedPoint {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(stageTitle(selectedPoint.stage))
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(stageColor(selectedPoint.stage))
+                Text("\(selectedPoint.startClock ?? "--") - \(selectedPoint.endClock ?? "--") · \(stageDurationText(selectedPoint.durationMinutes))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
             }
-            .font(.caption.weight(.bold))
-            .foregroundStyle(.secondary)
+        } else {
+            Text("Drag across the chart to inspect sleep stages.")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
     }
 
+    private func laneLabels(plotHeight: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(lanes, id: \.self) { lane in
+                Text(stageTitle(lane))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: labelWidth - 8, alignment: .leading)
+                    .position(x: (labelWidth - 8) / 2, y: yCenter(for: lane, height: plotHeight))
+            }
+        }
+    }
+
+    private func plotBackground(width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.primary.opacity(0.045))
+            ForEach(1..<lanes.count, id: \.self) { index in
+                let y = height * CGFloat(index) / CGFloat(lanes.count)
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: width, y: y))
+                }
+                .stroke(.primary.opacity(0.12), lineWidth: 1)
+            }
+        }
+        .frame(width: width, height: height)
+    }
+
+    private func stageSegment(
+        point: SleepChartPoint,
+        stage: String,
+        isSelected: Bool,
+        plotWidth: CGFloat,
+        plotHeight: CGFloat
+    ) -> some View {
+        let x = xOffset(for: point, width: plotWidth)
+        let width = segmentWidth(for: point, width: plotWidth)
+        let height = segmentHeight(for: plotHeight)
+
+        return RoundedRectangle(cornerRadius: height / 2.6, style: .continuous)
+            .fill(stageColor(stage).gradient)
+            .frame(width: width, height: height)
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: height / 2.6, style: .continuous)
+                        .stroke(.white.opacity(0.95), lineWidth: 2)
+                }
+            }
+            .shadow(color: stageColor(stage).opacity(isSelected ? 0.35 : 0.16), radius: isSelected ? 8 : 4, y: 2)
+            .position(x: x + width / 2, y: yCenter(for: stage, height: plotHeight))
+            .accessibilityLabel("\(stageTitle(stage)), \(point.startClock ?? "--") to \(point.endClock ?? "--"), \(stageDurationText(point.durationMinutes))")
+    }
+
+    private func transitionConnector(
+        from previousStage: String,
+        to currentStage: String,
+        point: SleepChartPoint,
+        plotWidth: CGFloat,
+        plotHeight: CGFloat
+    ) -> some View {
+        let x = xOffset(for: point, width: plotWidth)
+        let previousY = yCenter(for: previousStage, height: plotHeight)
+        let currentY = yCenter(for: currentStage, height: plotHeight)
+        let segmentHeight = segmentHeight(for: plotHeight)
+        let connectorHeight = max(2, abs(currentY - previousY) - segmentHeight * 0.72)
+
+        return Capsule()
+            .fill(stageColor(currentStage).opacity(0.16))
+            .frame(width: 1.5, height: connectorHeight)
+            .position(x: x, y: (previousY + currentY) / 2)
+            .accessibilityHidden(true)
+    }
+
+    private func segmentWidth(for point: SleepChartPoint, width: CGFloat) -> CGFloat {
+        let duration = point.durationMinutes ?? max(0, (point.offsetEndMinutes ?? 0) - (point.offsetStartMinutes ?? 0))
+        return max(3, width * CGFloat(duration / totalMinutes))
+    }
+
+    private func xOffset(for point: SleepChartPoint, width: CGFloat) -> CGFloat {
+        width * CGFloat((point.offsetStartMinutes ?? 0) / totalMinutes)
+    }
+
+    private func xPosition(for point: SleepChartPoint, width: CGFloat) -> CGFloat {
+        let start = point.offsetStartMinutes ?? 0
+        let end = point.offsetEndMinutes ?? start + (point.durationMinutes ?? 0)
+        return width * CGFloat(((start + end) / 2) / totalMinutes)
+    }
+
+    private func yCenter(for stage: String, height: CGFloat) -> CGFloat {
+        let index = lanes.firstIndex(of: stage) ?? lanes.count - 1
+        let laneHeight = height / CGFloat(lanes.count)
+        return laneHeight * (CGFloat(index) + 0.5)
+    }
+
+    private func segmentHeight(for plotHeight: CGFloat) -> CGFloat {
+        min(28, max(16, plotHeight / CGFloat(lanes.count) * 0.44))
+    }
+
+    private func selectSegment(atX x: CGFloat, width: CGFloat) {
+        guard !sortedPoints.isEmpty else { return }
+        let clampedX = min(max(x, 0), width)
+        let minute = Double(clampedX / width) * totalMinutes
+        if let containingIndex = sortedPoints.firstIndex(where: { point in
+            let start = point.offsetStartMinutes ?? 0
+            let end = point.offsetEndMinutes ?? start + (point.durationMinutes ?? 0)
+            return minute >= start && minute <= end
+        }) {
+            selectedIndex = containingIndex
+            return
+        }
+        selectedIndex = sortedPoints.enumerated().min { left, right in
+            distance(from: minute, to: left.element) < distance(from: minute, to: right.element)
+        }?.offset
+    }
+
+    private func distance(from minute: Double, to point: SleepChartPoint) -> Double {
+        let start = point.offsetStartMinutes ?? 0
+        let end = point.offsetEndMinutes ?? start + (point.durationMinutes ?? 0)
+        if minute < start { return start - minute }
+        if minute > end { return minute - end }
+        return 0
+    }
+
+    private func timelineAxis(plotWidth: CGFloat) -> some View {
+        HStack {
+            Text(sortedPoints.first?.startClock ?? "--")
+            Spacer()
+            Text(midpointClock)
+            Spacer()
+            Text(sortedPoints.last?.endClock ?? "--")
+        }
+        .font(.caption.weight(.bold))
+        .foregroundStyle(.secondary)
+        .frame(width: plotWidth)
+    }
+
     private var midpointClock: String {
-        guard let first = points.first, let start = first.startMinute else { return "--" }
+        guard let first = sortedPoints.first, let start = first.startMinute else { return "--" }
         let middle = start + Int((totalMinutes / 2).rounded())
         return clockText(forAbsoluteMinute: middle)
     }
 }
 
-private struct StageLaneRow: View {
-    let lane: String
+private struct SleepStageTotal: Identifiable {
+    let stage: String
+    let minutes: Double
+
+    var id: String { stage }
+}
+
+private struct SleepStageTotalsPanel: View {
     let points: [SleepChartPoint]
-    let totalMinutes: Double
 
-    private var totalLaneMinutes: Double {
-        points.reduce(0) { $0 + ($1.durationMinutes ?? 0) }
-    }
+    private let lanes = ["AWAKE", "REM", "LIGHT", "DEEP"]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("\(stageTitle(lane)) · \(stageDurationText(totalLaneMinutes))")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(.primary.opacity(0.08))
-                        .frame(height: 22)
-
-                    ForEach(points) { point in
-                        let offset = xOffset(for: point, width: proxy.size.width)
-                        let width = segmentWidth(for: point, width: proxy.size.width)
-                        Rectangle()
-                            .fill(stageColor(lane).gradient)
-                            .frame(width: width, height: 22)
-                            .offset(x: offset)
-                            .accessibilityLabel("\(stageTitle(lane)), \(stageDurationText(point.durationMinutes))")
-                    }
+    private var items: [SleepStageTotal] {
+        lanes.map { lane in
+            SleepStageTotal(
+                stage: lane,
+                minutes: points.reduce(0) { total, point in
+                    normalizedStage(point.stage) == lane ? total + (point.durationMinutes ?? 0) : total
                 }
-            }
-            .frame(height: 28)
+            )
         }
     }
 
-    private func xOffset(for point: SleepChartPoint, width: CGFloat) -> CGFloat {
-        guard let start = point.offsetStartMinutes else { return 0 }
-        return width * CGFloat(start / totalMinutes)
+    private var maxMinutes: Double {
+        max(1, items.map(\.minutes).max() ?? 0)
     }
 
-    private func segmentWidth(for point: SleepChartPoint, width: CGFloat) -> CGFloat {
-        max(3, width * CGFloat((point.durationMinutes ?? 0) / totalMinutes))
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Stage totals")
+                .font(.headline)
+
+            ForEach(items) { item in
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(stageTitle(item.stage))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(stageDurationText(item.minutes))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(stageColor(item.stage))
+                            .lineLimit(1)
+                    }
+
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(.primary.opacity(0.07))
+                            Capsule()
+                                .fill(stageColor(item.stage).gradient)
+                                .frame(width: max(6, proxy.size.width * CGFloat(item.minutes / maxMinutes)))
+                        }
+                    }
+                    .frame(height: 12)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(stageTitle(item.stage)), \(stageDurationText(item.minutes))")
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassSurface(cornerRadius: 20)
     }
 }
 
