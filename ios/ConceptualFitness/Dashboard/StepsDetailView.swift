@@ -3,122 +3,31 @@ import SwiftUI
 struct StepsDetailView: View {
     let client: DashboardAPIClient
 
-    @State private var timeframe: ScoreTimeframe = .day
-    @State private var selectedDate = Date()
-    @State private var loadState: StepsDetailLoadState = .loading
-    @State private var calendarSelection: ScoreCalendarSelection?
-
     private let dailyGoal = 10_000.0
 
     var body: some View {
-        ZStack {
-            AppBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    timeframePicker
-                    ScoreRangeNavigator(
-                        timeframe: timeframe,
-                        metricName: "Steps",
-                        selectedDate: $selectedDate,
-                        calendarSelection: $calendarSelection
-                    )
-                    content
+        MetricDetailScreen(
+            title: "Steps",
+            metricName: "Steps",
+            timeframeAccessibilityLabel: "Steps timeframe",
+            timeframes: ScoreTimeframe.allCases,
+            initialTimeframe: .day,
+            backendBaseURL: client.baseURL,
+            load: { date, timeframe in
+                try await client.loadStepsDetail(date: date, timeframe: timeframe)
+            }
+        ) { detail, timeframe in
+            VStack(alignment: .leading, spacing: 18) {
+                StepsSummaryPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
+                StepsChartPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
+                StepsPatternPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
+                if timeframe != .day {
+                    StepsConsistencyPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
-            }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize, axes: .vertical)
-        }
-        .navigationTitle("Steps")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: loadKey) {
-            await load()
-        }
-        .refreshable {
-            await load()
-        }
-        .sheet(item: $calendarSelection) { selection in
-            ScoreCalendarPicker(metricName: "Steps", selection: selection) { nextDate in
-                selectedDate = nextDate
-                calendarSelection = nil
+                StepsExplanationPanel()
             }
         }
     }
-
-    private var timeframePicker: some View {
-        Picker("Timeframe", selection: $timeframe) {
-            ForEach(ScoreTimeframe.allCases) { item in
-                Text(item.title).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("Steps timeframe")
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch loadState {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, 80)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load Steps")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
-        case .loaded(let detail):
-            loadedContent(detail)
-        }
-    }
-
-    private func loadedContent(_ detail: StepsDetail) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            StepsSummaryPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            StepsChartPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            StepsPatternPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            if timeframe != .day {
-                StepsConsistencyPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            }
-            StepsExplanationPanel()
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        loadState = .loading
-        do {
-            loadState = .loaded(try await client.loadStepsDetail(date: selectedDate, timeframe: timeframe))
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
-        }
-    }
-
-    private var loadKey: String {
-        "\(timeframe.rawValue)-\(ScoreDateFormatters.apiDate.string(from: selectedDate))"
-    }
-}
-
-private enum StepsDetailLoadState {
-    case loading
-    case loaded(StepsDetail)
-    case failed(String)
 }
 
 private struct StepsSummaryPanel: View {
@@ -162,12 +71,7 @@ private struct StepsSummaryPanel: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(statusTitle)
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(statusColor.opacity(0.16), in: Capsule())
-                    .foregroundStyle(statusColor)
+                StatusPill(title: statusTitle, color: statusColor)
             }
 
             HStack(alignment: .center, spacing: 18) {
@@ -246,26 +150,14 @@ private struct StepsProgressRing: View {
     let target: Double
     let label: String
 
-    private var ratio: Double {
-        guard target > 0 else { return 0 }
-        return min(max((value ?? 0) / target, 0), 1)
-    }
-
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(.white.opacity(0.55), lineWidth: 12)
-            Circle()
-                .trim(from: 0, to: ratio)
-                .stroke(Color.blue.gradient, style: StrokeStyle(lineWidth: 12, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if let value, target > 0, value > target {
-                Circle()
-                    .trim(from: 0, to: min((value - target) / target, 0.34))
-                    .stroke(Color.green.opacity(0.78), style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-
+        CircularProgressMetric(
+            progress: progress,
+            tint: .blue,
+            overflowTint: .green.opacity(0.78),
+            lineWidth: 12,
+            accessibilityLabel: "\(stepsText(value)) \(label)"
+        ) {
             VStack(spacing: 1) {
                 Text(compactStepsText(value))
                     .font(.system(size: 29, weight: .bold, design: .rounded))
@@ -277,7 +169,11 @@ private struct StepsProgressRing: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .accessibilityLabel("\(stepsText(value)) \(label)")
+    }
+
+    private var progress: Double {
+        guard target > 0 else { return 0 }
+        return max((value ?? 0) / target, 0)
     }
 }
 
@@ -452,10 +348,10 @@ private struct StepsHourlyBarChart: View {
     }
 
     private func nearestPointID(to x: CGFloat, width: CGFloat) -> String? {
-        guard !points.isEmpty else { return nil }
-        let step = width / CGFloat(points.count)
-        let index = Int((x / step).rounded(.down))
-        return points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestBucketIndex(to: x, width: width, count: points.count) else {
+            return nil
+        }
+        return points[index].id
     }
 }
 
@@ -562,7 +458,7 @@ private struct StepsDailyBarChart: View {
         case .week:
             return Array(points.indices)
         case .month:
-            return evenlySpacedIndexes(count: points.count, maxCount: 5)
+            return SharedChartGeometry.evenlySpacedIndexes(count: points.count, maxCount: 5)
         case .year:
             return Array(points.indices)
         case .day:
@@ -571,10 +467,10 @@ private struct StepsDailyBarChart: View {
     }
 
     private func nearestPointID(to x: CGFloat, width: CGFloat) -> String? {
-        guard !points.isEmpty else { return nil }
-        let step = width / CGFloat(points.count)
-        let index = Int((x / step).rounded(.down))
-        return points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestBucketIndex(to: x, width: width, count: points.count) else {
+            return nil
+        }
+        return points[index].id
     }
 }
 
@@ -834,145 +730,11 @@ private struct StepsExplanationPanel: View {
     }
 }
 
-private struct StepsSelectedReadout: View {
-    let title: String
-    let subtitle: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.bold))
-                Text(subtitle)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(value)
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-        .padding(.top, 2)
-    }
-}
-
-private struct StepsSummaryRow: View {
-    let title: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(tint)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
-
-private struct StepsTrendRow: View {
-    let trend: String?
-
-    var body: some View {
-        HStack {
-            Text("Trend")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            HStack(spacing: 5) {
-                Image(systemName: trendIcon)
-                    .font(.caption.weight(.bold))
-                Text(trendTitle)
-                    .font(.subheadline.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
-            .foregroundStyle(trendColor)
-        }
-    }
-
-    private var trendTitle: String {
-        switch trend {
-        case "up": return "Up"
-        case "down": return "Down"
-        case "flat": return "Steady"
-        default: return "No prior data"
-        }
-    }
-
-    private var trendIcon: String {
-        switch trend {
-        case "up": return "chart.line.uptrend.xyaxis"
-        case "down": return "chart.line.downtrend.xyaxis"
-        case "flat": return "minus"
-        default: return "questionmark"
-        }
-    }
-
-    private var trendColor: Color {
-        switch trend {
-        case "up": return .green
-        case "down": return .orange
-        case "flat": return .secondary
-        default: return .secondary
-        }
-    }
-}
-
-private struct StepsContextRow: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
-
-private struct StepsSection<Content: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
-            content
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-    }
-}
+private typealias StepsSelectedReadout = SelectedChartReadout
+private typealias StepsSummaryRow = MetricSummaryRow
+private typealias StepsTrendRow = MetricTrendRow
+private typealias StepsContextRow = MetricSummaryRow
+private typealias StepsSection<Content: View> = DetailSection<Content>
 
 private struct StepsHourlyPoint: Identifiable {
     let id: String
@@ -1140,13 +902,6 @@ private let stepsMissingColor = Color.secondary.opacity(0.35)
 private func average(_ values: [Double]) -> Double? {
     guard !values.isEmpty else { return nil }
     return values.reduce(0, +) / Double(values.count)
-}
-
-private func evenlySpacedIndexes(count: Int, maxCount: Int) -> [Int] {
-    guard count > 0 else { return [] }
-    guard count > maxCount else { return Array(0..<count) }
-    let step = Double(count - 1) / Double(maxCount - 1)
-    return (0..<maxCount).map { Int((Double($0) * step).rounded()) }
 }
 
 #Preview {

@@ -4,7 +4,7 @@ struct WorkoutDetailView: View {
     let workoutID: String
     let client: DashboardAPIClient
 
-    @State private var loadState: WorkoutDetailLoadState = .loading
+    @State private var loadState: AsyncLoadState<WorkoutDetail> = .loading
 
     var body: some View {
         ZStack {
@@ -36,21 +36,9 @@ struct WorkoutDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 80)
         case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load workout")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
+            DetailErrorPanel(title: "Could not load workout", message: message) {
+                Task { await load() }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
         case .loaded(let detail):
             VStack(alignment: .leading, spacing: 18) {
                 WorkoutDetailHeader(detail: detail)
@@ -72,12 +60,6 @@ struct WorkoutDetailView: View {
             loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
         }
     }
-}
-
-private enum WorkoutDetailLoadState {
-    case loading
-    case loaded(WorkoutDetail)
-    case failed(String)
 }
 
 private struct WorkoutDetailHeader: View {
@@ -111,12 +93,7 @@ private struct WorkoutDetailHeader: View {
             Spacer(minLength: 8)
 
             if let intensity = detail.intensity, intensity != "unknown" {
-                Text(intensity.displayTitle)
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(detail.summaryTint.opacity(0.16), in: Capsule())
-                    .foregroundStyle(detail.summaryTint)
+                StatusPill(title: intensity.displayTitle, color: detail.summaryTint)
             }
         }
         .padding(18)

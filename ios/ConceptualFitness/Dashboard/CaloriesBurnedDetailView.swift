@@ -5,122 +5,31 @@ typealias CaloriesBurnedDetail = StepsDetail
 struct CaloriesBurnedDetailView: View {
     let client: DashboardAPIClient
 
-    @State private var timeframe: ScoreTimeframe = .day
-    @State private var selectedDate = Date()
-    @State private var loadState: CaloriesBurnedDetailLoadState = .loading
-    @State private var calendarSelection: ScoreCalendarSelection?
-
     private let dailyGoal = 2_300.0
 
     var body: some View {
-        ZStack {
-            AppBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    timeframePicker
-                    ScoreRangeNavigator(
-                        timeframe: timeframe,
-                        metricName: "Calories",
-                        selectedDate: $selectedDate,
-                        calendarSelection: $calendarSelection
-                    )
-                    content
+        MetricDetailScreen(
+            title: "Calories Burned",
+            metricName: "Calories",
+            timeframeAccessibilityLabel: "Calories burned timeframe",
+            timeframes: ScoreTimeframe.allCases,
+            initialTimeframe: .day,
+            backendBaseURL: client.baseURL,
+            load: { date, timeframe in
+                try await client.loadCaloriesBurnedDetail(date: date, timeframe: timeframe)
+            }
+        ) { detail, timeframe in
+            VStack(alignment: .leading, spacing: 18) {
+                CaloriesSummaryPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
+                CaloriesChartPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
+                CaloriesPatternPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
+                if timeframe != .day {
+                    CaloriesConsistencyPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
-            }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize, axes: .vertical)
-        }
-        .navigationTitle("Calories Burned")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: loadKey) {
-            await load()
-        }
-        .refreshable {
-            await load()
-        }
-        .sheet(item: $calendarSelection) { selection in
-            ScoreCalendarPicker(metricName: "Calories", selection: selection) { nextDate in
-                selectedDate = nextDate
-                calendarSelection = nil
+                CaloriesExplanationPanel()
             }
         }
     }
-
-    private var timeframePicker: some View {
-        Picker("Timeframe", selection: $timeframe) {
-            ForEach(ScoreTimeframe.allCases) { item in
-                Text(item.title).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("Calories burned timeframe")
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch loadState {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, 80)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load Calories Burned")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
-        case .loaded(let detail):
-            loadedContent(detail)
-        }
-    }
-
-    private func loadedContent(_ detail: CaloriesBurnedDetail) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            CaloriesSummaryPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            CaloriesChartPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            CaloriesPatternPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            if timeframe != .day {
-                CaloriesConsistencyPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
-            }
-            CaloriesExplanationPanel()
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        loadState = .loading
-        do {
-            loadState = .loaded(try await client.loadCaloriesBurnedDetail(date: selectedDate, timeframe: timeframe))
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
-        }
-    }
-
-    private var loadKey: String {
-        "\(timeframe.rawValue)-\(ScoreDateFormatters.apiDate.string(from: selectedDate))"
-    }
-}
-
-private enum CaloriesBurnedDetailLoadState {
-    case loading
-    case loaded(CaloriesBurnedDetail)
-    case failed(String)
 }
 
 private struct CaloriesSummaryPanel: View {
@@ -173,12 +82,7 @@ private struct CaloriesSummaryPanel: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(statusTitle)
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(statusColor.opacity(0.16), in: Capsule())
-                    .foregroundStyle(statusColor)
+                StatusPill(title: statusTitle, color: statusColor)
             }
 
             HStack(alignment: .center, spacing: 18) {
@@ -253,26 +157,14 @@ private struct CaloriesProgressRing: View {
     let target: Double
     let label: String
 
-    private var ratio: Double {
-        guard target > 0 else { return 0 }
-        return min(max((value ?? 0) / target, 0), 1)
-    }
-
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(.white.opacity(0.55), lineWidth: 12)
-            Circle()
-                .trim(from: 0, to: ratio)
-                .stroke(Color.orange.gradient, style: StrokeStyle(lineWidth: 12, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if let value, target > 0, value > target {
-                Circle()
-                    .trim(from: 0, to: min((value - target) / target, 0.34))
-                    .stroke(Color.green.opacity(0.78), style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-
+        CircularProgressMetric(
+            progress: progress,
+            tint: .orange,
+            overflowTint: .green.opacity(0.78),
+            lineWidth: 12,
+            accessibilityLabel: "\(caloriesText(value)) \(label)"
+        ) {
             VStack(spacing: 1) {
                 Text(compactCaloriesText(value))
                     .font(.system(size: 29, weight: .bold, design: .rounded))
@@ -284,7 +176,11 @@ private struct CaloriesProgressRing: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .accessibilityLabel("\(caloriesText(value)) \(label)")
+    }
+
+    private var progress: Double {
+        guard target > 0 else { return 0 }
+        return max((value ?? 0) / target, 0)
     }
 }
 
@@ -467,10 +363,10 @@ private struct CaloriesHourlyBarChart: View {
     }
 
     private func nearestPointID(to x: CGFloat, width: CGFloat) -> String? {
-        guard !points.isEmpty else { return nil }
-        let step = width / CGFloat(points.count)
-        let index = Int((x / step).rounded(.down))
-        return points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestBucketIndex(to: x, width: width, count: points.count) else {
+            return nil
+        }
+        return points[index].id
     }
 }
 
@@ -585,7 +481,7 @@ private struct CaloriesDailyBarChart: View {
         case .week:
             return Array(points.indices)
         case .month:
-            return caloriesEvenlySpacedIndexes(count: points.count, maxCount: 5)
+            return SharedChartGeometry.evenlySpacedIndexes(count: points.count, maxCount: 5)
         case .year:
             return Array(points.indices)
         case .day:
@@ -598,10 +494,10 @@ private struct CaloriesDailyBarChart: View {
     }
 
     private func nearestPointID(to x: CGFloat, width: CGFloat) -> String? {
-        guard !points.isEmpty else { return nil }
-        let step = width / CGFloat(points.count)
-        let index = Int((x / step).rounded(.down))
-        return points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestBucketIndex(to: x, width: width, count: points.count) else {
+            return nil
+        }
+        return points[index].id
     }
 }
 
@@ -848,93 +744,10 @@ private struct CaloriesExplanationPanel: View {
     }
 }
 
-private struct CaloriesSelectedReadout: View {
-    let title: String
-    let subtitle: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.bold))
-                Text(subtitle)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(value)
-                .font(.title3.weight(.bold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-        .padding(.top, 2)
-    }
-}
-
-private struct CaloriesSummaryRow: View {
-    let title: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(tint)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
-
-private struct CaloriesContextRow: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.bold))
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
-
-private struct CaloriesSection<Content: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
-            content
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-    }
-}
+private typealias CaloriesSelectedReadout = SelectedChartReadout
+private typealias CaloriesSummaryRow = MetricSummaryRow
+private typealias CaloriesContextRow = MetricSummaryRow
+private typealias CaloriesSection<Content: View> = DetailSection<Content>
 
 private struct CaloriesHourlyPoint: Identifiable {
     let id: String
@@ -1093,14 +906,6 @@ private func compactCaloriesText(_ value: Double?) -> String {
 private func caloriesAverage(_ values: [Double]) -> Double? {
     guard !values.isEmpty else { return nil }
     return values.reduce(0, +) / Double(values.count)
-}
-
-private func caloriesEvenlySpacedIndexes(count: Int, maxCount: Int) -> [Int] {
-    guard count > 0 else { return [] }
-    guard count > maxCount, maxCount > 1 else { return Array(0..<count) }
-    return (0..<maxCount).map { index in
-        Int((Double(index) * Double(count - 1) / Double(maxCount - 1)).rounded())
-    }
 }
 
 private let caloriesFormatter: NumberFormatter = {

@@ -3,120 +3,30 @@ import SwiftUI
 struct StrainDetailView: View {
     let client: DashboardAPIClient
 
-    @State private var timeframe: StrainTimeframe = .week
-    @State private var selectedDate = Date()
-    @State private var loadState: StrainDetailLoadState = .loading
-    @State private var calendarSelection: ScoreCalendarSelection?
-
     var body: some View {
-        ZStack {
-            AppBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    timeframePicker
-                    ScoreRangeNavigator(
-                        timeframe: timeframe,
-                        metricName: "Strain",
-                        selectedDate: $selectedDate,
-                        calendarSelection: $calendarSelection
-                    )
-                    content
+        MetricDetailScreen(
+            title: "Strain",
+            metricName: "Strain",
+            timeframeAccessibilityLabel: "Strain timeframe",
+            timeframes: StrainTimeframe.allCases,
+            initialTimeframe: .week,
+            backendBaseURL: client.baseURL,
+            load: { date, timeframe in
+                try await client.loadStrainDetail(date: date, timeframe: timeframe)
+            }
+        ) { detail, timeframe in
+            VStack(alignment: .leading, spacing: 18) {
+                StrainSummaryPanel(detail: detail)
+                StrainChartPanel(detail: detail)
+                StrainExplanationPanel()
+                if detail.timeframe != "day" {
+                    StrainComponentPanel(components: detail.components)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
-            }
-            .scrollIndicators(.hidden)
-        }
-        .navigationTitle("Strain")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: loadKey) {
-            await load()
-        }
-        .refreshable {
-            await load()
-        }
-        .sheet(item: $calendarSelection) { selection in
-            ScoreCalendarPicker(metricName: "Strain", selection: selection) { nextDate in
-                selectedDate = nextDate
-                calendarSelection = nil
+                StrainContributorsPanel(workouts: detail.contributors, timeframe: timeframe, client: client)
+                StrainTrainingContextPanel(context: detail.trainingContext, timeframe: timeframe)
             }
         }
     }
-
-    private var timeframePicker: some View {
-        Picker("Timeframe", selection: $timeframe) {
-            ForEach(StrainTimeframe.allCases) { item in
-                Text(item.title).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("Strain timeframe")
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch loadState {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, 80)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load Strain")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
-        case .loaded(let detail):
-            loadedContent(detail)
-        }
-    }
-
-    private func loadedContent(_ detail: StrainDetail) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            StrainSummaryPanel(detail: detail)
-            StrainChartPanel(detail: detail)
-            StrainExplanationPanel()
-            if detail.timeframe != "day" {
-                StrainComponentPanel(components: detail.components)
-            }
-            StrainContributorsPanel(workouts: detail.contributors, timeframe: timeframe, client: client)
-            StrainTrainingContextPanel(context: detail.trainingContext, timeframe: timeframe)
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        loadState = .loading
-        do {
-            loadState = .loaded(try await client.loadStrainDetail(date: selectedDate, timeframe: timeframe))
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
-        }
-    }
-
-    private var loadKey: String {
-        "\(timeframe.rawValue)-\(ScoreDateFormatters.apiDate.string(from: selectedDate))"
-    }
-}
-
-private enum StrainDetailLoadState {
-    case loading
-    case loaded(StrainDetail)
-    case failed(String)
 }
 
 private struct StrainSummaryPanel: View {
@@ -142,12 +52,7 @@ private struct StrainSummaryPanel: View {
                         Spacer()
 
                         if let pill = headerPill {
-                            Text(pill.title)
-                                .font(.caption.weight(.bold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(pill.color.opacity(0.16), in: Capsule())
-                                .foregroundStyle(pill.color)
+                            StatusPill(title: pill.title, color: pill.color)
                         }
                     }
 
@@ -217,12 +122,7 @@ private struct WeeklyStrainSummary: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let band = detail.summary.loadBand ?? detail.trainingContext.latestLoadBand {
-                    Text(band.displayTitle)
-                        .font(.caption.weight(.bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(bandColor(band).opacity(0.16), in: Capsule())
-                        .foregroundStyle(bandColor(band))
+                    StatusPill(title: band.displayTitle, color: bandColor(band))
                 }
             }
 
@@ -274,25 +174,18 @@ private struct WeeklyProgressRing: View {
     let ratio: Double
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(.white.opacity(0.5), lineWidth: 11)
-            Circle()
-                .trim(from: 0, to: min(max(ratio, 0), 1))
-                .stroke(.orange.gradient, style: StrokeStyle(lineWidth: 11, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if ratio > 1 {
-                Circle()
-                    .trim(from: 0, to: min(ratio - 1, 0.35))
-                    .stroke(.red.opacity(0.85), style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
+        CircularProgressMetric(
+            progress: ratio,
+            tint: .orange,
+            trackColor: .white.opacity(0.5),
+            overflowTint: .red.opacity(0.85),
+            accessibilityLabel: "\(Int((ratio * 100).rounded())) percent of weekly strain target"
+        ) {
             Text("\(Int((ratio * 100).rounded()))%")
                 .font(.system(size: 22, weight: .bold, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
         }
-        .accessibilityLabel("\(Int((ratio * 100).rounded())) percent of weekly strain target")
     }
 }
 
@@ -560,8 +453,7 @@ private struct WeeklyStrainLineChart: View {
     }
 
     private func xPosition(for index: Int, totalCount: Int, width: CGFloat) -> CGFloat {
-        guard totalCount > 1 else { return width / 2 }
-        return CGFloat(index) / CGFloat(totalCount - 1) * width
+        SharedChartGeometry.xPosition(index: index, count: totalCount, width: width)
     }
 
     private func yPosition(for value: Double, maxValue: Double, plotHeight: CGFloat, topPadding: CGFloat) -> CGFloat {
@@ -569,11 +461,10 @@ private struct WeeklyStrainLineChart: View {
     }
 
     private func selectPoint(atX x: CGFloat, plotWidth: CGFloat, points: [WeeklyLinePoint]) {
-        guard !points.isEmpty else { return }
-        let clampedX = min(max(x, 0), plotWidth)
-        let progress = plotWidth > 0 ? clampedX / plotWidth : 0
-        let index = Int((progress * CGFloat(points.count - 1)).rounded())
-        selectedID = points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestIndex(to: x, width: plotWidth, count: points.count) else {
+            return
+        }
+        selectedID = points[index].id
     }
 }
 
@@ -682,10 +573,10 @@ private struct LoadBarChart: View {
     }
 
     private func selectPoint(atX x: CGFloat, width: CGFloat) {
-        guard !points.isEmpty else { return }
-        let clampedX = min(max(x, 0), max(width, 1))
-        let index = Int((clampedX / max(width, 1) * CGFloat(points.count)).rounded(.down))
-        selectedID = points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestBucketIndex(to: x, width: width, count: points.count) else {
+            return
+        }
+        selectedID = points[index].id
     }
 
     private func barCenterX(for index: Int, width: CGFloat) -> CGFloat {
@@ -801,7 +692,7 @@ private struct StrainComponentPanel: View {
     let components: StrainComponents
 
     var body: some View {
-        DetailSection(title: "Where It Came From", systemImage: "chart.pie.fill") {
+        StrainDetailSection(title: "Where It Came From", systemImage: "chart.pie.fill") {
             if components.items.isEmpty {
                 Text("No strain load was detected for this timeframe.")
                     .font(.subheadline)
@@ -829,7 +720,7 @@ private struct StrainTrainingContextPanel: View {
     let timeframe: StrainTimeframe
 
     var body: some View {
-        DetailSection(title: "Training Context", systemImage: "waveform.path.ecg") {
+        StrainDetailSection(title: "Training Context", systemImage: "waveform.path.ecg") {
             VStack(spacing: 10) {
                 ContextRow(title: "Total load", value: context.totalLoadPoints?.clean)
                 ContextRow(title: "Average daily load", value: context.averageDailyLoad?.clean)
@@ -879,7 +770,7 @@ private struct StrainContributorsPanel: View {
     }
 
     var body: some View {
-        DetailSection(title: "Contributors", systemImage: "figure.run") {
+        StrainDetailSection(title: "Contributors", systemImage: "figure.run") {
             if workouts.isEmpty {
                 Text("No workouts were found for this \(timeframe.rawValue). Daily activity can still contribute to Strain.")
                     .font(.subheadline)
@@ -1018,7 +909,7 @@ private struct WorkoutContributorGroupSheet: View {
     }
 }
 
-private struct DetailSection<Content: View>: View {
+private struct StrainDetailSection<Content: View>: View {
     let title: String
     let systemImage: String
     @ViewBuilder let content: Content
@@ -1035,22 +926,7 @@ private struct DetailSection<Content: View>: View {
     }
 }
 
-private struct ContextRow: View {
-    let title: String
-    let value: String?
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value ?? "--")
-                .font(.subheadline.weight(.bold))
-                .multilineTextAlignment(.trailing)
-        }
-    }
-}
+private typealias ContextRow = MetricSummaryRow
 
 private func componentColor(_ key: String) -> Color {
     switch key {

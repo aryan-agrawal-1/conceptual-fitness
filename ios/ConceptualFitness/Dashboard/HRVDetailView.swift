@@ -3,118 +3,26 @@ import SwiftUI
 struct HRVDetailView: View {
     let client: DashboardAPIClient
 
-    @State private var timeframe: ScoreTimeframe = .week
-    @State private var selectedDate = Date()
-    @State private var loadState: HRVDetailLoadState = .loading
-    @State private var calendarSelection: ScoreCalendarSelection?
-
-    private let timeframes: [ScoreTimeframe] = [.week, .month, .year]
-
     var body: some View {
-        ZStack {
-            AppBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    timeframePicker
-                    ScoreRangeNavigator(
-                        timeframe: timeframe,
-                        metricName: "HRV",
-                        selectedDate: $selectedDate,
-                        calendarSelection: $calendarSelection
-                    )
-                    content
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+        MetricDetailScreen(
+            title: "HRV",
+            metricName: "HRV",
+            timeframeAccessibilityLabel: "HRV timeframe",
+            timeframes: [.week, .month, .year],
+            initialTimeframe: .week,
+            backendBaseURL: client.baseURL,
+            load: { date, timeframe in
+                try await client.loadHRVDetail(date: date, timeframe: timeframe)
             }
-            .scrollIndicators(.hidden)
-        }
-        .navigationTitle("HRV")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: loadKey) {
-            await load()
-        }
-        .refreshable {
-            await load()
-        }
-        .sheet(item: $calendarSelection) { selection in
-            ScoreCalendarPicker(metricName: "HRV", selection: selection) { nextDate in
-                selectedDate = nextDate
-                calendarSelection = nil
+        ) { detail, timeframe in
+            VStack(alignment: .leading, spacing: 18) {
+                HRVSummaryPanel(detail: detail, timeframe: timeframe)
+                HRVExplanationPanel()
+                HRVChartPanel(detail: detail, timeframe: timeframe)
+                HRVPatternPanel(detail: detail, timeframe: timeframe)
             }
         }
     }
-
-    private var timeframePicker: some View {
-        Picker("Timeframe", selection: $timeframe) {
-            ForEach(timeframes) { item in
-                Text(item.title).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("HRV timeframe")
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch loadState {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, 80)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load HRV")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
-        case .loaded(let detail):
-            loadedContent(detail)
-        }
-    }
-
-    private func loadedContent(_ detail: HRVDetail) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HRVSummaryPanel(detail: detail, timeframe: timeframe)
-            HRVExplanationPanel()
-            HRVChartPanel(detail: detail, timeframe: timeframe)
-            HRVPatternPanel(detail: detail, timeframe: timeframe)
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        loadState = .loading
-        do {
-            loadState = .loaded(try await client.loadHRVDetail(date: selectedDate, timeframe: timeframe))
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
-        }
-    }
-
-    private var loadKey: String {
-        "\(timeframe.rawValue)-\(ScoreDateFormatters.apiDate.string(from: selectedDate))"
-    }
-}
-
-private enum HRVDetailLoadState {
-    case loading
-    case loaded(HRVDetail)
-    case failed(String)
 }
 
 private struct HRVSummaryPanel: View {
@@ -128,31 +36,19 @@ private struct HRVSummaryPanel: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(relationTitle(detail.summary.baselineRelation))
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(relationColor(detail.summary.baselineRelation).opacity(0.16), in: Capsule())
-                    .foregroundStyle(relationColor(detail.summary.baselineRelation))
+                StatusPill(
+                    title: relationTitle(detail.summary.baselineRelation),
+                    color: relationColor(detail.summary.baselineRelation)
+                )
             }
 
             HStack(alignment: .center, spacing: 18) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(hrvWholeText(detail.summary.primaryValue) ?? "--")
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.62)
-                        Text("ms")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(timeframe == .year ? "monthly avg" : "period avg")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("Average HRV \(hrvWholeText(detail.summary.primaryValue) ?? "no value") milliseconds")
+                HeroMetricValue(
+                    value: hrvWholeText(detail.summary.primaryValue),
+                    unit: "ms",
+                    caption: timeframe == .year ? "monthly avg" : "period avg",
+                    accessibilityLabel: "Average HRV \(hrvWholeText(detail.summary.primaryValue) ?? "no value") milliseconds"
+                )
 
                 VStack(spacing: 9) {
                     HRVMetricRow(title: "Baseline", value: baselineRangeText(detail.summary), tint: .blue)
@@ -386,7 +282,7 @@ private struct HRVBaselineChart: View {
                 HRVXTick(index: index, label: point.axisLabel(for: timeframe), width: 34)
             }
         case .month:
-            return evenlySpacedIndexes(count: points.count, maxCount: 5).map { index in
+            return SharedChartGeometry.evenlySpacedIndexes(count: points.count, maxCount: 5).map { index in
                 HRVXTick(index: index, label: points[index].axisLabel(for: timeframe), width: 34)
             }
         case .year:
@@ -401,11 +297,10 @@ private struct HRVBaselineChart: View {
     }
 
     private func nearestPointID(to x: CGFloat, width: CGFloat) -> String? {
-        guard !points.isEmpty else { return nil }
-        guard points.count > 1 else { return points[0].id }
-        let step = width / CGFloat(points.count - 1)
-        let index = Int((x / step).rounded())
-        return points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestIndex(to: x, width: width, count: points.count) else {
+            return nil
+        }
+        return points[index].id
     }
 }
 
@@ -415,13 +310,6 @@ private struct HRVXTick: Identifiable {
     let width: CGFloat
 
     var id: String { "\(index)-\(label)" }
-}
-
-private func evenlySpacedIndexes(count: Int, maxCount: Int) -> [Int] {
-    guard count > 0 else { return [] }
-    guard count > maxCount else { return Array(0..<count) }
-    let step = Double(count - 1) / Double(maxCount - 1)
-    return (0..<maxCount).map { Int((Double($0) * step).rounded()) }
 }
 
 private struct HRVPatternPanel: View {
@@ -494,28 +382,7 @@ private struct HRVPatternPanel: View {
     }
 }
 
-private struct HRVMetricRow: View {
-    let title: String
-    let value: String?
-    let tint: Color
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value ?? "--")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(tint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
+private typealias HRVMetricRow = MetricSummaryRow
 
 private struct HRVTrendRow: View {
     let trend: String?
@@ -778,8 +645,7 @@ private struct HRVBaselineBandShape: Shape {
 }
 
 private func xPosition(index: Int, count: Int, width: CGFloat) -> CGFloat {
-    guard count > 1 else { return width / 2 }
-    return CGFloat(index) / CGFloat(count - 1) * width
+    SharedChartGeometry.xPosition(index: index, count: count, width: width)
 }
 
 private func yPosition(value: Double, bounds: ClosedRange<Double>, height: CGFloat) -> CGFloat {

@@ -3,140 +3,43 @@ import SwiftUI
 struct VO2MaxDetailView: View {
     let client: DashboardAPIClient
 
-    @State private var timeframe: ScoreTimeframe = .year
-    @State private var selectedDate = Date()
-    @State private var loadState: VO2MaxDetailLoadState
-    @State private var calendarSelection: ScoreCalendarSelection?
-
-    private let timeframes: [ScoreTimeframe] = [.week, .month, .year]
-    private let loadsLiveData: Bool
+    private let initialSelectedDate: Date
+    private let initialLoadState: AsyncLoadState<VO2MaxMetricDetail>
     private let usesPreviewData: Bool
 
     init(client: DashboardAPIClient, previewDetail: VO2MaxMetricDetail? = nil) {
         self.client = client
-        self.loadsLiveData = previewDetail == nil
         self.usesPreviewData = previewDetail != nil
-        _selectedDate = State(initialValue: previewDetail == nil ? Date() : VO2PreviewData.anchorDate)
-        _loadState = State(initialValue: previewDetail.map(VO2MaxDetailLoadState.loaded) ?? .loading)
+        self.initialSelectedDate = previewDetail == nil ? Date() : VO2PreviewData.anchorDate
+        self.initialLoadState = previewDetail.map(AsyncLoadState.loaded) ?? .loading
     }
 
     var body: some View {
-        ZStack {
-            AppBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    timeframePicker
-                    ScoreRangeNavigator(
-                        timeframe: timeframe,
-                        metricName: "VO2 Max",
-                        selectedDate: $selectedDate,
-                        calendarSelection: $calendarSelection
-                    )
-                    content
+        MetricDetailScreen(
+            title: "VO2 Max",
+            metricName: "VO2 Max",
+            timeframeAccessibilityLabel: "VO2 Max timeframe",
+            timeframes: [.week, .month, .year],
+            initialTimeframe: .year,
+            initialSelectedDate: initialSelectedDate,
+            initialLoadState: initialLoadState,
+            backendBaseURL: client.baseURL,
+            load: { date, timeframe in
+                if usesPreviewData {
+                    return VO2PreviewData.detail(for: timeframe)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+                return try await client.loadVO2MaxDetail(date: date, timeframe: timeframe)
             }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize, axes: .vertical)
-        }
-        .navigationTitle("VO2 Max")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: loadKey) {
-            if usesPreviewData {
-                loadState = .loaded(VO2PreviewData.detail(for: timeframe))
-                return
-            }
-            guard loadsLiveData else { return }
-            await load()
-        }
-        .refreshable {
-            if usesPreviewData {
-                loadState = .loaded(VO2PreviewData.detail(for: timeframe))
-                return
-            }
-            guard loadsLiveData else { return }
-            await load()
-        }
-        .sheet(item: $calendarSelection) { selection in
-            ScoreCalendarPicker(metricName: "VO2 Max", selection: selection) { nextDate in
-                selectedDate = nextDate
-                calendarSelection = nil
+        ) { detail, timeframe in
+            VStack(alignment: .leading, spacing: 18) {
+                VO2SummaryPanel(detail: detail, timeframe: timeframe)
+                VO2ChartPanel(detail: detail, timeframe: timeframe)
+                VO2EstimateContextPanel(detail: detail, timeframe: timeframe)
+                VO2HowToPanel(hasEstimate: detail.current?.value != nil || detail.summary.latestValue != nil)
+                VO2ExplanationPanel()
             }
         }
     }
-
-    private var timeframePicker: some View {
-        Picker("Timeframe", selection: $timeframe) {
-            ForEach(timeframes) { item in
-                Text(item.title).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("VO2 Max timeframe")
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch loadState {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, 80)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load VO2 Max")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
-        case .loaded(let detail):
-            loadedContent(detail)
-        }
-    }
-
-    private func loadedContent(_ detail: VO2MaxMetricDetail) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VO2SummaryPanel(detail: detail, timeframe: timeframe)
-            VO2ChartPanel(detail: detail, timeframe: timeframe)
-            VO2EstimateContextPanel(detail: detail, timeframe: timeframe)
-            VO2HowToPanel(hasEstimate: detail.current?.value != nil || detail.summary.latestValue != nil)
-            VO2ExplanationPanel()
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        loadState = .loading
-        do {
-            loadState = .loaded(try await client.loadVO2MaxDetail(date: selectedDate, timeframe: timeframe))
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
-        }
-    }
-
-    private var loadKey: String {
-        "\(timeframe.rawValue)-\(ScoreDateFormatters.apiDate.string(from: selectedDate))"
-    }
-}
-
-private enum VO2MaxDetailLoadState {
-    case loading
-    case loaded(VO2MaxMetricDetail)
-    case failed(String)
 }
 
 private struct VO2SummaryPanel: View {
@@ -166,12 +69,7 @@ private struct VO2SummaryPanel: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(statusTitle)
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(statusColor.opacity(0.16), in: Capsule())
-                    .foregroundStyle(statusColor)
+                StatusPill(title: statusTitle, color: statusColor)
             }
 
             if latestValue == nil {
@@ -200,7 +98,7 @@ private struct VO2SummaryPanel: View {
                     VStack(spacing: 9) {
                         VO2SummaryRow(title: "Change", value: changeText, tint: changeColor)
                         VO2SummaryRow(title: "Best", value: bestText, tint: .green)
-                        VO2TrendRow(trend: trend)
+                        MetricTrendRow(trend: trend, flatColor: .blue)
                         VO2SummaryRow(title: "Recorded", value: recordedText, tint: .secondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -593,7 +491,7 @@ private struct VO2EstimateChart: View {
                 VO2XTick(index: index, label: point.axisLabel(for: timeframe), width: 34)
             }
         case .month:
-            return vo2EvenlySpacedIndexes(count: points.count, maxCount: 5).map { index in
+            return SharedChartGeometry.evenlySpacedIndexes(count: points.count, maxCount: 5).map { index in
                 VO2XTick(index: index, label: points[index].axisLabel(for: timeframe), width: 34)
             }
         case .year:
@@ -606,11 +504,10 @@ private struct VO2EstimateChart: View {
     }
 
     private func nearestPointID(to x: CGFloat, width: CGFloat) -> String? {
-        guard !points.isEmpty else { return nil }
-        guard points.count > 1 else { return points[0].id }
-        let step = width / CGFloat(points.count - 1)
-        let index = Int((x / step).rounded())
-        return points[min(max(index, 0), points.count - 1)].id
+        guard let index = SharedChartGeometry.nearestIndex(to: x, width: width, count: points.count) else {
+            return nil
+        }
+        return points[index].id
     }
 }
 
@@ -720,113 +617,14 @@ private struct VO2Section<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
+        DetailSection(title: title, systemImage: systemImage, spacing: 12, cornerRadius: 18) {
             content
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 18)
     }
 }
 
-private struct VO2SummaryRow: View {
-    let title: String
-    let value: String?
-    let tint: Color
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value ?? "--")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(tint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
-
-private struct VO2TrendRow: View {
-    let trend: String?
-
-    var body: some View {
-        HStack {
-            Text("Trend")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            HStack(spacing: 5) {
-                Image(systemName: trendIcon)
-                    .font(.caption.weight(.bold))
-                Text(trendTitle)
-                    .font(.subheadline.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-            }
-            .foregroundStyle(trendColor)
-        }
-    }
-
-    private var trendTitle: String {
-        switch trend {
-        case "up": return "Up"
-        case "down": return "Down"
-        case "flat": return "Steady"
-        default: return "No prior data"
-        }
-    }
-
-    private var trendIcon: String {
-        switch trend {
-        case "up": return "chart.line.uptrend.xyaxis"
-        case "down": return "chart.line.downtrend.xyaxis"
-        case "flat": return "minus"
-        default: return "questionmark"
-        }
-    }
-
-    private var trendColor: Color {
-        switch trend {
-        case "up": return .green
-        case "down": return .orange
-        case "flat": return .blue
-        default: return .secondary
-        }
-    }
-}
-
-private struct VO2ContextRow: View {
-    let title: String
-    let value: String?
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .layoutPriority(1)
-            Spacer()
-            Text(value ?? "--")
-                .font(.subheadline.weight(.bold))
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-    }
-}
+private typealias VO2SummaryRow = MetricSummaryRow
+private typealias VO2ContextRow = MetricSummaryRow
 
 private struct VO2GuidanceRow: View {
     let icon: String
@@ -853,16 +651,8 @@ private struct VO2GuidanceRow: View {
     }
 }
 
-private func vo2EvenlySpacedIndexes(count: Int, maxCount: Int) -> [Int] {
-    guard count > 0 else { return [] }
-    guard count > maxCount else { return Array(0..<count) }
-    let step = Double(count - 1) / Double(maxCount - 1)
-    return (0..<maxCount).map { Int((Double($0) * step).rounded()) }
-}
-
 private func vo2XPosition(index: Int, count: Int, width: CGFloat) -> CGFloat {
-    guard count > 1 else { return width / 2 }
-    return CGFloat(index) / CGFloat(count - 1) * width
+    SharedChartGeometry.xPosition(index: index, count: count, width: width)
 }
 
 private func vo2YPosition(value: Double, bounds: ClosedRange<Double>, height: CGFloat) -> CGFloat {

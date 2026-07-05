@@ -3,119 +3,26 @@ import SwiftUI
 struct HeartRateDetailView: View {
     let client: DashboardAPIClient
 
-    @State private var timeframe: ScoreTimeframe = .day
-    @State private var selectedDate = Date()
-    @State private var loadState: HeartRateDetailLoadState = .loading
-    @State private var calendarSelection: ScoreCalendarSelection?
-
-    private let timeframes = ScoreTimeframe.allCases
-
     var body: some View {
-        ZStack {
-            AppBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    timeframePicker
-                    ScoreRangeNavigator(
-                        timeframe: timeframe,
-                        metricName: "Heart Rate",
-                        selectedDate: $selectedDate,
-                        calendarSelection: $calendarSelection
-                    )
-                    content
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+        MetricDetailScreen(
+            title: "Heart Rate",
+            metricName: "Heart Rate",
+            timeframeAccessibilityLabel: "Heart rate timeframe",
+            timeframes: ScoreTimeframe.allCases,
+            initialTimeframe: .day,
+            backendBaseURL: client.baseURL,
+            load: { date, timeframe in
+                try await client.loadHeartRateDetail(date: date, timeframe: timeframe)
             }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize, axes: .vertical)
-        }
-        .navigationTitle("Heart Rate")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: loadKey) {
-            await load()
-        }
-        .refreshable {
-            await load()
-        }
-        .sheet(item: $calendarSelection) { selection in
-            ScoreCalendarPicker(metricName: "Heart Rate", selection: selection) { nextDate in
-                selectedDate = nextDate
-                calendarSelection = nil
+        ) { detail, timeframe in
+            VStack(alignment: .leading, spacing: 18) {
+                HeartRateSummaryPanel(detail: detail, timeframe: timeframe)
+                HeartRateChartPanel(detail: detail, timeframe: timeframe)
+                HeartRateZonesPanel(zones: detail.zones)
+                HeartRateDriversPanel(detail: detail, timeframe: timeframe)
             }
         }
     }
-
-    private var timeframePicker: some View {
-        Picker("Timeframe", selection: $timeframe) {
-            ForEach(timeframes) { item in
-                Text(item.title).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .accessibilityLabel("Heart rate timeframe")
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch loadState {
-        case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, 80)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Could not load Heart Rate")
-                    .font(.headline)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Button("Retry") {
-                    Task { await load() }
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18)
-        case .loaded(let detail):
-            loadedContent(detail)
-        }
-    }
-
-    private func loadedContent(_ detail: HeartRateDetail) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HeartRateSummaryPanel(detail: detail, timeframe: timeframe)
-            HeartRateChartPanel(detail: detail, timeframe: timeframe)
-            HeartRateZonesPanel(zones: detail.zones)
-            HeartRateDriversPanel(detail: detail, timeframe: timeframe)
-        }
-    }
-
-    @MainActor
-    private func load() async {
-        loadState = .loading
-        do {
-            loadState = .loaded(try await client.loadHeartRateDetail(date: selectedDate, timeframe: timeframe))
-        } catch is CancellationError {
-            return
-        } catch {
-            loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
-        }
-    }
-
-    private var loadKey: String {
-        "\(timeframe.rawValue)-\(ScoreDateFormatters.apiDate.string(from: selectedDate))"
-    }
-}
-
-private enum HeartRateDetailLoadState {
-    case loading
-    case loaded(HeartRateDetail)
-    case failed(String)
 }
 
 private struct HeartRateSummaryPanel: View {
@@ -133,21 +40,12 @@ private struct HeartRateSummaryPanel: View {
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .center, spacing: 18) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(detail.summary.primaryValue?.clean ?? "--")
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.62)
-                        Text("bpm")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(timeframe == .day ? "daily avg" : timeframe == .year ? "year avg" : "period avg")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
+                HeroMetricValue(
+                    value: detail.summary.primaryValue?.clean,
+                    unit: "bpm",
+                    caption: timeframe == .day ? "daily avg" : timeframe == .year ? "year avg" : "period avg",
+                    accessibilityLabel: "Average heart rate \(detail.summary.primaryValue?.clean ?? "no value") beats per minute"
+                )
 
                 VStack(spacing: 9) {
                     HeartRateMetricRow(title: "Range", value: rangeText, tint: .pink)
@@ -1016,14 +914,11 @@ private func yPosition(
 }
 
 private func xPosition(index: Int, count: Int, width: CGFloat) -> CGFloat {
-    guard count > 1 else { return width / 2 }
-    return width * CGFloat(index) / CGFloat(count - 1)
+    SharedChartGeometry.xPosition(index: index, count: count, width: width)
 }
 
 private func nearestIndex(x: CGFloat, width: CGFloat, count: Int) -> Int {
-    guard count > 1 else { return 0 }
-    let progress = min(1, max(0, x / max(1, width)))
-    return Int((progress * CGFloat(count - 1)).rounded())
+    SharedChartGeometry.nearestIndex(to: x, width: width, count: count) ?? 0
 }
 
 private func hrDurationText(seconds: Int?) -> String {

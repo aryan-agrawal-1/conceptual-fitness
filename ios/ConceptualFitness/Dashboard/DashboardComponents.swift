@@ -148,20 +148,15 @@ struct ScoreRingView: View {
     var body: some View {
         NavigationLink(value: AppRoute.metric(item.routeMetric)) {
             VStack(spacing: 9) {
-                ZStack {
-                    Circle()
-                        .stroke(.white.opacity(0.34), lineWidth: 9)
-                    Circle()
-                        .trim(from: 0, to: min(item.progress, 1))
-                        .stroke(item.color.gradient, style: StrokeStyle(lineWidth: 9, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                    if item.progress > 1 {
-                        Circle()
-                            .trim(from: 0, to: min(item.progress - 1, 0.35))
-                            .stroke(.red.opacity(0.8), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                    }
-
+                CircularProgressMetric(
+                    progress: item.progress,
+                    tint: item.color,
+                    trackColor: .white.opacity(0.34),
+                    overflowTint: .red.opacity(0.8),
+                    lineWidth: 9,
+                    overflowLineWidth: 5,
+                    accessibilityLabel: "\(item.title), \(item.valueText), \(item.detailText)"
+                ) {
                     VStack(spacing: 0) {
                         Text(item.valueText)
                             .font(.system(size: 20, weight: .bold, design: .rounded))
@@ -184,7 +179,6 @@ struct ScoreRingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(item.title), \(item.valueText), \(item.detailText)")
     }
 }
 
@@ -376,6 +370,8 @@ struct MetricCard: View {
         .contentShape(Rectangle())
         .glassSurface(cornerRadius: 20, interactive: true)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.title), \(item.valueText), \(item.status)")
     }
 }
 
