@@ -55,12 +55,61 @@ struct DashboardSyncStatus: Decodable {
 }
 
 struct MetricDashboardSummary: Decodable {
+    let metric: String?
+    let unit: String?
     let current: MetricPoint?
+    let previous: MetricPoint?
+    let trend: MetricTrend?
+    let baseline: MetricBaseline?
     let dataQuality: String?
+    let higherIsBetter: Bool?
+    let previewPoints: [MiniMetricChartPoint]
 
     enum CodingKeys: String, CodingKey {
+        case metric
+        case unit
         case current
+        case previous
+        case trend
+        case baseline
         case dataQuality = "data_quality"
+        case higherIsBetter = "higher_is_better"
+        case previewPoints = "preview_points"
+    }
+
+    init(
+        metric: String? = nil,
+        unit: String? = nil,
+        current: MetricPoint? = nil,
+        previous: MetricPoint? = nil,
+        trend: MetricTrend? = nil,
+        baseline: MetricBaseline? = nil,
+        dataQuality: String? = nil,
+        higherIsBetter: Bool? = nil,
+        previewPoints: [MiniMetricChartPoint] = []
+    ) {
+        self.metric = metric
+        self.unit = unit
+        self.current = current
+        self.previous = previous
+        self.trend = trend
+        self.baseline = baseline
+        self.dataQuality = dataQuality
+        self.higherIsBetter = higherIsBetter
+        self.previewPoints = previewPoints
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        metric = try container.decodeIfPresent(String.self, forKey: .metric)
+        unit = try container.decodeIfPresent(String.self, forKey: .unit)
+        current = try container.decodeIfPresent(MetricPoint.self, forKey: .current)
+        previous = try container.decodeIfPresent(MetricPoint.self, forKey: .previous)
+        trend = try container.decodeIfPresent(MetricTrend.self, forKey: .trend)
+        baseline = try container.decodeIfPresent(MetricBaseline.self, forKey: .baseline)
+        dataQuality = try container.decodeIfPresent(String.self, forKey: .dataQuality)
+        higherIsBetter = try container.decodeIfPresent(Bool.self, forKey: .higherIsBetter)
+        previewPoints = try container.decodeIfPresent([MiniMetricChartPoint].self, forKey: .previewPoints) ?? []
     }
 }
 
@@ -1496,14 +1545,12 @@ struct DashboardData {
     let syncStatus: [DashboardSyncStatus]
     let dateContext: DashboardDateContext
     let dailyBrief: String?
-    let insight: String?
     let aiDebugStatus: String?
 
     static let sample = preview()
 
     static func preview(
         dailyBrief: String? = Self.previewDailyBrief,
-        insight: String? = Self.previewShortInsight,
         dateContext: DashboardDateContext = .today
     ) -> DashboardData {
         DashboardData(
@@ -1520,17 +1567,15 @@ struct DashboardData {
             syncStatus: [],
             dateContext: dateContext,
             dailyBrief: dailyBrief,
-            insight: insight,
             aiDebugStatus: nil
         )
     }
 
     static func previewWithoutInsights(dateContext: DashboardDateContext = .today) -> DashboardData {
-        preview(dailyBrief: nil, insight: nil, dateContext: dateContext)
+        preview(dailyBrief: nil, dateContext: dateContext)
     }
 
-    private static let previewDailyBrief = "Recovery looks strong after 7 hours 48 minutes of sleep last night, with readiness and sleep both in a good range. Use today for a purposeful push if it fits your plan: build strain steadily, warm up properly, and stop short of turning a good recovery day into unnecessary fatigue. Keep the evening calm so the sleep win carries forward."
-    private static let previewShortInsight = "Strong recovery supports a purposeful push today. Build strain steadily."
+    private static let previewDailyBrief = "Recovery supports a purposeful day, so build useful strain if it fits your plan while keeping enough margin for a calm evening and strong sleep."
 }
 
 extension DashboardData {

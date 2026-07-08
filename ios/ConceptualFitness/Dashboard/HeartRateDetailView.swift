@@ -18,6 +18,7 @@ struct HeartRateDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HeartRateSummaryPanel(detail: detail, timeframe: timeframe)
                 HeartRateChartPanel(detail: detail, timeframe: timeframe)
+                HeartRateZonesExplanationPanel()
                 HeartRateZonesPanel(zones: detail.zones)
                 HeartRateDriversPanel(detail: detail, timeframe: timeframe)
             }
@@ -34,37 +35,28 @@ private struct HeartRateSummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(detail.summary.title ?? titleFallback)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            HStack(alignment: .center, spacing: 18) {
-                HeroMetricValue(
-                    value: detail.summary.primaryValue?.clean,
-                    unit: "bpm",
-                    caption: timeframe == .day ? "daily avg" : timeframe == .year ? "year avg" : "period avg",
-                    accessibilityLabel: "Average heart rate \(detail.summary.primaryValue?.clean ?? "no value") beats per minute"
-                )
-
-                VStack(spacing: 9) {
-                    HeartRateMetricRow(title: "Range", value: rangeText, tint: .pink)
-                    HeartRateTrendRow(trend: detail.summary.trend)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Heart rhythm",
+            headline: heroHeadline,
+            value: detail.summary.primaryValue?.clean,
+            unit: "bpm",
+            caption: timeframe == .day ? "daily avg" : timeframe == .year ? "year avg" : "period avg",
+            accent: HealthTheme.heartRate,
+            stats: [
+                MetricHeroStat(title: "Range", value: rangeText ?? "--", tint: HealthTheme.heartRate),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: heartRateHeroTrendColor(detail.summary.trend)),
+                MetricHeroStat(title: timeframe == .day ? "Source" : "Window", value: timeframe == .day ? "Daily summary" : timeframe.title, tint: .secondary)
+            ],
+            accessibilityLabel: "Average heart rate \(detail.summary.primaryValue?.clean ?? "no value") beats per minute"
+        )
     }
 
-    private var titleFallback: String {
+    private var heroHeadline: String {
         switch timeframe {
-        case .day: return "Daily Heart Rate"
-        case .week: return "Weekly Heart Rate"
-        case .month: return "Monthly Heart Rate"
-        case .year: return "Yearly Heart Rate"
+        case .day: return "Today’s rate"
+        case .week: return "Weekly rhythm"
+        case .month: return "Monthly rhythm"
+        case .year: return "Yearly rhythm"
         }
     }
 
@@ -422,6 +414,24 @@ private struct HeartRateRangeChart: View {
         case .day:
             return [HeartRateAxisTick(index: 0, label: points[0].axisLabel(for: timeframe), width: 46)]
         }
+    }
+}
+
+private struct HeartRateZonesExplanationPanel: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("What HR Zones Mean", systemImage: "heart.text.square.fill")
+                .font(.headline)
+            Text("Heart rate zones group your time by intensity, from easy aerobic work through harder threshold efforts.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("More time in higher zones usually means more cardiovascular stress, while lower zones are useful for recovery, base fitness, and steady volume.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassSurface(cornerRadius: 20)
     }
 }
 
@@ -939,4 +949,17 @@ private func compactDurationText(minutes: Double) -> String {
         return "\(hours)h \(mins)m"
     }
     return "\(mins)m"
+}
+
+private func heartRateHeroTrendColor(_ trend: String?) -> Color {
+    switch trend {
+    case "up":
+        return HealthTheme.color(for: .caution)
+    case "down":
+        return HealthTheme.color(for: .stable)
+    case "flat":
+        return .secondary
+    default:
+        return .secondary
+    }
 }

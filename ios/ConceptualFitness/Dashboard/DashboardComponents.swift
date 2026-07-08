@@ -30,29 +30,25 @@ struct DailyBriefCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if data.dateContext == .yesterday {
-                Text("Yesterday's scores")
+            HStack(alignment: .center) {
+                Text(data.dateContext == .yesterday ? "Yesterday's scores" : "Daily Status")
+                    .font(.headline)
+                    .foregroundStyle(.primary.opacity(0.86))
+
+                Spacer()
+
+                Text(statusPillTitle)
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.primary.opacity(0.68))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.white.opacity(0.38), in: Capsule())
+                    .foregroundStyle(statusPillColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(statusPillColor.opacity(0.12), in: Capsule())
             }
 
             HStack(alignment: .top, spacing: 12) {
-                ScoreRingView(item: .strain(from: data.snapshot))
-                ScoreRingView(item: .readiness(from: data.snapshot))
-                ScoreRingView(item: .sleep(from: data.snapshot))
-            }
-
-            if let insight = data.insight?.nonEmptyDashboardText {
-                Text(insight)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary.opacity(0.78))
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
+                ScoreRingView(item: .readiness(from: data.snapshot), size: 86)
+                ScoreRingView(item: .sleep(from: data.snapshot), size: 86)
+                ScoreRingView(item: .strain(from: data.snapshot), size: 86)
             }
 
             #if DEBUG
@@ -67,6 +63,30 @@ struct DailyBriefCard: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassSurface(cornerRadius: 26)
+    }
+
+    private var statusPillTitle: String {
+        let readiness = data.snapshot.scores.readiness?.value
+        let sleep = data.snapshot.scores.sleep?.value
+
+        if readiness == nil && sleep == nil { return "Syncing" }
+        if (readiness ?? 0) >= 85 && (sleep ?? 0) >= 85 { return "Excellent" }
+        if (readiness ?? 0) >= 70 && (sleep ?? 0) >= 70 { return "Good" }
+        if (readiness ?? 100) < 55 || (sleep ?? 100) < 55 { return "Low" }
+        return "Steady"
+    }
+
+    private var statusPillColor: Color {
+        switch statusPillTitle {
+        case "Excellent", "Good":
+            return HealthTheme.color(for: .positive)
+        case "Low":
+            return HealthTheme.color(for: .caution)
+        case "Syncing":
+            return HealthTheme.color(for: .missing)
+        default:
+            return HealthTheme.color(for: .stable)
+        }
     }
 }
 
@@ -95,7 +115,6 @@ struct DailyBriefSkeleton: View {
 struct ScoreRingItem {
     let title: String
     let valueText: String
-    let detailText: String
     let progress: Double
     let color: Color
     let routeMetric: String
@@ -110,9 +129,8 @@ struct ScoreRingItem {
         return ScoreRingItem(
             title: "Strain",
             valueText: percentage.isFinite ? "\(Int(percentage.rounded()))%" : "--",
-            detailText: current.flatMap { current in target.map { "\(current.clean)/\($0.clean)" } } ?? "Target pending",
             progress: min(max(ratio ?? 0, 0), 1.35),
-            color: .orange,
+            color: HealthTheme.color(for: .strain),
             routeMetric: "strain"
         )
     }
@@ -122,9 +140,8 @@ struct ScoreRingItem {
         return ScoreRingItem(
             title: "Readiness",
             valueText: value.map { "\(Int($0.rounded()))" } ?? "--",
-            detailText: snapshot.scores.readiness?.status?.displayTitle ?? "Sync pending",
             progress: (value ?? 0) / 100,
-            color: .green,
+            color: HealthTheme.color(for: .readiness),
             routeMetric: "readiness"
         )
     }
@@ -134,9 +151,8 @@ struct ScoreRingItem {
         return ScoreRingItem(
             title: "Sleep",
             valueText: value.map { "\(Int($0.rounded()))" } ?? "--",
-            detailText: snapshot.scores.sleep?.status?.displayTitle ?? "No data yet",
             progress: (value ?? 0) / 100,
-            color: .indigo,
+            color: HealthTheme.color(for: .sleep),
             routeMetric: "sleep"
         )
     }
@@ -144,6 +160,7 @@ struct ScoreRingItem {
 
 struct ScoreRingView: View {
     let item: ScoreRingItem
+    var size: CGFloat = 88
 
     var body: some View {
         NavigationLink(value: AppRoute.metric(item.routeMetric)) {
@@ -152,10 +169,10 @@ struct ScoreRingView: View {
                     progress: item.progress,
                     tint: item.color,
                     trackColor: .white.opacity(0.34),
-                    overflowTint: .red.opacity(0.8),
+                    overflowTint: HealthTheme.color(for: .risk),
                     lineWidth: 9,
                     overflowLineWidth: 5,
-                    accessibilityLabel: "\(item.title), \(item.valueText), \(item.detailText)"
+                    accessibilityLabel: "\(item.title), \(item.valueText)"
                 ) {
                     VStack(spacing: 0) {
                         Text(item.valueText)
@@ -166,14 +183,7 @@ struct ScoreRingView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 88, height: 88)
-
-                Text(item.detailText)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(width: 96)
+                .frame(width: size, height: size)
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
@@ -225,12 +235,16 @@ struct WorkoutSummaryRow: View {
     let workout: WorkoutSummary
     var presentation: WorkoutSummaryRowPresentation = .compact
 
+    private var workoutPresentation: WorkoutPresentation {
+        workout.presentation
+    }
+
     var body: some View {
         HStack(spacing: presentation == .card ? 14 : 12) {
             iconView
 
             VStack(alignment: .leading, spacing: presentation == .card ? 5 : 4) {
-                Text(workout.summaryDisplayName)
+                Text(workoutPresentation.displayName)
                     .font(titleFont)
                     .lineLimit(1)
                 Text(workout.summarySubtitle)
@@ -258,17 +272,25 @@ struct WorkoutSummaryRow: View {
     @ViewBuilder
     private var iconView: some View {
         if presentation == .card {
-            Image(systemName: workout.summaryIconName)
-                .font(iconFont)
-                .foregroundStyle(.white)
-                .frame(width: iconSize, height: iconSize)
-                .background(workout.summaryTint.gradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: workoutPresentation.symbolName)
+                    .font(iconFont)
+                    .foregroundStyle(workoutPresentation.activityAccent)
+                    .frame(width: iconSize, height: iconSize)
+                    .background(workoutPresentation.activityAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                Circle()
+                    .fill(workoutPresentation.strainAccent)
+                    .frame(width: 9, height: 9)
+                    .overlay(Circle().stroke(.white.opacity(0.72), lineWidth: 1))
+                    .offset(x: -5, y: -5)
+            }
         } else {
-            Image(systemName: workout.summaryIconName)
+            Image(systemName: workoutPresentation.symbolName)
                 .font(iconFont)
-                .foregroundStyle(workout.summaryTint)
+                .foregroundStyle(workoutPresentation.activityAccent)
                 .frame(width: iconSize, height: iconSize)
-                .background(workout.summaryTint.opacity(0.13), in: Circle())
+                .background(workoutPresentation.activityAccent.opacity(0.13), in: Circle())
         }
     }
 
@@ -335,34 +357,39 @@ struct MetricCard: View {
     let item: MetricCardItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 8) {
                 Image(systemName: item.systemImage)
-                    .font(.headline)
+                    .font(.subheadline.weight(.bold))
                     .foregroundStyle(item.tint)
+
+                Text(item.title)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+
                 Spacer()
+
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary.opacity(0.55))
             }
 
+            Text(item.valueText)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.64)
+
+            MiniMetricChart(points: item.previewPoints, kind: item.chartKind, tint: item.tint)
+                .padding(.vertical, 2)
+
             Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.valueText)
-                    .font(.system(size: 25, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.68)
-                Text(item.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Text(item.status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
+            Text(item.status)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(item.statusColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .padding(14)
         .aspectRatio(1, contentMode: .fit)
@@ -401,24 +428,27 @@ struct MetricCardItem: Identifiable {
     let status: String
     let systemImage: String
     let tint: Color
+    let statusColor: Color
+    let chartKind: MiniMetricChartKind
+    let previewPoints: [MiniMetricChartPoint]
 
     static func items(from data: DashboardData) -> [MetricCardItem] {
         let metrics = data.snapshot.metrics
         var items: [MetricCardItem] = [
-            item("heart_rate_variability", "HRV", value(for: "heart_rate_variability", in: data, fallback: metrics?.heartRateVariability), "ms", "waveform.path.ecg", .purple, quality(for: "heart_rate_variability", in: data, fallback: metrics?.dataQuality)),
-            item("resting_heart_rate", "Resting HR", value(for: "resting_heart_rate", in: data, fallback: metrics?.restingHeartRate), "bpm", "heart.fill", .red, quality(for: "resting_heart_rate", in: data, fallback: metrics?.dataQuality)),
-            item("heart_rate", "Heart Rate", value(for: "heart_rate", in: data, fallback: nil), "bpm", "heart.text.square.fill", .pink, quality(for: "heart_rate", in: data, fallback: metrics?.dataQuality)),
-            item("skin_temperature_variation", "Skin Temp Variation", value(for: "skin_temperature_variation", in: data, fallback: nil), "C", "thermometer", .brown, quality(for: "skin_temperature_variation", in: data, fallback: metrics?.dataQuality)),
-            item("oxygen_saturation", "SpO2", value(for: "oxygen_saturation", in: data, fallback: metrics?.oxygenSaturation), "%", "lungs.fill", .cyan, quality(for: "oxygen_saturation", in: data, fallback: metrics?.dataQuality)),
-            item("respiratory_rate", "Respiratory", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), "br/min", "wind", .teal, quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality)),
-            item("vo2_max", "VO2 Max", data.vo2Max?.current?.value ?? value(for: "vo2_max", in: data, fallback: nil), "ml/kg/min", "figure.run", .green, data.vo2Max?.dataQuality ?? quality(for: "vo2_max", in: data, fallback: nil))
+            item("heart_rate_variability", value(for: "heart_rate_variability", in: data, fallback: metrics?.heartRateVariability), quality(for: "heart_rate_variability", in: data, fallback: metrics?.dataQuality), data: data),
+            item("resting_heart_rate", value(for: "resting_heart_rate", in: data, fallback: metrics?.restingHeartRate), quality(for: "resting_heart_rate", in: data, fallback: metrics?.dataQuality), data: data),
+            item("heart_rate", value(for: "heart_rate", in: data, fallback: nil), quality(for: "heart_rate", in: data, fallback: metrics?.dataQuality), data: data),
+            item("skin_temperature_variation", value(for: "skin_temperature_variation", in: data, fallback: nil), quality(for: "skin_temperature_variation", in: data, fallback: metrics?.dataQuality), data: data),
+            item("oxygen_saturation", value(for: "oxygen_saturation", in: data, fallback: metrics?.oxygenSaturation), quality(for: "oxygen_saturation", in: data, fallback: metrics?.dataQuality), data: data),
+            item("respiratory_rate", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality), data: data),
+            item("vo2_max", data.vo2Max?.current?.value ?? value(for: "vo2_max", in: data, fallback: nil), data.vo2Max?.dataQuality ?? quality(for: "vo2_max", in: data, fallback: nil), data: data)
         ]
 
         items += [
-            item("sleep", "Sleep", value(for: "sleep", in: data, fallback: metrics?.sleepMinutes.map(Double.init)), "min", "bed.double.fill", .indigo, quality(for: "sleep", in: data, fallback: metrics?.dataQuality)),
-            item("steps", "Steps", value(for: "steps", in: data, fallback: metrics?.steps.map(Double.init)), "", "shoeprints.fill", .blue, quality(for: "steps", in: data, fallback: metrics?.dataQuality)),
-            item("total_calories", "Calories Burned", value(for: "total_calories", in: data, fallback: metrics?.totalCalories), "kcal", "flame.fill", .orange, quality(for: "total_calories", in: data, fallback: metrics?.dataQuality)),
-            item("distance", "Distance", distanceKilometers(from: data, fallbackMeters: metrics?.distanceMeters), "km", "point.topleft.down.curvedto.point.bottomright.up", .mint, quality(for: "distance", in: data, fallback: metrics?.dataQuality))
+            item("sleep", value(for: "sleep", in: data, fallback: metrics?.sleepMinutes.map(Double.init)), quality(for: "sleep", in: data, fallback: metrics?.dataQuality), data: data),
+            item("steps", value(for: "steps", in: data, fallback: metrics?.steps.map(Double.init)), quality(for: "steps", in: data, fallback: metrics?.dataQuality), data: data),
+            item("total_calories", value(for: "total_calories", in: data, fallback: metrics?.totalCalories), quality(for: "total_calories", in: data, fallback: metrics?.dataQuality), data: data),
+            item("distance", distanceKilometers(from: data, fallbackMeters: metrics?.distanceMeters), quality(for: "distance", in: data, fallback: metrics?.dataQuality), data: data)
         ]
 
         return items
@@ -439,13 +469,12 @@ struct MetricCardItem: Identifiable {
 
     private static func item(
         _ key: String,
-        _ title: String,
         _ value: Double?,
-        _ unit: String,
-        _ icon: String,
-        _ tint: Color,
-        _ quality: String?
+        _ quality: String?,
+        data: DashboardData
     ) -> MetricCardItem {
+        let presentation = HealthMetricPresentation.presentation(for: key)
+        let unit = presentation.unit
         let valueText: String
         if let value {
             if key == "steps" {
@@ -463,34 +492,76 @@ struct MetricCardItem: Identifiable {
 
         return MetricCardItem(
             metricKey: key,
-            title: title,
+            title: presentation.title,
             valueText: valueText,
-            status: value == nil ? "No data yet" : (quality?.displayTitle ?? "Synced"),
-            systemImage: icon,
-            tint: tint
+            status: statusText(key: key, value: value, quality: quality, summary: data.metricSummaries[key], presentation: presentation),
+            systemImage: presentation.systemImage,
+            tint: presentation.tint,
+            statusColor: statusColor(value: value, summary: data.metricSummaries[key], presentation: presentation),
+            chartKind: presentation.chartKind,
+            previewPoints: data.metricSummaries[key]?.previewPoints ?? []
         )
+    }
+
+    private static func statusText(
+        key: String,
+        value: Double?,
+        quality: String?,
+        summary: MetricDashboardSummary?,
+        presentation: HealthMetricPresentation
+    ) -> String {
+        guard value != nil else { return "No data yet" }
+        if let comparison = summary?.baseline?.comparison {
+            switch comparison {
+            case "normal":
+                return "Within baseline"
+            case "below":
+                return presentation.higherIsBetter == false ? "Below baseline" : "Lower than baseline"
+            case "above":
+                return presentation.higherIsBetter == false ? "Elevated vs baseline" : "Above baseline"
+            default:
+                break
+            }
+        }
+        if let direction = summary?.trend?.direction, direction != "unknown" {
+            return direction == "flat" ? "Stable trend" : "\(direction.displayTitle) trend"
+        }
+        return quality?.displayTitle ?? "Synced"
+    }
+
+    private static func statusColor(
+        value: Double?,
+        summary: MetricDashboardSummary?,
+        presentation: HealthMetricPresentation
+    ) -> Color {
+        guard value != nil else { return HealthTheme.color(for: .missing) }
+        if let comparison = summary?.baseline?.comparison {
+            switch comparison {
+            case "normal":
+                return HealthTheme.color(for: .stable)
+            case "below":
+                return presentation.higherIsBetter == false ? HealthTheme.color(for: .positive) : HealthTheme.color(for: .caution)
+            case "above":
+                return presentation.higherIsBetter == false ? HealthTheme.color(for: .caution) : HealthTheme.color(for: .positive)
+            default:
+                break
+            }
+        }
+        return HealthTheme.color(for: .stable)
     }
 }
 
 extension WorkoutSummary {
+    var presentation: WorkoutPresentation {
+        WorkoutPresentationFactory.make(type: workoutType, intensity: intensity, strainLoadPoints: strainLoadPoints)
+    }
+
     var summaryIconName: String {
-        let type = workoutType?.lowercased() ?? ""
-        if type.contains("run") { return "figure.run" }
-        if type.contains("cycl") || type.contains("bike") { return "bicycle" }
-        if type.contains("walk") { return "figure.walk" }
-        if type.contains("swim") { return "figure.pool.swim" }
-        if type.contains("strength") || type.contains("weight") { return "dumbbell.fill" }
-        return "figure.mixed.cardio"
+        presentation.symbolName
     }
 
     var summaryTint: Color {
-        switch intensity?.lowercased() {
-        case "peak": return .red
-        case "vigorous", "high": return .orange
-        case "moderate": return .blue
-        case "light", "low": return .green
-        default: return .indigo
-        }
+        presentation.activityAccent
     }
 
     var summarySubtitle: String {
@@ -509,19 +580,7 @@ extension WorkoutSummary {
     }
 
     var summaryDisplayName: String {
-        guard let workoutType else { return "Workout" }
-        let normalized = workoutType
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return "Workout" }
-        return normalized
-            .lowercased()
-            .split(separator: " ")
-            .map { word in
-                word.prefix(1).uppercased() + word.dropFirst()
-            }
-            .joined(separator: " ")
+        presentation.displayName
     }
 }
 

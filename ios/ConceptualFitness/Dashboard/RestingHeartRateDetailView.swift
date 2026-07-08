@@ -17,8 +17,8 @@ struct RestingHeartRateDetailView: View {
         ) { detail, timeframe in
             VStack(alignment: .leading, spacing: 18) {
                 RHRSummaryPanel(detail: detail, timeframe: timeframe)
-                RHRExplanationPanel()
                 RHRChartPanel(detail: detail, timeframe: timeframe)
+                RHRExplanationPanel()
                 RHRPatternPanel(detail: detail, timeframe: timeframe)
                 RHRContextPanel(detail: detail, timeframe: timeframe)
             }
@@ -31,45 +31,28 @@ private struct RHRSummaryPanel: View {
     let timeframe: ScoreTimeframe
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? titleFallback)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(
-                    title: rhrRelationTitle(detail.summary.baselineRelation),
-                    color: rhrRelationColor(detail.summary.baselineRelation)
-                )
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                HeroMetricValue(
-                    value: rhrWholeText(detail.summary.primaryValue),
-                    unit: "bpm",
-                    caption: timeframe == .year ? "monthly avg" : "period avg",
-                    accessibilityLabel: "Average resting heart rate \(rhrWholeText(detail.summary.primaryValue) ?? "no value") beats per minute"
-                )
-
-                VStack(spacing: 9) {
-                    RHRSummaryRow(title: "Baseline", value: rhrBaselineRangeText(detail.summary), tint: .teal)
-                    RHRTrendRow(trend: detail.summary.trend)
-                    RHRSummaryRow(title: "Recorded", value: recordedText, tint: .secondary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Your recovery",
+            headline: heroHeadline,
+            value: rhrWholeText(detail.summary.primaryValue),
+            unit: "bpm",
+            caption: timeframe == .year ? "monthly avg" : "period avg",
+            accent: HealthTheme.heartRate,
+            stats: [
+                MetricHeroStat(title: "Baseline", value: rhrBaselineRangeText(detail.summary) ?? "--", tint: HealthTheme.heartRate),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: rhrTrendColor(detail.summary.trend)),
+                MetricHeroStat(title: "Recorded", value: recordedText ?? "--", tint: .secondary)
+            ],
+            accessibilityLabel: "Average resting heart rate \(rhrWholeText(detail.summary.primaryValue) ?? "no value") beats per minute"
+        )
     }
 
-    private var titleFallback: String {
-        switch timeframe {
-        case .week: return "Weekly Resting HR"
-        case .month: return "Monthly Resting HR"
-        case .year: return "Yearly Resting HR"
-        case .day: return "Resting HR"
+    private var heroHeadline: String {
+        switch detail.summary.baselineRelation {
+        case "above": return "Running high"
+        case "below": return "Below baseline"
+        case "normal": return "Steady baseline"
+        default: return "Building baseline"
         }
     }
 
@@ -747,8 +730,7 @@ private func rhrWholeText(_ value: Double?) -> String? {
 }
 
 private func rhrBaselineRangeText(_ summary: BaselineMetricSummary) -> String? {
-    guard let lower = summary.baselineLowerBound, let upper = summary.baselineUpperBound else { return nil }
-    return "\(lower.clean)-\(upper.clean) bpm"
+    metricHeroWholeRangeText(lower: summary.baselineLowerBound, upper: summary.baselineUpperBound, unit: "bpm")
 }
 
 private func rhrTrendColor(_ trend: String?) -> Color {

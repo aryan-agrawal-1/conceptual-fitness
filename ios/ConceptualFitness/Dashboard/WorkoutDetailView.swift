@@ -92,8 +92,8 @@ private struct WorkoutDetailHeader: View {
 
             Spacer(minLength: 8)
 
-            if let intensity = detail.intensity, intensity != "unknown" {
-                StatusPill(title: intensity.displayTitle, color: detail.summaryTint)
+            if let intensity = detail.presentation.intensityLabel {
+                StatusPill(title: intensity, color: detail.presentation.strainAccent)
             }
         }
         .padding(18)
@@ -597,36 +597,20 @@ private struct WorkoutHeartRatePlotPoint: Identifiable {
 }
 
 private extension WorkoutDetail {
+    var presentation: WorkoutPresentation {
+        WorkoutPresentationFactory.make(type: workoutType, intensity: intensity, strainLoadPoints: strainLoadPoints)
+    }
+
     var summaryIconName: String {
-        let type = workoutType?.lowercased() ?? ""
-        if type.contains("run") { return "figure.run" }
-        if type.contains("cycl") || type.contains("bike") { return "bicycle" }
-        if type.contains("walk") { return "figure.walk" }
-        if type.contains("swim") { return "figure.pool.swim" }
-        if type.contains("strength") || type.contains("weight") { return "dumbbell.fill" }
-        if type.contains("yoga") { return "figure.yoga" }
-        if type.contains("hike") { return "figure.hiking" }
-        return "figure.mixed.cardio"
+        presentation.symbolName
     }
 
     var summaryTint: Color {
-        intensityTint(intensity)
+        presentation.activityAccent
     }
 
     var summaryDisplayName: String {
-        guard let workoutType else { return "Workout" }
-        let normalized = workoutType
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return "Workout" }
-        return normalized
-            .lowercased()
-            .split(separator: " ")
-            .map { word in
-                word.prefix(1).uppercased() + word.dropFirst()
-            }
-            .joined(separator: " ")
+        presentation.displayName
     }
 
     var workoutDateLine: String {
@@ -791,17 +775,6 @@ private func distanceText(meters: Double) -> String {
         return String(format: "%.1f km", meters / 1000)
     }
     return "\(meters.clean) m"
-}
-
-
-private func intensityTint(_ intensity: String?) -> Color {
-    switch intensity?.lowercased() {
-    case "light": return .teal
-    case "moderate": return .green
-    case "vigorous": return .orange
-    case "peak": return .red
-    default: return .indigo
-    }
 }
 
 #Preview("Workout detail") {

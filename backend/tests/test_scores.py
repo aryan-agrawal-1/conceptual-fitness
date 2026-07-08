@@ -500,6 +500,12 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
         "value": 0.24,
         "unit": "celsius",
     }
+    assert len(payload["metric_summaries"]["skin_temperature_variation"]["preview_points"]) == 7
+    assert payload["metric_summaries"]["vo2_max"]["preview_points"][-1]["date"] == day.isoformat()
+    assert payload["metric_summaries"]["sleep"]["preview_points"] == [
+        {"stage": "DEEP", "duration_minutes": 70},
+        {"stage": "REM", "duration_minutes": 95},
+    ]
     assert payload["metric_summaries"]["steps"]["current"]["value"] == 6500.0
     assert payload["data_quality"]["sections"]["sync"] == "strong"
 

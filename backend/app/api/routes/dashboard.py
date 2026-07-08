@@ -120,6 +120,7 @@ def dashboard_bundle(
         metric_names=metric_names,
         end=day,
         window_days=metrics_window_days,
+        preview_style="detail_default",
     )
     snapshot = _dashboard_snapshot(session, user.id, day)
     recent_workouts = _recent_workouts_payload(

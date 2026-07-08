@@ -24,7 +24,6 @@ struct DistanceDetailView: View {
                 if timeframe != .day {
                     DistanceConsistencyPanel(detail: detail, timeframe: timeframe)
                 }
-                DistanceExplanationPanel()
             }
         }
     }
@@ -59,50 +58,20 @@ private struct DistanceSummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(title: statusTitle, color: statusColor)
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(distanceText(primaryValue))
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.58)
-                    Text(primaryLabel)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(spacing: 9) {
-                    if timeframe != .day {
-                        DistanceSummaryRow(title: totalRowTitle, value: distanceText(periodTotal), tint: .mint)
-                    }
-                    DistanceSummaryRow(title: bestRowTitle, value: bestValueText, tint: .green)
-                    DistanceTrendRow(trend: detail.summary.trend)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-    }
-
-    private var title: String {
-        switch timeframe {
-        case .day: return "Daily Distance"
-        case .week: return "Weekly Distance"
-        case .month: return "Monthly Distance"
-        case .year: return "Yearly Distance"
-        }
+        MetricHeroPanel(
+            eyebrow: "Distance",
+            headline: statusTitle,
+            value: distanceText(primaryValue),
+            unit: "",
+            caption: primaryLabel,
+            accent: HealthTheme.distance,
+            stats: [
+                MetricHeroStat(title: totalRowTitle, value: distanceText(timeframe == .day ? dayTotal : periodTotal), tint: HealthTheme.distance),
+                MetricHeroStat(title: bestRowTitle, value: bestValueText, tint: .green),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: statusColor)
+            ],
+            accessibilityLabel: "\(distanceText(primaryValue)) \(primaryLabel)"
+        )
     }
 
     private var primaryLabel: String {
@@ -544,18 +513,6 @@ private struct DistanceConsistencyPanel: View {
         }
         let prefix = change > 0 ? "+" : ""
         return "\(prefix)\(distanceText(change)) avg/day"
-    }
-}
-
-private struct DistanceExplanationPanel: View {
-    var body: some View {
-        Text("Distance includes walking, running, and other movement recorded by your connected provider. Use it with steps and workouts to see whether activity was steady, concentrated, or unusually high for the period.")
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.secondary)
-            .lineSpacing(3)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 16)
     }
 }
 

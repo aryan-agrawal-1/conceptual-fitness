@@ -67,7 +67,7 @@ struct AppShellView: View {
             .tabItem { AppTab.insights.label }
             .tag(AppTab.insights)
         }
-        .tint(.blue)
+        .tint(HealthTheme.color(for: .activity))
         .task {
             await syncCoordinator.syncIfNeeded()
         }

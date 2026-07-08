@@ -292,7 +292,18 @@ def test_metrics_dashboard_summary_batches_metric_cards(session, auth_headers) -
     }
     assert payload["metrics"]["heart_rate_variability"]["baseline"]["comparison"] == "normal"
     assert payload["metrics"]["heart_rate_variability"]["trend"]["absolute_change"] == 4.0
+    assert payload["metrics"]["heart_rate_variability"]["preview_points"][-1] == {
+        "date": "2026-06-19",
+        "value": 58.0,
+        "unit": "ms",
+        "data_quality": "strong",
+        "baseline_value": 52.0,
+        "baseline_lower_bound": 46.0,
+        "baseline_upper_bound": 58.0,
+        "comparison": "normal",
+    }
     assert payload["metrics"]["steps"]["current"]["value"] == 8000.0
+    assert len(payload["metrics"]["steps"]["preview_points"]) == 3
 
 
 def test_metrics_dashboard_summary_default_metric_order(session, auth_headers) -> None:
@@ -393,6 +404,8 @@ def test_metrics_dashboard_summary_includes_heart_rate_and_skin_temperature(
     payload = response.json()["metrics"]
     assert payload["heart_rate"]["current"]["value"] == 81.0
     assert payload["heart_rate"]["current"]["unit"] == "bpm"
+    assert [point["value"] for point in payload["heart_rate"]["preview_points"]] == [80.0, 81.0]
+    assert payload["skin_temperature_variation"]["preview_points"][0]["baseline_value"] is None
     assert payload["heart_rate"]["current"]["date"].startswith("2026-06-19T08:01:00")
     assert payload["skin_temperature_variation"]["current"] == {
         "date": "2026-06-19",

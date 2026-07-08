@@ -47,6 +47,11 @@
 		010000000000000000000026 /* MetricDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000029 /* MetricDetailScreen.swift */; };
 		010000000000000000000027 /* MetricDetailComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002A /* MetricDetailComponents.swift */; };
 		010000000000000000000028 /* SharedChartGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002B /* SharedChartGeometry.swift */; };
+		010000000000000000000029 /* HealthTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002C /* HealthTheme.swift */; };
+		01000000000000000000002A /* MiniMetricCharts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002D /* MiniMetricCharts.swift */; };
+		01000000000000000000002B /* HealthMetricPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002E /* HealthMetricPresentation.swift */; };
+		01000000000000000000002C /* WorkoutPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002F /* WorkoutPresentation.swift */; };
+		01000000000000000000002D /* MetricHeroPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000030 /* MetricHeroPanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -93,6 +98,11 @@
 		020000000000000000000029 /* MetricDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricDetailScreen.swift; sourceTree = "<group>"; };
 		02000000000000000000002A /* MetricDetailComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricDetailComponents.swift; sourceTree = "<group>"; };
 		02000000000000000000002B /* SharedChartGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedChartGeometry.swift; sourceTree = "<group>"; };
+		02000000000000000000002C /* HealthTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthTheme.swift; sourceTree = "<group>"; };
+		02000000000000000000002D /* MiniMetricCharts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMetricCharts.swift; sourceTree = "<group>"; };
+		02000000000000000000002E /* HealthMetricPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthMetricPresentation.swift; sourceTree = "<group>"; };
+		02000000000000000000002F /* WorkoutPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutPresentation.swift; sourceTree = "<group>"; };
+		020000000000000000000030 /* MetricHeroPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricHeroPanel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -189,6 +199,11 @@
 				020000000000000000000029 /* MetricDetailScreen.swift */,
 				02000000000000000000002A /* MetricDetailComponents.swift */,
 				02000000000000000000002B /* SharedChartGeometry.swift */,
+				02000000000000000000002C /* HealthTheme.swift */,
+				02000000000000000000002D /* MiniMetricCharts.swift */,
+				02000000000000000000002E /* HealthMetricPresentation.swift */,
+				02000000000000000000002F /* WorkoutPresentation.swift */,
+				020000000000000000000030 /* MetricHeroPanel.swift */,
 				020000000000000000000006 /* Formatters.swift */,
 				02000000000000000000001A /* ScoreRangeSelector.swift */,
 				020000000000000000000020 /* HeartRateZones.swift */,
@@ -299,6 +314,11 @@
 				010000000000000000000026 /* MetricDetailScreen.swift in Sources */,
 				010000000000000000000027 /* MetricDetailComponents.swift in Sources */,
 				010000000000000000000028 /* SharedChartGeometry.swift in Sources */,
+				010000000000000000000029 /* HealthTheme.swift in Sources */,
+				01000000000000000000002A /* MiniMetricCharts.swift in Sources */,
+				01000000000000000000002B /* HealthMetricPresentation.swift in Sources */,
+				01000000000000000000002C /* WorkoutPresentation.swift in Sources */,
+				01000000000000000000002D /* MetricHeroPanel.swift in Sources */,
 				010000000000000000000006 /* Formatters.swift in Sources */,
 				010000000000000000000007 /* DashboardModels.swift in Sources */,
 				010000000000000000000008 /* DashboardAPIClient.swift in Sources */,

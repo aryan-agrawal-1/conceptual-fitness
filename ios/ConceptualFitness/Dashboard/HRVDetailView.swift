@@ -17,8 +17,8 @@ struct HRVDetailView: View {
         ) { detail, timeframe in
             VStack(alignment: .leading, spacing: 18) {
                 HRVSummaryPanel(detail: detail, timeframe: timeframe)
-                HRVExplanationPanel()
                 HRVChartPanel(detail: detail, timeframe: timeframe)
+                HRVExplanationPanel()
                 HRVPatternPanel(detail: detail, timeframe: timeframe)
             }
         }
@@ -30,54 +30,37 @@ private struct HRVSummaryPanel: View {
     let timeframe: ScoreTimeframe
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? timeframe.title)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(
-                    title: relationTitle(detail.summary.baselineRelation),
-                    color: relationColor(detail.summary.baselineRelation)
-                )
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                HeroMetricValue(
-                    value: hrvWholeText(detail.summary.primaryValue),
-                    unit: "ms",
-                    caption: timeframe == .year ? "monthly avg" : "period avg",
-                    accessibilityLabel: "Average HRV \(hrvWholeText(detail.summary.primaryValue) ?? "no value") milliseconds"
-                )
-
-                VStack(spacing: 9) {
-                    HRVMetricRow(title: "Baseline", value: baselineRangeText(detail.summary), tint: .blue)
-                    HRVTrendRow(trend: detail.summary.trend)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Your recovery",
+            headline: recoveryHeadline,
+            value: hrvWholeText(detail.summary.primaryValue),
+            unit: "ms",
+            caption: timeframe == .year ? "monthly avg" : "period avg",
+            accent: HealthTheme.hrv,
+            stats: [
+                MetricHeroStat(title: "Baseline", value: baselineRangeText(detail.summary) ?? "--", tint: HealthTheme.hrv),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: trendColor(detail.summary.trend)),
+                MetricHeroStat(title: timeframe == .week ? "Vs. last week" : "Change", value: changeText, tint: relationColor(detail.summary.baselineRelation))
+            ],
+            accessibilityLabel: "Average HRV \(hrvWholeText(detail.summary.primaryValue) ?? "no value") milliseconds"
+        )
     }
-}
 
-private struct HRVExplanationPanel: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("What HRV Means", systemImage: "waveform.path.ecg")
-                .font(.headline)
-            Text("Heart rate variability is the tiny variation between heartbeats. It reflects how your autonomic nervous system balances stress and recovery.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("Higher HRV is often associated with better recovery and fitness.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+    private var recoveryHeadline: String {
+        switch detail.summary.baselineRelation {
+        case "below":
+            return "Needs care"
+        case "above":
+            return "Above baseline"
+        case "normal":
+            return "Recovering well"
+        default:
+            return "Building baseline"
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+    }
+
+    private var changeText: String {
+        metricHeroSignedChangeText(detail.summary.absoluteChange, unit: "ms")
     }
 }
 
@@ -204,17 +187,17 @@ private struct HRVBaselineChart: View {
                 }
 
                 HRVBaselineBandShape(points: points, bounds: bounds)
-                    .fill(Color.teal.opacity(0.14))
+                    .fill(HealthTheme.color(for: .recovery).opacity(0.14))
                     .frame(width: plot.width, height: plot.height)
                     .offset(x: plot.minX, y: plot.minY)
 
                 HRVLineShape(points: points, bounds: bounds, valueKind: .baseline, connectsGaps: true)
-                    .stroke(Color.teal.opacity(0.42), style: StrokeStyle(lineWidth: 1.4, dash: [5, 5]))
+                    .stroke(HealthTheme.color(for: .recovery).opacity(0.42), style: StrokeStyle(lineWidth: 1.4, dash: [5, 5]))
                     .frame(width: plot.width, height: plot.height)
                     .offset(x: plot.minX, y: plot.minY)
 
                 HRVLineShape(points: points, bounds: bounds, valueKind: .hrv, connectsGaps: false)
-                    .stroke(Color.blue.gradient, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                    .stroke(HealthTheme.color(for: .recovery).gradient, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     .frame(width: plot.width, height: plot.height)
                     .offset(x: plot.minX, y: plot.minY)
 
@@ -229,7 +212,7 @@ private struct HRVBaselineChart: View {
                             .fill(Color.white)
                             .frame(width: 13, height: 13)
                             .overlay(
-                                Circle().stroke(Color.blue, lineWidth: 3)
+                                Circle().stroke(HealthTheme.color(for: .recovery), lineWidth: 3)
                             )
                             .position(x: x, y: yPosition(value: value, bounds: bounds, height: plot.height) + plot.minY)
                     }
@@ -239,7 +222,7 @@ private struct HRVBaselineChart: View {
                     ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
                         if let value = point.value {
                             Circle()
-                                .fill(Color.blue)
+                                .fill(HealthTheme.color(for: .recovery))
                                 .frame(width: point.id == selectedPoint?.id ? 9 : 6, height: point.id == selectedPoint?.id ? 9 : 6)
                                 .position(
                                     x: xPosition(index: index, count: points.count, width: plot.width) + plot.minX,
@@ -310,6 +293,24 @@ private struct HRVXTick: Identifiable {
     let width: CGFloat
 
     var id: String { "\(index)-\(label)" }
+}
+
+private struct HRVExplanationPanel: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("What HRV Means", systemImage: "waveform.path.ecg")
+                .font(.headline)
+            Text("HRV reflects variation between heartbeats and is often a useful recovery signal.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Higher-than-usual HRV can suggest good recovery, while sustained drops can show up with stress, illness, poor sleep, alcohol, or heavy training.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassSurface(cornerRadius: 20)
+    }
 }
 
 private struct HRVPatternPanel: View {
@@ -452,9 +453,9 @@ private struct HRVPatternDot: View {
 
 private struct HRVLegend: View {
     private let items: [(String, Color)] = [
-        ("Within", .blue),
-        ("Below", .orange),
-        ("Above", .purple),
+        ("Within", HealthTheme.color(for: .recovery)),
+        ("Below", HealthTheme.color(for: .caution)),
+        ("Above", HealthTheme.color(for: .stable)),
         ("Missing", missingColor)
     ]
 
@@ -665,9 +666,9 @@ private func relationTitle(_ relation: String?) -> String {
 
 private func relationColor(_ relation: String?) -> Color {
     switch relation {
-    case "normal": return .blue
-    case "below": return .orange
-    case "above": return .purple
+    case "normal": return HealthTheme.color(for: .recovery)
+    case "below": return HealthTheme.color(for: .caution)
+    case "above": return HealthTheme.color(for: .stable)
     default: return .secondary
     }
 }
@@ -679,14 +680,13 @@ private func hrvWholeText(_ value: Double?) -> String? {
 }
 
 private func baselineRangeText(_ summary: HRVSummary) -> String? {
-    guard let lower = summary.baselineLowerBound, let upper = summary.baselineUpperBound else { return nil }
-    return "\(lower.clean)-\(upper.clean) ms"
+    metricHeroWholeRangeText(lower: summary.baselineLowerBound, upper: summary.baselineUpperBound, unit: "ms")
 }
 
 private func trendColor(_ trend: String?) -> Color {
     switch trend {
-    case "up": return .blue
-    case "down": return .orange
+    case "up": return HealthTheme.color(for: .recovery)
+    case "down": return HealthTheme.color(for: .caution)
     case "flat": return .secondary
     default: return .secondary
     }

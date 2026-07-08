@@ -140,7 +140,7 @@ struct DashboardView: View {
                     .frame(height: heroHeight)
             }
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 12) {
                     Text(greeting)
                         .font(.system(size: 34, weight: .bold, design: .rounded))
@@ -159,19 +159,19 @@ struct DashboardView: View {
                         )
                     }
                 }
-                .padding(.top, 54)
+                .padding(.top, 42)
 
                 if let heroBriefText {
                     Text(heroBriefText)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(heroTextColor.opacity(0.78))
-                        .lineLimit(9)
+                        .lineLimit(5)
                         .truncationMode(.tail)
                         .layoutPriority(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Spacer(minLength: 28)
+                Spacer(minLength: 18)
 
                 switch loadState {
                 case .loaded(let data):
@@ -215,8 +215,7 @@ struct DashboardView: View {
 
     private var previewData: DashboardData {
         DashboardData.preview(
-            dailyBrief: insightProvider.previewDailyBrief(),
-            insight: insightProvider.previewShortInsight()
+            dailyBrief: insightProvider.previewDailyBrief()
         )
     }
 
@@ -233,15 +232,15 @@ struct DashboardView: View {
 
     private var heroHeight: CGFloat {
         switch loadState {
-        case .loaded(let data) where !data.hasDailyInsightText:
+        case .loaded(let data) where !data.hasDailyBriefText:
             if usesWeatherBackground {
-                return data.dateContext == .yesterday ? 358 : 330
+                return data.dateContext == .yesterday ? 330 : 304
             }
-            return data.dateContext == .yesterday ? 318 : 290
+            return data.dateContext == .yesterday ? 294 : 268
         case .loaded(let data) where data.dateContext == .yesterday:
-            return 580
+            return 464
         default:
-            return 560
+            return 444
         }
     }
 
@@ -301,8 +300,7 @@ struct DashboardView: View {
             let displayBundle = try await client.loadDashboard(now: now)
             let bundle = displayBundle.bundle
             let dailyBrief = await insightProvider.dailyBrief(for: bundle, now: now)
-            let insight = await insightProvider.shortInsight(for: bundle, now: now)
-            let aiDebugStatus = dailyBrief == nil && insight == nil
+            let aiDebugStatus = dailyBrief == nil
                 ? "AI unavailable: FoundationModels generation failed. Check [DailyInsightProvider] logs."
                 : nil
             loadState = .loaded(
@@ -315,7 +313,6 @@ struct DashboardView: View {
                     syncStatus: bundle.syncStatus,
                     dateContext: displayBundle.dateContext,
                     dailyBrief: dailyBrief,
-                    insight: insight,
                     aiDebugStatus: aiDebugStatus
                 )
             )
@@ -366,8 +363,8 @@ enum DashboardLoadState {
 }
 
 private extension DashboardData {
-    var hasDailyInsightText: Bool {
-        dailyBrief?.nonEmptyDashboardText != nil || insight?.nonEmptyDashboardText != nil
+    var hasDailyBriefText: Bool {
+        dailyBrief?.nonEmptyDashboardText != nil
     }
 }
 

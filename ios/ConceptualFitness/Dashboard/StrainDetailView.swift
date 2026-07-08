@@ -33,66 +33,165 @@ private struct StrainSummaryPanel: View {
     let detail: StrainDetail
 
     var body: some View {
-        Group {
-            if detail.timeframe == "week" {
-                WeeklyStrainSummary(detail: detail)
-            } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(detail.summary.title ?? detail.timeframe.displayTitle)
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                            Text(primaryValue)
-                                .font(.system(size: 38, weight: .bold, design: .rounded))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.68)
-                        }
-
-                        Spacer()
-
-                        if let pill = headerPill {
-                            StatusPill(title: pill.title, color: pill.color)
-                        }
-                    }
-
-                    if let supportingText {
-                        Text(supportingText)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Training load",
+            headline: heroHeadline,
+            value: primaryLoadText,
+            unit: "load",
+            caption: heroCaption,
+            accent: HealthTheme.strain,
+            stats: heroStats,
+            ring: MetricHeroRing(
+                value: ringValueText,
+                unit: ringUnit,
+                caption: ringCaption,
+                progress: ringProgress,
+                tint: HealthTheme.strain,
+                accessibilityLabel: "Strain \(ringValueText ?? "no data")"
+            ),
+            accessibilityLabel: "Strain load \(primaryLoadText ?? "no data")"
+        )
     }
 
-    private var primaryValue: String {
+    private var primaryLoadText: String? {
+        primaryLoad.map(\.clean)
+    }
+
+    private var primaryLoad: Double? {
         switch detail.timeframe {
         case "week":
-            let current = detail.summary.progressLoadPoints ?? detail.summary.loadPoints
-            if let current, let target = detail.summary.targetLoadPoints {
-                return "\(current.clean) / \(target.clean)"
-            }
-            return current.map { "\($0.clean) load" } ?? "--"
+            return detail.summary.progressLoadPoints ?? detail.summary.loadPoints
         case "month", "year":
-            return detail.summary.averageWeeklyLoad.map { "\($0.clean) avg" } ?? "--"
+            return detail.summary.averageWeeklyLoad
         default:
-            return detail.summary.primaryValue.map { "\($0.clean) load" } ?? "--"
+            return detail.summary.primaryValue ?? detail.summary.loadPoints
         }
     }
 
-    private var supportingText: String? {
+    private var heroCaption: String {
         switch detail.timeframe {
-        case "day":
-            return nil
-        case "month", "year":
-            return detail.summary.loadPoints.map { "Total load \($0.clean)" }
-        default:
+        case "week": return "current load"
+        case "month", "year": return "weekly average"
+        default: return "today"
+        }
+    }
+
+    private var heroHeadline: String {
+        if let paceHeadline {
+            return paceHeadline
+        }
+        if let pill = headerPill {
+            return pill.title
+        }
+        return detail.summary.title ?? detail.timeframe.displayTitle
+    }
+
+    private var heroColor: Color {
+        headerPill?.color ?? .orange
+    }
+
+    private var ringValueText: String? {
+        if detail.timeframe == "week", detail.summary.targetLoadPoints != nil {
+            return progressPercentText
+        }
+        return primaryLoadText
+    }
+
+    private var ringUnit: String {
+        detail.timeframe == "week" && detail.summary.targetLoadPoints != nil ? "" : "load"
+    }
+
+    private var ringCaption: String {
+        if detail.timeframe == "week", detail.summary.targetLoadPoints != nil {
+            return "target"
+        }
+        if detail.timeframe == "month" || detail.timeframe == "year" {
+            return "wk avg"
+        }
+        return heroCaption
+    }
+
+    private var ringProgress: Double {
+        if let ratio = detail.summary.progressRatio {
+            return min(max(ratio, 0), 1.25)
+        }
+        if let current = primaryLoad, let target = detail.summary.targetLoadPoints, target > 0 {
+            return min(max(current / target, 0), 1.25)
+        }
+        return min(max((primaryLoad ?? 0) / 100, 0), 1)
+    }
+
+    private var paceHeadline: String? {
+        guard detail.timeframe == "week" || detail.timeframe == "month" || detail.timeframe == "year",
+              let progress = progressRatioForPace,
+              let expected = expectedProgressForCurrentPeriod
+        else { return nil }
+        if progress >= 1 { return "Goal met" }
+        if progress >= expected * 0.85 && progress <= expected * 1.25 { return "On track" }
+        if progress > expected * 1.25 { return "Ahead of pace" }
+        return "Behind pace"
+    }
+
+    private var progressRatioForPace: Double? {
+        if let ratio = detail.summary.progressRatio {
+            return ratio
+        }
+        guard let current = primaryLoad, let target = detail.summary.targetLoadPoints, target > 0 else {
             return nil
         }
+        return current / target
+    }
+
+    private var expectedProgressForCurrentPeriod: Double? {
+        guard let startDate = ScoreDateFormatters.apiDate.date(from: detail.start),
+              let endDate = ScoreDateFormatters.apiDate.date(from: detail.end)
+        else { return nil }
+
+        let calendar = ScoreDateFormatters.calendar
+        let start = calendar.startOfDay(for: startDate)
+        let end = calendar.startOfDay(for: endDate)
+        let today = calendar.startOfDay(for: Date())
+        guard start <= today, today <= end else { return nil }
+
+        let elapsedEnd = min(today, end)
+        let elapsedDays = (calendar.dateComponents([.day], from: start, to: elapsedEnd).day ?? 0) + 1
+        let totalDays = (calendar.dateComponents([.day], from: start, to: end).day ?? 0) + 1
+        guard totalDays > 0 else { return nil }
+        return min(max(Double(elapsedDays) / Double(totalDays), 0), 1)
+    }
+
+    private var heroStats: [MetricHeroStat] {
+        switch detail.timeframe {
+        case "week":
+            return [
+                MetricHeroStat(title: "Target", value: detail.summary.targetLoadPoints?.clean ?? "--", tint: .green),
+                MetricHeroStat(title: "Progress", value: progressPercentText, tint: HealthTheme.strain),
+                MetricHeroStat(title: "Band", value: (detail.summary.loadBand ?? detail.trainingContext.latestLoadBand)?.displayTitle ?? "--", tint: heroColor)
+            ]
+        case "month", "year":
+            return [
+                MetricHeroStat(title: "Total", value: detail.summary.loadPoints?.clean ?? "--", tint: HealthTheme.strain),
+                MetricHeroStat(title: "Weeks", value: detail.summary.weekCount.map(String.init) ?? "--", tint: .secondary),
+                MetricHeroStat(title: "Band", value: (detail.summary.loadBand ?? detail.trainingContext.latestLoadBand)?.displayTitle ?? "--", tint: heroColor)
+            ]
+        default:
+            return [
+                MetricHeroStat(title: "Quality", value: detail.summary.dataQuality?.displayTitle ?? "--", tint: heroColor),
+                MetricHeroStat(title: "Acute", value: detail.summary.acuteLoadPoints?.clean ?? "--", tint: HealthTheme.strain),
+                MetricHeroStat(title: "Chronic", value: detail.summary.chronicLoadPoints?.clean ?? "--", tint: .secondary)
+            ]
+        }
+    }
+
+    private var progressPercentText: String {
+        let ratio = detail.summary.progressRatio ?? {
+            guard let current = primaryLoad, let target = detail.summary.targetLoadPoints, target > 0 else {
+                return nil
+            }
+            return current / target
+        }()
+        guard let ratio else { return "--" }
+        return "\(Int((ratio * 100).rounded()))%"
     }
 
     private var headerPill: (title: String, color: Color)? {
@@ -109,84 +208,6 @@ private struct StrainSummaryPanel: View {
         return (band.displayTitle, bandColor(band))
     }
 
-}
-
-private struct WeeklyStrainSummary: View {
-    let detail: StrainDetail
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? "Weekly load")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let band = detail.summary.loadBand ?? detail.trainingContext.latestLoadBand {
-                    StatusPill(title: band.displayTitle, color: bandColor(band))
-                }
-            }
-
-            HStack(spacing: 18) {
-                WeeklyProgressRing(ratio: ratio)
-                    .frame(width: 96, height: 96)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Strain")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(currentTargetText)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.58)
-                    Text("current / target")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private var current: Double? {
-        detail.summary.progressLoadPoints ?? detail.summary.loadPoints
-    }
-
-    private var ratio: Double {
-        if let ratio = detail.summary.progressRatio {
-            return ratio
-        }
-        guard let current, let target = detail.summary.targetLoadPoints, target > 0 else {
-            return 0
-        }
-        return current / target
-    }
-
-    private var currentTargetText: String {
-        guard let current else { return "--" }
-        if let target = detail.summary.targetLoadPoints {
-            return "\(current.clean) / \(target.clean)"
-        }
-        return "\(current.clean)"
-    }
-}
-
-private struct WeeklyProgressRing: View {
-    let ratio: Double
-
-    var body: some View {
-        CircularProgressMetric(
-            progress: ratio,
-            tint: .orange,
-            trackColor: .white.opacity(0.5),
-            overflowTint: .red.opacity(0.85),
-            accessibilityLabel: "\(Int((ratio * 100).rounded())) percent of weekly strain target"
-        ) {
-            Text("\(Int((ratio * 100).rounded()))%")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-        }
-    }
 }
 
 private struct StrainChartPanel: View {

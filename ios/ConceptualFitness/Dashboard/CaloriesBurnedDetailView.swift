@@ -26,7 +26,6 @@ struct CaloriesBurnedDetailView: View {
                 if timeframe != .day {
                     CaloriesConsistencyPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
                 }
-                CaloriesExplanationPanel()
             }
         }
     }
@@ -76,43 +75,28 @@ private struct CaloriesSummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(title: statusTitle, color: statusColor)
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                CaloriesProgressRing(
-                    value: selectedTotal,
-                    target: goalTarget,
-                    label: timeframe == .day ? "kcal" : "total"
-                )
-                .frame(width: 118, height: 118)
-
-                VStack(spacing: 9) {
-                    CaloriesSummaryRow(title: primaryRowTitle, value: primaryRowValue, tint: .orange)
-                    CaloriesSummaryRow(title: "Goal", value: caloriesText(goalTarget), tint: .green)
-                    CaloriesSummaryRow(title: "Remaining", value: remainingText, tint: remainingTint)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-    }
-
-    private var title: String {
-        switch timeframe {
-        case .day: return "Daily Calories Burned"
-        case .week: return "Weekly Calories Burned"
-        case .month: return "Monthly Calories Burned"
-        case .year: return "Yearly Calories Burned"
-        }
+        MetricHeroPanel(
+            eyebrow: "Energy burn",
+            headline: statusTitle,
+            value: caloriesText(selectedTotal),
+            unit: timeframe == .day ? "kcal" : "total",
+            caption: timeframe == .day ? "today" : "period",
+            accent: HealthTheme.calories,
+            stats: [
+                MetricHeroStat(title: primaryRowTitle, value: primaryRowValue, tint: HealthTheme.calories),
+                MetricHeroStat(title: "Goal", value: caloriesText(goalTarget), tint: .green),
+                MetricHeroStat(title: "Remaining", value: remainingText, tint: remainingTint)
+            ],
+            ring: MetricHeroRing(
+                value: compactCaloriesText(selectedTotal),
+                unit: timeframe == .day ? "kcal" : "total",
+                caption: "\(Int((goalProgress * 100).rounded()))%",
+                progress: goalProgress,
+                tint: HealthTheme.calories,
+                accessibilityLabel: "\(caloriesText(selectedTotal)) calories burned"
+            ),
+            accessibilityLabel: "\(caloriesText(selectedTotal)) calories burned"
+        )
     }
 
     private var statusTitle: String {
@@ -123,12 +107,6 @@ private struct CaloriesSummaryPanel: View {
             return "Goal met"
         }
         return "\(Int((goalProgress * 100).rounded()))% goal"
-    }
-
-    private var statusColor: Color {
-        if detail.summary.dataQuality == "missing" { return .secondary }
-        if goalProgress >= 1 { return .green }
-        return .orange
     }
 
     private var primaryRowTitle: String {
@@ -149,38 +127,6 @@ private struct CaloriesSummaryPanel: View {
 
     private var remainingTint: Color {
         goalProgress >= 1 ? .green : .secondary
-    }
-}
-
-private struct CaloriesProgressRing: View {
-    let value: Double?
-    let target: Double
-    let label: String
-
-    var body: some View {
-        CircularProgressMetric(
-            progress: progress,
-            tint: .orange,
-            overflowTint: .green.opacity(0.78),
-            lineWidth: 12,
-            accessibilityLabel: "\(caloriesText(value)) \(label)"
-        ) {
-            VStack(spacing: 1) {
-                Text(compactCaloriesText(value))
-                    .font(.system(size: 29, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                Text(label)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var progress: Double {
-        guard target > 0 else { return 0 }
-        return max((value ?? 0) / target, 0)
     }
 }
 
@@ -729,18 +675,6 @@ private struct CaloriesConsistencyPanel: View {
             return "--"
         }
         return "\(caloriesText(value)) \(best.shortReadout(for: timeframe))"
-    }
-}
-
-private struct CaloriesExplanationPanel: View {
-    var body: some View {
-        Text("Calories burned shows total estimated energy expenditure, not just workout calories. Use the goal line and period patterns to see whether total burn is light, steady, or unusually high.")
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.secondary)
-            .lineSpacing(3)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 16)
     }
 }
 

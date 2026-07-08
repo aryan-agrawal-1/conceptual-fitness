@@ -17,8 +17,8 @@ struct OxygenSaturationDetailView: View {
         ) { detail, timeframe in
             VStack(alignment: .leading, spacing: 18) {
                 SpO2SummaryPanel(detail: detail, timeframe: timeframe)
-                SpO2ExplanationPanel()
                 SpO2ChartPanel(detail: detail, timeframe: timeframe)
+                SpO2ExplanationPanel()
                 SpO2PatternPanel(detail: detail, timeframe: timeframe)
                 SpO2ContextPanel(detail: detail, timeframe: timeframe)
             }
@@ -35,45 +35,28 @@ private struct SpO2SummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? titleFallback)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(
-                    title: spo2RelationTitle(detail.summary.baselineRelation),
-                    color: spo2RelationColor(detail.summary.baselineRelation)
-                )
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                HeroMetricValue(
-                    value: spo2ValueText(detail.summary.primaryValue),
-                    unit: "%",
-                    caption: timeframe == .year ? "monthly avg" : "period avg",
-                    accessibilityLabel: "Average SpO2 \(spo2ValueText(detail.summary.primaryValue) ?? "no value") percent"
-                )
-
-                VStack(spacing: 9) {
-                    SpO2MetricRow(title: "Usual range", value: spo2BaselineRangeText(detail.summary), tint: .cyan)
-                    SpO2TrendRow(trend: detail.summary.trend)
-                    SpO2MetricRow(title: lowCountTitle, value: lowCountText, tint: .orange)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Blood oxygen",
+            headline: heroHeadline,
+            value: spo2ValueText(detail.summary.primaryValue),
+            unit: "%",
+            caption: timeframe == .year ? "monthly avg" : "period avg",
+            accent: HealthTheme.oxygenSaturation,
+            stats: [
+                MetricHeroStat(title: "Usual range", value: spo2BaselineRangeText(detail.summary) ?? "--", tint: HealthTheme.oxygenSaturation),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: spo2TrendColor(detail.summary.trend)),
+                MetricHeroStat(title: lowCountTitle, value: lowCountText ?? "--", tint: HealthTheme.color(for: .caution))
+            ],
+            accessibilityLabel: "Average SpO2 \(spo2ValueText(detail.summary.primaryValue) ?? "no value") percent"
+        )
     }
 
-    private var titleFallback: String {
-        switch timeframe {
-        case .week: return "Weekly SpO2"
-        case .month: return "Monthly SpO2"
-        case .year: return "Yearly SpO2"
-        case .day: return "SpO2"
+    private var heroHeadline: String {
+        switch detail.summary.baselineRelation {
+        case "below": return "Below usual"
+        case "normal": return "In range"
+        case "above": return "Above usual"
+        default: return "Building baseline"
         }
     }
 
@@ -818,8 +801,7 @@ private func spo2ValueText(_ value: Double?) -> String? {
 }
 
 private func spo2BaselineRangeText(_ summary: BaselineMetricSummary) -> String? {
-    guard let lower = summary.baselineLowerBound, let upper = summary.baselineUpperBound else { return nil }
-    return "\(spo2ValueText(lower) ?? "--")-\(spo2ValueText(upper) ?? "--")%"
+    metricHeroWholeRangeText(lower: summary.baselineLowerBound, upper: summary.baselineUpperBound, unit: "%")
 }
 
 private func spo2RelationTitle(_ relation: String?) -> String {

@@ -35,80 +35,50 @@ private struct ReadinessSummaryPanel: View {
     let detail: ReadinessDetail
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? "Readiness")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let band = detail.summary.readinessBand {
-                    StatusPill(title: band.displayTitle, color: readinessColor(band))
-                }
-            }
+        MetricHeroPanel(
+            eyebrow: "Recovery lens",
+            headline: heroHeadline,
+            value: detail.summary.primaryValue?.clean,
+            unit: "",
+            caption: detail.timeframe == "day" ? "today" : "average",
+            accent: HealthTheme.readiness,
+            stats: heroStats,
+            ring: MetricHeroRing(
+                value: detail.summary.primaryValue?.clean,
+                unit: "",
+                caption: detail.timeframe == "day" ? "score" : "avg score",
+                progress: scoreProgress,
+                tint: HealthTheme.readiness,
+                overflowTint: nil,
+                accessibilityLabel: "Readiness score \(detail.summary.primaryValue?.clean ?? "no score")"
+            ),
+            accessibilityLabel: "Readiness \(detail.summary.primaryValue?.clean ?? "no score")"
+        )
+    }
 
-            HStack(spacing: 18) {
-                ReadinessProgressCircle(
-                    value: detail.summary.primaryValue,
-                    band: detail.summary.readinessBand,
-                    label: detail.timeframe == "day" ? nil : "avg"
-                )
-                .frame(width: 112, height: 112)
+    private var heroHeadline: String {
+        detail.summary.readinessBand?.displayTitle ?? detail.summary.title ?? "Readiness"
+    }
 
-                if detail.timeframe == "day" {
-                    VStack(spacing: 9) {
-                        SummaryMetricRow(title: "Sleep debt (7d)", value: sleepDebtText(detail.context.sleepDebtValue), tint: .indigo)
-                        SummaryMetricRow(title: "HRV", value: baselineText(detail.context.hrvBaselineRelation), tint: .teal)
-                        SummaryMetricRow(title: "RHR", value: baselineText(detail.context.rhrBaselineRelation), tint: .teal)
-                    }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    VStack(spacing: 9) {
-                        SummaryMetricRow(title: "Trend", value: detail.summary.trend?.displayTitle, tint: trendColor(detail.summary.trend))
-                        SummaryMetricRow(title: "High days", value: detail.summary.highDays.map(String.init), tint: .green)
-                        SummaryMetricRow(title: "Low days", value: detail.summary.lowDays.map(String.init), tint: .red)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                Spacer(minLength: 0)
-            }
+    private var scoreProgress: Double {
+        min(max((detail.summary.primaryValue ?? 0) / 100, 0), 1)
+    }
+
+    private var heroStats: [MetricHeroStat] {
+        if detail.timeframe == "day" {
+            return [
+                MetricHeroStat(title: "Sleep debt", value: sleepDebtText(detail.context.sleepDebtValue) ?? "--", tint: .indigo),
+                MetricHeroStat(title: "HRV", value: baselineText(detail.context.hrvBaselineRelation) ?? "--", tint: .teal),
+                MetricHeroStat(title: "RHR", value: baselineText(detail.context.rhrBaselineRelation) ?? "--", tint: .teal)
+            ]
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        return [
+            MetricHeroStat(title: "Trend", value: detail.summary.trend?.displayTitle ?? "--", tint: trendColor(detail.summary.trend)),
+            MetricHeroStat(title: "High days", value: detail.summary.highDays.map(String.init) ?? "--", tint: .green),
+            MetricHeroStat(title: "Low days", value: detail.summary.lowDays.map(String.init) ?? "--", tint: .red)
+        ]
     }
 }
-
-private struct ReadinessProgressCircle: View {
-    let value: Double?
-    let band: String?
-    let label: String?
-
-    private var ratio: Double {
-        min(max((value ?? 0) / 100, 0), 1)
-    }
-
-    var body: some View {
-        CircularProgressMetric(
-            progress: ratio,
-            tint: readinessColor(band ?? ""),
-            accessibilityLabel: "Readiness \(value?.clean ?? "no score")"
-        ) {
-            VStack(spacing: 1) {
-                Text(value?.clean ?? "--")
-                    .font(.system(size: 31, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                if let label {
-                    Text(label)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-}
-
-private typealias SummaryMetricRow = MetricSummaryRow
 
 private struct ReadinessExplanationPanel: View {
     var body: some View {

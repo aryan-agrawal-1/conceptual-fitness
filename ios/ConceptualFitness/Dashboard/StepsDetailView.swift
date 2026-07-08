@@ -24,7 +24,6 @@ struct StepsDetailView: View {
                 if timeframe != .day {
                     StepsConsistencyPanel(detail: detail, timeframe: timeframe, dailyGoal: dailyGoal)
                 }
-                StepsExplanationPanel()
             }
         }
     }
@@ -65,44 +64,28 @@ private struct StepsSummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(title: statusTitle, color: statusColor)
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                StepsProgressRing(
-                    value: selectedTotal,
-                    target: goalTarget,
-                    label: timeframe == .day ? "steps" : "total"
-                )
-                .frame(width: 118, height: 118)
-
-                VStack(spacing: 9) {
-                    StepsSummaryRow(title: primaryRowTitle, value: primaryRowValue, tint: .blue)
-                    StepsSummaryRow(title: "Goal", value: "\(stepsText(goalTarget))", tint: .green)
-                    StepsSummaryRow(title: "Remaining", value: remainingText, tint: remainingTint)
-                    StepsTrendRow(trend: detail.summary.trend)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-    }
-
-    private var title: String {
-        switch timeframe {
-        case .day: return detail.summary.title ?? "Daily Steps"
-        case .week: return "Weekly Steps"
-        case .month: return "Monthly Steps"
-        case .year: return "Yearly Steps"
-        }
+        MetricHeroPanel(
+            eyebrow: "Movement",
+            headline: statusTitle,
+            value: stepsText(selectedTotal),
+            unit: timeframe == .day ? "steps" : "total",
+            caption: timeframe == .day ? "today" : "period",
+            accent: HealthTheme.steps,
+            stats: [
+                MetricHeroStat(title: primaryRowTitle, value: primaryRowValue, tint: HealthTheme.steps),
+                MetricHeroStat(title: "Goal", value: stepsText(goalTarget), tint: .green),
+                MetricHeroStat(title: "Remaining", value: remainingText, tint: remainingTint)
+            ],
+            ring: MetricHeroRing(
+                value: compactStepsText(selectedTotal),
+                unit: timeframe == .day ? "steps" : "total",
+                caption: "\(Int((goalProgress * 100).rounded()))%",
+                progress: goalProgress,
+                tint: HealthTheme.steps,
+                accessibilityLabel: "\(stepsText(selectedTotal)) steps"
+            ),
+            accessibilityLabel: "\(stepsText(selectedTotal)) steps"
+        )
     }
 
     private var statusTitle: String {
@@ -113,12 +96,6 @@ private struct StepsSummaryPanel: View {
             return "No data"
         }
         return "\(Int((goalProgress * 100).rounded()))% goal"
-    }
-
-    private var statusColor: Color {
-        if goalProgress >= 1 { return .green }
-        if detail.summary.dataQuality == "missing" { return .secondary }
-        return .blue
     }
 
     private var primaryRowTitle: String {
@@ -142,38 +119,6 @@ private struct StepsSummaryPanel: View {
 
     private var remainingTint: Color {
         goalProgress >= 1 ? .green : .secondary
-    }
-}
-
-private struct StepsProgressRing: View {
-    let value: Double?
-    let target: Double
-    let label: String
-
-    var body: some View {
-        CircularProgressMetric(
-            progress: progress,
-            tint: .blue,
-            overflowTint: .green.opacity(0.78),
-            lineWidth: 12,
-            accessibilityLabel: "\(stepsText(value)) \(label)"
-        ) {
-            VStack(spacing: 1) {
-                Text(compactStepsText(value))
-                    .font(.system(size: 29, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                Text(label)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var progress: Double {
-        guard target > 0 else { return 0 }
-        return max((value ?? 0) / target, 0)
     }
 }
 
@@ -715,18 +660,6 @@ private struct StepsConsistencyPanel: View {
         }
         let prefix = change > 0 ? "+" : ""
         return "\(prefix)\(stepsText(change)) avg/day"
-    }
-}
-
-private struct StepsExplanationPanel: View {
-    var body: some View {
-        Text("Steps show general daily movement. Use the pattern with workouts, distance, and recovery signals to judge whether activity was steady, light, or unusually concentrated.")
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.secondary)
-            .lineSpacing(3)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 16)
     }
 }
 

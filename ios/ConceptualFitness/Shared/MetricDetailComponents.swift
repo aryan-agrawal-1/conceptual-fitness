@@ -76,8 +76,8 @@ struct MetricSummaryRow: View {
 
 struct MetricTrendRow: View {
     let trend: String?
-    var upColor: Color = .green
-    var downColor: Color = .orange
+    var upColor: Color = HealthTheme.color(for: .positive)
+    var downColor: Color = HealthTheme.color(for: .caution)
     var flatColor: Color = .secondary
     var unknownColor: Color = .secondary
     var flatTitle: String = "Steady"

@@ -17,8 +17,8 @@ struct RespiratoryRateDetailView: View {
         ) { detail, timeframe in
             VStack(alignment: .leading, spacing: 18) {
                 RespiratorySummaryPanel(detail: detail, timeframe: timeframe)
-                RespiratoryExplanationPanel()
                 RespiratoryChartPanel(detail: detail, timeframe: timeframe)
+                RespiratoryExplanationPanel()
                 RespiratoryPatternPanel(detail: detail, timeframe: timeframe)
                 RespiratoryContextPanel(detail: detail, timeframe: timeframe)
             }
@@ -35,45 +35,28 @@ private struct RespiratorySummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? titleFallback)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(
-                    title: respiratoryRelationTitle(detail.summary.baselineRelation),
-                    color: respiratoryRelationColor(detail.summary.baselineRelation)
-                )
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                HeroMetricValue(
-                    value: respiratoryValueText(detail.summary.primaryValue),
-                    unit: "br/min",
-                    caption: timeframe == .year ? "monthly avg" : "period avg",
-                    accessibilityLabel: "Average respiratory rate \(respiratoryValueText(detail.summary.primaryValue) ?? "no value") breaths per minute"
-                )
-
-                VStack(spacing: 9) {
-                    RespiratoryMetricRow(title: "Usual range", value: respiratoryBaselineRangeText(detail.summary), tint: .teal)
-                    RespiratoryTrendRow(trend: detail.summary.trend)
-                    RespiratoryMetricRow(title: "Recorded", value: recordedText, tint: .secondary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Overnight breathing",
+            headline: heroHeadline,
+            value: respiratoryValueText(detail.summary.primaryValue),
+            unit: "br/min",
+            caption: timeframe == .year ? "monthly avg" : "period avg",
+            accent: HealthTheme.respiratoryRate,
+            stats: [
+                MetricHeroStat(title: "Usual range", value: respiratoryBaselineRangeText(detail.summary) ?? "--", tint: HealthTheme.respiratoryRate),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: respiratoryTrendColor(detail.summary.trend)),
+                MetricHeroStat(title: "Recorded", value: recordedText ?? "--", tint: .secondary)
+            ],
+            accessibilityLabel: "Average respiratory rate \(respiratoryValueText(detail.summary.primaryValue) ?? "no value") breaths per minute"
+        )
     }
 
-    private var titleFallback: String {
-        switch timeframe {
-        case .week: return "Weekly Respiratory Rate"
-        case .month: return "Monthly Respiratory Rate"
-        case .year: return "Yearly Respiratory Rate"
-        case .day: return "Respiratory Rate"
+    private var heroHeadline: String {
+        switch detail.summary.baselineRelation {
+        case "above": return "Elevated"
+        case "below": return "Below usual"
+        case "normal": return "Breathing steady"
+        default: return "Building baseline"
         }
     }
 
@@ -787,8 +770,7 @@ private func respiratoryValueText(_ value: Double?) -> String? {
 }
 
 private func respiratoryBaselineRangeText(_ summary: BaselineMetricSummary) -> String? {
-    guard let lower = summary.baselineLowerBound, let upper = summary.baselineUpperBound else { return nil }
-    return "\(respiratoryValueText(lower) ?? "--")-\(respiratoryValueText(upper) ?? "--") br/min"
+    metricHeroWholeRangeText(lower: summary.baselineLowerBound, upper: summary.baselineUpperBound, unit: "br/min")
 }
 
 private func respiratoryRelationTitle(_ relation: String?) -> String {

@@ -17,8 +17,8 @@ struct SkinTemperatureVariationDetailView: View {
         ) { detail, timeframe in
             VStack(alignment: .leading, spacing: 18) {
                 SkinTempSummaryPanel(detail: detail, timeframe: timeframe)
-                SkinTempExplanationPanel()
                 SkinTempChartPanel(detail: detail, timeframe: timeframe)
+                SkinTempExplanationPanel()
                 SkinTempPatternPanel(detail: detail, timeframe: timeframe)
                 SkinTempContextPanel(detail: detail, timeframe: timeframe)
             }
@@ -31,45 +31,28 @@ private struct SkinTempSummaryPanel: View {
     let timeframe: ScoreTimeframe
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? titleFallback)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(
-                    title: skinTempRelationTitle(detail.summary.baselineRelation),
-                    color: skinTempRelationColor(detail.summary.baselineRelation)
-                )
-            }
-
-            HStack(alignment: .center, spacing: 18) {
-                HeroMetricValue(
-                    value: skinTempValueText(detail.summary.primaryValue),
-                    unit: "C",
-                    caption: timeframe == .year ? "monthly avg" : "period avg",
-                    accessibilityLabel: "Average skin temperature variation \(skinTempValueText(detail.summary.primaryValue) ?? "no value") Celsius"
-                )
-
-                VStack(spacing: 9) {
-                    SkinTempMetricRow(title: "Baseline", value: skinTempBaselineRangeText(detail.summary), tint: .teal)
-                    SkinTempTrendRow(trend: detail.summary.trend)
-                    SkinTempMetricRow(title: "Recorded", value: recordedText, tint: .secondary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Body temperature",
+            headline: heroHeadline,
+            value: skinTempValueText(detail.summary.primaryValue),
+            unit: "C",
+            caption: timeframe == .year ? "monthly avg" : "period avg",
+            accent: HealthTheme.skinTemperature,
+            stats: [
+                MetricHeroStat(title: "Baseline", value: skinTempBaselineRangeText(detail.summary) ?? "--", tint: HealthTheme.skinTemperature),
+                MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: skinTempTrendColor(detail.summary.trend)),
+                MetricHeroStat(title: "Recorded", value: recordedText ?? "--", tint: .secondary)
+            ],
+            accessibilityLabel: "Average skin temperature variation \(skinTempValueText(detail.summary.primaryValue) ?? "no value") Celsius"
+        )
     }
 
-    private var titleFallback: String {
-        switch timeframe {
-        case .week: return "Weekly Temperature Variation"
-        case .month: return "Monthly Temperature Variation"
-        case .year: return "Yearly Temperature Variation"
-        case .day: return "Temperature Variation"
+    private var heroHeadline: String {
+        switch detail.summary.baselineRelation {
+        case "above": return "Running warm"
+        case "below": return "Running cool"
+        case "normal": return "In range"
+        default: return "Building baseline"
         }
     }
 

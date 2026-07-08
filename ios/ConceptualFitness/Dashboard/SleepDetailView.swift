@@ -35,55 +35,25 @@ private struct SleepSummaryPanel: View {
     let detail: SleepDetail
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(detail.summary.title ?? "Sleep")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let pill {
-                    StatusPill(title: pill.title, color: pill.color)
-                }
-            }
-
-            HStack(spacing: 18) {
-                SleepScoreCircle(
-                    value: detail.summary.primaryValue,
-                    band: detail.summary.sleepBand,
-                    label: detail.timeframe == "day" ? nil : "avg"
-                )
-                .frame(width: 112, height: 112)
-
-                if detail.timeframe == "day" {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(dayTimeRange)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                        Text(minutesText(detail.summary.sleepMinutes))
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.62)
-                        Text("Target \(minutesText(detail.summary.targetSleepMinutes))")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    VStack(spacing: 9) {
-                        SleepHeroStatRow(title: "Average sleep time", value: minutesText(detail.summary.averageSleepMinutes))
-                        SleepHeroStatRow(title: "Target met nights", value: targetMetText)
-                        SleepHeroStatRow(title: "Sleep debt", value: debtText(detail.summary.sleepDebtMinutes))
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        MetricHeroPanel(
+            eyebrow: "Sleep recovery",
+            headline: heroHeadline,
+            value: primarySleepText,
+            unit: "",
+            caption: detail.timeframe == "day" ? dayTimeRange : "average sleep",
+            accent: HealthTheme.sleep,
+            stats: heroStats,
+            ring: MetricHeroRing(
+                value: detail.summary.primaryValue?.clean,
+                unit: "",
+                caption: detail.timeframe == "day" ? "score" : "avg score",
+                progress: scoreProgress,
+                tint: HealthTheme.sleep,
+                overflowTint: nil,
+                accessibilityLabel: "Sleep score \(detail.summary.primaryValue?.clean ?? "no score")"
+            ),
+            accessibilityLabel: "Sleep \(primarySleepText)"
+        )
     }
 
     private var dayTimeRange: String {
@@ -101,6 +71,36 @@ private struct SleepSummaryPanel: View {
         return "\(met)"
     }
 
+    private var primarySleepText: String {
+        if detail.timeframe == "day" {
+            return minutesText(detail.summary.sleepMinutes)
+        }
+        return minutesText(detail.summary.averageSleepMinutes)
+    }
+
+    private var heroHeadline: String {
+        pill?.title ?? detail.summary.title ?? "Sleep"
+    }
+
+    private var scoreProgress: Double {
+        min(max((detail.summary.primaryValue ?? 0) / 100, 0), 1)
+    }
+
+    private var heroStats: [MetricHeroStat] {
+        if detail.timeframe == "day" {
+            return [
+                MetricHeroStat(title: "Sleep", value: primarySleepText, tint: HealthTheme.sleep),
+                MetricHeroStat(title: "Target", value: minutesText(detail.summary.targetSleepMinutes), tint: .green),
+                MetricHeroStat(title: "Debt", value: debtText(detail.summary.sleepDebtMinutes), tint: .orange)
+            ]
+        }
+        return [
+            MetricHeroStat(title: "Average", value: minutesText(detail.summary.averageSleepMinutes), tint: HealthTheme.sleep),
+            MetricHeroStat(title: "Target met", value: targetMetText, tint: .green),
+            MetricHeroStat(title: "Debt", value: debtText(detail.summary.sleepDebtMinutes), tint: .orange)
+        ]
+    }
+
     private var pill: (title: String, color: Color)? {
         if let band = detail.summary.sleepBand {
             return (sleepBandTitle(band), sleepColor(band))
@@ -112,38 +112,6 @@ private struct SleepSummaryPanel: View {
             return (status.displayTitle, .secondary)
         }
         return nil
-    }
-}
-
-private typealias SleepHeroStatRow = MetricSummaryRow
-
-private struct SleepScoreCircle: View {
-    let value: Double?
-    let band: String?
-    let label: String?
-
-    private var ratio: Double {
-        min(max((value ?? 0) / 100, 0), 1)
-    }
-
-    var body: some View {
-        CircularProgressMetric(
-            progress: ratio,
-            tint: sleepColor(band),
-            accessibilityLabel: "Sleep score \(value?.clean ?? "no score")"
-        ) {
-            VStack(spacing: 1) {
-                Text(value?.clean ?? "--")
-                    .font(.system(size: 31, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                if let label {
-                    Text(label)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
     }
 }
 

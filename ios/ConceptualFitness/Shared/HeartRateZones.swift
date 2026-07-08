@@ -2,10 +2,10 @@ import SwiftUI
 
 func heartRateZoneColor(_ zone: String) -> Color {
     switch zone {
-    case "zone_1": return .teal
-    case "zone_2": return .green
-    case "zone_3": return .orange
-    case "zone_4": return .red
+    case "zone_1": return HealthTheme.color(for: .stable)
+    case "zone_2": return HealthTheme.color(for: .positive)
+    case "zone_3": return HealthTheme.color(for: .strain)
+    case "zone_4": return HealthTheme.color(for: .risk)
     default: return .secondary
     }
 }
@@ -19,4 +19,3 @@ func heartRateZoneShortLabel(_ zone: String) -> String {
     default: return zone.displayTitle
     }
 }
-

@@ -28,40 +28,12 @@ struct DailyInsightProvider {
         return nil
     }
 
-    func shortInsight(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
-        let slot = BriefSlot(date: now)
-        debugLog("shortInsight requested user=\(bundle.snapshot.userID) date=\(bundle.snapshot.date) slot=\(slot.rawValue) cacheable=\(bundle.snapshot.isCacheableForDailyInsight)")
-        if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .shortInsight) {
-            debugLog("shortInsight cache hit characters=\(cached.count)")
-            return cached
-        }
-
-        if #available(iOS 26.0, *) {
-            if let generated = await generatedSummary(for: bundle, slot: slot, mode: .shortInsight) {
-                cache(generated, for: bundle.snapshot, slot: slot, kind: .shortInsight)
-                debugLog("shortInsight generated characters=\(generated.count)")
-                return generated
-            }
-        } else {
-            debugLog("shortInsight skipped: iOS 26 FoundationModels unavailable on this OS")
-        }
-
-        debugLog("shortInsight unavailable: no cache and no generated text")
-        return nil
-    }
-
     func previewDailyBrief(now: Date = Date()) -> String {
         let slot = BriefSlot(date: now)
         if slot == .evening {
             return "Tonight is for protecting recovery: keep the wind-down simple, avoid late intensity, and give sleep enough room to do its job."
         }
         return "Recovery supports a purposeful day: build useful strain if it fits your plan, then keep enough margin for a calm evening and strong sleep."
-    }
-
-    func previewShortInsight(now: Date = Date()) -> String {
-        BriefSlot(date: now) == .evening
-            ? "The day is ready to close with a steady wind-down."
-            : "Recovery looks supportive, so today can handle purposeful movement."
     }
 
     @available(iOS 26.0, *)
@@ -79,6 +51,7 @@ struct DailyInsightProvider {
         \(mode.task)
 
         Output rules:
+        - Write exactly one sentence.
         - Do not use bullet points.
         - Do not quote numeric scores, metric values, component scores, percentages, load points, or thresholds.
         - Write directly to the user with "you" and "your". The tone should feel personal, not like a detached report.
@@ -139,7 +112,7 @@ struct DailyInsightProvider {
         HRV: \(formatForPrompt(metrics?.heartRateVariability))
         Recent workouts: \(bundle.recentWorkouts.prefix(3).map { $0.workoutType ?? "workout" }.joined(separator: ", "))
 
-        Do not use bullet points or quote the numbers. Write directly to the user.
+        Do not use bullet points or quote the numbers. Write directly to the user. Write exactly one sentence.
         """
         debugLog("\(mode.logName) fallbackPromptCharacters=\(prompt.count)")
         do {
@@ -197,7 +170,34 @@ struct DailyInsightProvider {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         guard !collapsed.isEmpty else { return nil }
+        let words = collapsed.split(separator: " ", omittingEmptySubsequences: true)
+        if words.count > mode.maximumWords {
+            let clipped = words.prefix(mode.maximumWords)
+                .joined(separator: " ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: ",;: "))
+            if let cleanedFragment = removingDanglingFinalSentence(from: clipped) {
+                return cleanedFragment
+            }
+            let terminal = CharacterSet(charactersIn: ".!?")
+            if let last = clipped.unicodeScalars.last, terminal.contains(last) {
+                return clipped
+            }
+            return clipped + "."
+        }
         return String(collapsed.prefix(mode.maximumCharacters))
+    }
+
+    private func removingDanglingFinalSentence(from text: String) -> String? {
+        let terminal = CharacterSet(charactersIn: ".!?")
+        let scalars = Array(text.unicodeScalars)
+        let terminalIndexes = scalars.indices.filter { terminal.contains(scalars[$0]) }
+        guard terminalIndexes.count >= 2 else { return nil }
+        let lastIndex = terminalIndexes[terminalIndexes.count - 1]
+        let priorIndex = terminalIndexes[terminalIndexes.count - 2]
+        let tail = String(String.UnicodeScalarView(scalars[(priorIndex + 1)...lastIndex]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tail.split(separator: " ").count <= 3 else { return nil }
+        return String(String.UnicodeScalarView(scalars[...priorIndex]))
     }
 
     private func cachedText(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String? {
@@ -237,7 +237,7 @@ struct DailyInsightProvider {
     }
 
     private func cacheKey(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v4.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v8.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func cachedLastText(for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
@@ -257,7 +257,7 @@ struct DailyInsightProvider {
     }
 
     private func lastCacheKey(for slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v4.last.\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v8.last.\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func allowedSnapshotDates(for slot: BriefSlot, now: Date, calendar: Calendar = .current) -> Set<String> {
@@ -550,45 +550,43 @@ private struct DailyInsightContext {
 private enum InsightMode: Equatable {
     case dayBrief
     case eveningBrief
-    case shortInsight
 
     var task: String {
         switch self {
         case .dayBrief:
-            return "Write one daily health coaching brief in 55 to 65 words, suitable for an eight-line dashboard slot. Tell the user what to aim for today and why."
+            return "Write exactly one daily health coaching sentence in 25 to 35 words. Tell the user what to aim for today and why."
         case .eveningBrief:
-            return "Write one evening health coaching brief in 55 to 65 words, suitable for an eight-line dashboard slot. Tell the user how to wind down tonight and why."
-        case .shortInsight:
-            return "Write one dashboard insight in 10 to 15 words, suitable for a two-line card slot. Summarize what the scores mean without using numbers."
+            return "Write exactly one evening health coaching sentence in 25 to 35 words. Tell the user how to wind down tonight and why."
         }
     }
 
     var fallbackTask: String {
         switch self {
         case .dayBrief:
-            return "Write one practical daily health coaching brief in 55 to 65 words."
+            return "Write exactly one practical daily health coaching sentence in 25 to 35 words."
         case .eveningBrief:
-            return "Write one practical evening health coaching brief in 55 to 65 words."
-        case .shortInsight:
-            return "Write one dashboard insight in 10 to 15 words."
+            return "Write exactly one practical evening health coaching sentence in 25 to 35 words."
         }
     }
 
     var maximumResponseTokens: Int {
         switch self {
         case .dayBrief, .eveningBrief:
-            return 130
-        case .shortInsight:
-            return 40
+            return 80
         }
     }
 
     var maximumCharacters: Int {
         switch self {
         case .dayBrief, .eveningBrief:
-            return 520
-        case .shortInsight:
-            return 110
+            return 260
+        }
+    }
+
+    var maximumWords: Int {
+        switch self {
+        case .dayBrief, .eveningBrief:
+            return 35
         }
     }
 
@@ -598,8 +596,6 @@ private enum InsightMode: Equatable {
             return "dayBrief"
         case .eveningBrief:
             return "eveningBrief"
-        case .shortInsight:
-            return "shortInsight"
         }
     }
 }
@@ -625,7 +621,6 @@ private enum BriefSlot: String, Equatable, Codable {
 
 private enum CacheKind: String, Codable {
     case dailyBrief
-    case shortInsight
 }
 
 private struct CachedInsight: Codable {

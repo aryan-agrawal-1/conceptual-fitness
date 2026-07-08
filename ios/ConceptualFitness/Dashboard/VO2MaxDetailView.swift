@@ -34,9 +34,9 @@ struct VO2MaxDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 VO2SummaryPanel(detail: detail, timeframe: timeframe)
                 VO2ChartPanel(detail: detail, timeframe: timeframe)
+                VO2ExplanationPanel()
                 VO2EstimateContextPanel(detail: detail, timeframe: timeframe)
                 VO2HowToPanel(hasEstimate: detail.current?.value != nil || detail.summary.latestValue != nil)
-                VO2ExplanationPanel()
             }
         }
     }
@@ -63,60 +63,20 @@ private struct VO2SummaryPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                StatusPill(title: statusTitle, color: statusColor)
-            }
-
-            if latestValue == nil {
-                VO2EmptyHero()
-            } else {
-                HStack(alignment: .center, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .firstTextBaseline, spacing: 5) {
-                            Text(vo2ValueText(latestValue) ?? "--")
-                                .font(.system(size: 48, weight: .bold, design: .rounded))
-                                .monospacedDigit()
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.62)
-                            Text("ml/kg/min")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.72)
-                        }
-                        Text(latestDate.map { "Latest estimate • \(ScoreDateFormatters.shortDateLabel(from: $0))" } ?? "Latest estimate")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityLabel("Latest VO2 Max \(vo2ValueText(latestValue) ?? "no value") milliliters per kilogram per minute")
-
-                    VStack(spacing: 9) {
-                        VO2SummaryRow(title: "Change", value: changeText, tint: changeColor)
-                        VO2SummaryRow(title: "Best", value: bestText, tint: .green)
-                        MetricTrendRow(trend: trend, flatColor: .blue)
-                        VO2SummaryRow(title: "Recorded", value: recordedText, tint: .secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
-    }
-
-    private var title: String {
-        switch timeframe {
-        case .week: return "Recent VO2 Max"
-        case .month: return "Monthly VO2 Max"
-        case .year: return "Yearly VO2 Max"
-        case .day: return "VO2 Max"
-        }
+        MetricHeroPanel(
+            eyebrow: "Cardio fitness",
+            headline: statusTitle,
+            value: vo2ValueText(latestValue),
+            unit: latestValue == nil ? "" : "ml/kg/min",
+            caption: latestDate.map { "latest \(ScoreDateFormatters.shortDateLabel(from: $0))" } ?? "latest estimate",
+            accent: HealthTheme.vo2Max,
+            stats: [
+                MetricHeroStat(title: "Change", value: changeText ?? "--", tint: changeColor),
+                MetricHeroStat(title: "Best", value: bestText ?? "--", tint: .green),
+                MetricHeroStat(title: "Recorded", value: recordedText ?? "--", tint: .secondary)
+            ],
+            accessibilityLabel: "Latest VO2 Max \(vo2ValueText(latestValue) ?? "no value") milliliters per kilogram per minute"
+        )
     }
 
     private var trend: String? {
@@ -176,27 +136,6 @@ private struct VO2SummaryPanel: View {
         if change > 0.05 { return .green }
         if change < -0.05 { return .orange }
         return .secondary
-    }
-}
-
-private struct VO2EmptyHero: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: "figure.run")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(.green)
-                .frame(width: 44, height: 44)
-                .background(Color.green.opacity(0.14), in: Circle())
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("No VO2 Max estimate yet")
-                    .font(.title3.weight(.bold))
-                Text("VO2 Max usually needs eligible outdoor cardio workouts with heart-rate and motion data before an estimate appears.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 }
 

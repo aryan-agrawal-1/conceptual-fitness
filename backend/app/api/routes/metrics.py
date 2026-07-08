@@ -697,13 +697,20 @@ def dashboard_metric_summaries(
     metric_names: list[str],
     end: date,
     window_days: int,
+    preview_style: str = "window",
 ) -> dict[str, object]:
     start = date.fromordinal(end.toordinal() - window_days + 1)
     summaries = _daily_summaries_by_date(session, user_id, start, end)
     payload: dict[str, object] = {}
     for metric_name in metric_names:
         if metric_name == "sleep":
-            payload[metric_name] = _sleep_dashboard_summary(session, user_id, start, end)
+            payload[metric_name] = _sleep_dashboard_summary(
+                session,
+                user_id,
+                start,
+                end,
+                preview_style=preview_style,
+            )
             continue
         if metric_name == "heart_rate":
             payload[metric_name] = _latest_heart_rate_dashboard_summary(
@@ -712,17 +719,32 @@ def dashboard_metric_summaries(
                 start=start,
                 end=end,
                 summaries=summaries,
+                preview_style=preview_style,
             )
             continue
 
         config = METRIC_DETAIL_CONFIGS.get(metric_name)
         if config is None:
             raise HTTPException(status_code=404, detail=f"Unknown metric: {metric_name}")
-        points = _daily_metric_points(session, user_id, config, start, end, summaries)
-        baselines = _baselines_by_date(session, user_id, config, start, end)
+        summary_start, summary_end = _dashboard_summary_window(metric_name, end, window_days, preview_style)
+        window_summaries = summaries
+        if summary_start != start or summary_end != end:
+            window_summaries = _daily_summaries_by_date(session, user_id, summary_start, summary_end)
+        points = _daily_metric_points(session, user_id, config, summary_start, summary_end, window_summaries)
+        baselines = _baselines_by_date(session, user_id, config, summary_start, summary_end)
         populated = [point for point in points if point["value"] is not None]
         current = populated[-1] if populated else None
         previous = populated[-2] if len(populated) >= 2 else None
+        series = [_series_point_payload(point, baselines) for point in points]
+        preview_points = _dashboard_metric_preview_points(
+            session,
+            user_id=user_id,
+            metric_name=metric_name,
+            config=config,
+            end=end,
+            series=series,
+            preview_style=preview_style,
+        )
         payload[metric_name] = {
             "metric": metric_name,
             "unit": config.unit,
@@ -732,8 +754,56 @@ def dashboard_metric_summaries(
             "baseline": _baseline_payload(current, _baseline_for_point(current, baselines)),
             "data_quality": current["data_quality"] if current else "missing",
             "higher_is_better": config.higher_is_better,
+            "preview_points": preview_points,
         }
     return payload
+
+
+def _dashboard_summary_window(
+    metric_name: str,
+    end: date,
+    window_days: int,
+    preview_style: str,
+) -> tuple[date, date]:
+    if preview_style != "detail_default":
+        return date.fromordinal(end.toordinal() - window_days + 1), end
+    timeframe = _dashboard_default_timeframe(metric_name)
+    return _metric_detail_window(end, timeframe)
+
+
+def _dashboard_default_timeframe(metric_name: str) -> str:
+    if metric_name in {"heart_rate", "steps", "total_calories", "distance", "sleep"}:
+        return "day"
+    if metric_name == "vo2_max":
+        return "year"
+    return "week"
+
+
+def _dashboard_metric_preview_points(
+    session: DbSession,
+    *,
+    user_id: str,
+    metric_name: str,
+    config: MetricDetailConfig,
+    end: date,
+    series: list[dict[str, object]],
+    preview_style: str,
+) -> list[dict[str, object]]:
+    if preview_style != "detail_default":
+        return _dashboard_preview_points(series)
+    if metric_name in {"steps", "total_calories", "distance"}:
+        return _dashboard_preview_points(
+            _activity_intraday_points(session, user_id, metric_name, end, end, "day"),
+            limit=24,
+        )
+    if _dashboard_default_timeframe(metric_name) == "year":
+        series = [
+            point
+            for point in series
+            if not isinstance(point.get("date"), date) or point["date"] <= end
+        ]
+        return _dashboard_preview_points(series, limit=12)
+    return _dashboard_preview_points(series, limit=12 if _dashboard_default_timeframe(metric_name) == "year" else 14)
 
 
 def _latest_heart_rate_dashboard_summary(
@@ -743,6 +813,7 @@ def _latest_heart_rate_dashboard_summary(
     start: date,
     end: date,
     summaries: dict[date, DailySummary],
+    preview_style: str = "window",
 ) -> dict[str, object]:
     config = METRIC_DETAIL_CONFIGS["heart_rate"]
     points = _latest_heart_rate_points(session, user_id=user_id, start=start, end=end, summaries=summaries)
@@ -751,6 +822,13 @@ def _latest_heart_rate_dashboard_summary(
     populated = [point for point in points if point["value"] is not None]
     current = populated[-1] if populated else None
     previous = populated[-2] if len(populated) >= 2 else None
+    preview_points = points
+    preview_limit = 14
+    if preview_style == "detail_default":
+        intraday_points = _heart_rate_intraday_points(session, user_id, end, end, "day")
+        if intraday_points:
+            preview_points = intraday_points
+            preview_limit = 24
     return {
         "metric": "heart_rate",
         "unit": config.unit,
@@ -760,6 +838,7 @@ def _latest_heart_rate_dashboard_summary(
         "baseline": None,
         "data_quality": current["data_quality"] if current else "missing",
         "higher_is_better": config.higher_is_better,
+        "preview_points": _dashboard_preview_points(preview_points, limit=preview_limit),
     }
 
 
@@ -783,7 +862,7 @@ def _latest_heart_rate_points(
                 MetricMinuteRollup.avg_value.is_not(None),
             )
             .order_by(MetricMinuteRollup.bucket_start.desc())
-            .limit(2)
+            .limit(14)
         ).all()
         if row.avg_value is not None
     ]
@@ -807,7 +886,7 @@ def _latest_heart_rate_points(
             MetricSample.civil_date <= end,
         )
         .order_by(MetricSample.observed_at.desc())
-        .limit(2)
+        .limit(14)
     ).all()
     return [
         {
@@ -832,6 +911,8 @@ def _sleep_dashboard_summary(
     user_id: str,
     start: date,
     end: date,
+    *,
+    preview_style: str = "window",
 ) -> dict[str, object]:
     sessions = _sleep_sessions_for_range(session, user_id, start, end)
     main_by_date = _main_sleeps_by_date(sessions)
@@ -848,6 +929,13 @@ def _sleep_dashboard_summary(
     ]
     current = points[-1] if points else None
     previous = points[-2] if len(points) >= 2 else None
+    preview_points = _dashboard_preview_points(points)
+    if preview_style == "detail_default":
+        latest_sleep = main_by_date.get(end)
+        preview_points = _dashboard_preview_points(
+            _sleep_stages_summary(latest_sleep) if latest_sleep else [],
+            limit=8,
+        )
     return {
         "metric": "sleep",
         "unit": "minutes",
@@ -857,6 +945,7 @@ def _sleep_dashboard_summary(
         "baseline": None,
         "data_quality": current["data_quality"] if current else "missing",
         "higher_is_better": True,
+        "preview_points": preview_points,
     }
 
 
@@ -2065,6 +2154,44 @@ def _compact_point(point: dict[str, object] | None) -> dict[str, object] | None:
     if point is None:
         return None
     return {"date": point["date"], "value": point["value"], "unit": point["unit"]}
+
+
+def _dashboard_preview_points(points: list[dict[str, object]], limit: int = 14) -> list[dict[str, object]]:
+    preview: list[dict[str, object]] = []
+    for point in points[-limit:]:
+        is_stage_only = (point.get("stage") is not None or point.get("type") is not None) and all(
+            point.get(key) is None
+            for key in ("date", "value", "unit", "data_quality")
+        )
+        payload = (
+            {}
+            if is_stage_only
+            else {
+                "date": point.get("date"),
+                "value": point.get("value"),
+                "unit": point.get("unit"),
+                "data_quality": point.get("data_quality"),
+                "baseline_value": point.get("baseline_value"),
+                "baseline_lower_bound": point.get("baseline_lower_bound"),
+                "baseline_upper_bound": point.get("baseline_upper_bound"),
+                "comparison": point.get("comparison"),
+            }
+        )
+        extra_fields = {
+            "bucket_start": point.get("bucket_start"),
+            "observed_at": point.get("observed_at"),
+            "min_value": point.get("min_value"),
+            "max_value": point.get("max_value"),
+            "stage": point.get("stage") or point.get("type"),
+            "start_clock": point.get("start_clock"),
+            "end_clock": point.get("end_clock"),
+            "offset_start_minutes": point.get("offset_start_minutes"),
+            "offset_end_minutes": point.get("offset_end_minutes"),
+            "duration_minutes": point.get("duration_minutes") or point.get("minutes"),
+        }
+        payload.update({key: value for key, value in extra_fields.items() if value is not None})
+        preview.append(payload)
+    return preview
 
 
 def _trend_payload(
