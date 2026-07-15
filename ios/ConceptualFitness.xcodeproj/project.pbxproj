@@ -476,6 +476,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"ConceptualFitness/Preview Content\"";
+				DEVELOPMENT_TEAM = 8Z4JJ89QXM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ConceptualFitness/Info.plist;
@@ -504,6 +505,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"ConceptualFitness/Preview Content\"";
+				DEVELOPMENT_TEAM = 8Z4JJ89QXM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ConceptualFitness/Info.plist;
