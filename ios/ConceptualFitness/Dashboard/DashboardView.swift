@@ -320,6 +320,7 @@ struct DashboardView: View {
                 syncCoordinator.updateFromDashboard(data)
             }
         } catch {
+            print("Dashboard reload failed: \(String(reflecting: error))")
             if !hadLoadedData {
                 loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString). Start the FastAPI server to load live dashboard data.")
             }

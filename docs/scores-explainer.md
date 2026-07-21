@@ -4,11 +4,11 @@ Here we explain how the app turns the given API data into our own daily Sleep, S
 
 ## Research Basis
 
-The three local research files map directly to the three scores: In
+The three local research files map directly to the three scores:
 
-- In`research/Sleep Scores.pdf` I argue that sleep scoring should rely most heavily on duration, regularity, and continuity, since wearables are stronger at broad sleep-wake patterns than determining the exact stages. I recommended weighting sleep roughly as duration 35%, regularity 25%, continuity 20%, timing 10%, overnight physiology 5%, and stages 5%.
-- In`research/Strain Scores.pdf` I show why strain should be accumulated load points, rather than a bounded 0-100 quality score. It points toward heart-rate-reserve based cardio load, duration, daily activity, muscular load, and eventually subjective effort. I also recommend separating raw daily strain from weekly target interpretation.
-- In`research/Readiness Scores.pdf` I argue that readiness should be personalised, baseline-driven, and based on the combination of sleep, autonomic recovery, recent load, and illness-like anomaly signals. I recommend weights around sleep adequacy/debt 30%, autonomic recovery 30%, recent load fit 25%, illness/anomaly/context 10%, and confidence 5%.
+- `research/Sleep Scores.pdf` gives duration 35%, regularity 25%, continuity 20%, timing and onset 10%, overnight physiology 5%, and stages 5%. It defines the interpolation anchors, data-validity rules, caps, and confidence requirements implemented below.
+- `research/Strain Scores.pdf` explains why strain is accumulated load points rather than a bounded 0–100 quality score. It supports heart-rate-reserve cardio load, daily activity, muscular load, and a separate weekly target interpretation.
+- `research/Readiness Scores.pdf` defines a personalised, baseline-driven combination of sleep, autonomic recovery, recent load, illness-like anomaly signals, and confidence.
 
 Those recommendations are implemented in `scores.py` through `_upsert_sleep_score`, `_upsert_strain_score`, `_upsert_readiness_score`, and the helper functions described below.
 
@@ -31,119 +31,118 @@ This order matters. Baselines are available before the scores are calculated, an
 
 Function: `_upsert_sleep_score`
 
-The Sleep score is a 0-100 score. It only calculates when the app can find a main sleep session ending on that date. If there is no usable main sleep session, the score is marked as waiting with reason `waiting_for_main_sleep`.
+Sleep is scored from 0 to 100 and answers how restorative the observed sleep was. A valid main sleep and total sleep duration are mandatory. At least two of regularity, continuity, and timing/alignment must also be available; otherwise the score is withheld. This prevents a precise-looking result from being built from too little information.
 
-The score follows the structure recommended in `research/Sleep Scores.pdf`: duration and regularity carry most of the score, continuity is also important, and physiology plus stages are treated as smaller supporting signals because wearable physiology and stage detection are noisier than timing and duration.
+The algorithm has four core components and two supporting components:
 
-The current weights are:
+| Component | Weight | Function |
+| --- | ---: | --- |
+| Duration | 35% | `_duration_score` |
+| Regularity | 25% | `_regularity_score` |
+| Continuity | 20% | `_continuity_score` |
+| Timing and onset | 10% | `_timing_score` |
+| Overnight physiology | 5% | `_sleep_physiology_score` |
+| Sleep stages | 5% | `_stage_score` |
 
+The available core components are rescaled within the core's fixed 90-point share. Missing physiology or stages use a neutral value of 100: absence cannot lower the score, and their 5% shares are never transferred to another measurement. Confidence records what was missing.
 
-| Component  | Weight | Function                  |
-| ---------- | ------ | ------------------------- |
-| Duration   | 35%    | `_duration_score`         |
-| Regularity | 25%    | `_regularity_score`       |
-| Continuity | 20%    | `_continuity_score`       |
-| Timing     | 10%    | `_timing_score`           |
-| Physiology | 5%     | `_sleep_physiology_score` |
-| Stages     | 5%     | `_stage_score`            |
+### Duration
 
+Core sleep need starts from the age midpoint: 9 hours at ages 13–17, 8 hours at ages 18–64, and 7 hours 30 minutes at age 65+. A profile target is kept within the corresponding recommended range. High recent strain can change recovery advice elsewhere, but it does not manufacture a larger core need for this score.
 
-The final number is produced by `_weighted_score`. Missing optional components do not zero the score. Instead, `_weighted_score` averages over the components that are actually present. This is important for sleep because stage data or physiology may be missing, but duration and timing can still produce a meaningful score.
+Sleep achieved includes the main sleep plus valid, non-overlapping sleep sessions assigned to the same 24-hour sleep day. The scored shortfall is:
 
-### Sleep Duration
+`max(0, core sleep need - valid sleep achieved - 30 minutes)`
 
-Function: `_duration_score`
+The 30-minute allowance absorbs small differences and wearable error. Straight-line interpolation is used between these anchors:
 
-Duration compares minutes asleep against the user's adjusted sleep need. The target is clamped between 7 and 9 hours, because the research uses that range as the practical adult target range. The adjusted target comes from `_adjusted_sleep_need_minutes`.
+| Shortfall | Duration score |
+| ---: | ---: |
+| 0 min | 100 |
+| 30 min | 95 |
+| 60 min | 90 |
+| 90 min | 80 |
+| 120 min | 65 |
+| 180 min | 35 |
+| 240 min | 10 |
+| 300+ min | 0 |
 
-`_adjusted_sleep_need_minutes` starts with the user's profile sleep target, or 480 minutes if no profile target exists. It clamps that base target between 420 and 540 minutes. If yesterday's Strain was more than 1.5 times the user's Strain baseline, the app adds 30 minutes of sleep need, capped at 570 minutes.
+Sleep above core need is not penalised. More than two extra hours is marked as unusually long for explanation, not treated as automatically poor sleep.
 
-Why: `research/Sleep Scores.pdf` and `research/Readiness Scores.pdf` both argue that sleep need should respond to recent load. A harder-than-normal day should make the app expect a little more sleep before calling the night fully adequate.
+### Regularity
 
-The duration score works like this:
+Regularity compares bedtime and wake time with the person's circular timing reference for the matching day type (`workday` or `free_day`). Circular calculations correctly treat times around midnight as close together. The schedule drift is the mean of absolute bedtime and wake-time drift.
 
-- If the user sleeps between 94% and 112% of target, duration gets 100.
-- If sleep is short, the score falls steeply. This reflects the research point that short sleep should not be rescued by nice-looking stage data.
-- If sleep is longer than target, the score falls gently but bottoms at 70. Oversleeping can be a signal, but it is not treated as harshly as undersleeping.
+| Mean schedule drift | Regularity score |
+| ---: | ---: |
+| 0–30 min | 100 |
+| 60 min | 90 |
+| 90 min | 75 |
+| 120 min | 55 |
+| 180 min | 20 |
+| 240+ min | 0 |
 
-Why: `research/Sleep Scores.pdf` puts duration first because wearables are relatively reliable for total sleep time and because a short night remains a short night even if other metrics look okay.
+The reference uses up to 28 comparable prior nights. Seven nights establish the personal component; earlier results are explicitly provisional. There is no universal penalty for sleeping at a particular clock time.
 
-### Sleep Regularity
+### Continuity
 
-Function: `_regularity_score`
+Wake after sleep onset (WASO) drives continuity. Maintenance efficiency and awakenings lasting more than five minutes are supporting caps so the same lost sleep is not counted repeatedly.
 
-Regularity compares the sleep start and end time against the person's own sleep timing baseline. It uses:
+| WASO | Continuity score |
+| ---: | ---: |
+| 0–20 min | 100 |
+| 30 min | 90 |
+| 40 min | 75 |
+| 50 min | 55 |
+| 60 min | 35 |
+| 90+ min | 0 |
 
-- `sleep_start_minute` baseline
-- `sleep_end_minute` baseline
-- circular minute difference, so times around midnight compare correctly
+Maintenance efficiency below 85%, 75%, and 65% caps continuity at 80, 40, and 20 respectively. Two or three long awakenings cap it at 85, except two do not cap somebody aged 65+. Four or more cap it at 60.
 
-If there is not enough baseline data yet, the component returns a neutral-ish 75 rather than pretending to know the user's pattern. Once there is enough data, the score stays high for small drift and starts penalising drift beyond about 30 minutes. A very late start between 2:00am and 5:00am receives an additional penalty.
+### Timing and Sleep Onset
 
-Why: `research/Sleep Scores.pdf` explicitly says sleep regularity should be a major component, not a tiny bonus, because irregular schedules are linked with worse long-term outcomes and because timing consistency is actionable.
+The timing component supports sleep latency and circadian alignment. Google Health currently supplies detected sleep start rather than a separate "trying to sleep" timestamp, so latency remains missing and alignment carries the component. Alignment compares actual midsleep with the circular midpoint of the learned sleep window for the matching day type.
 
-### Sleep Continuity
+| Midsleep drift | Alignment score |
+| ---: | ---: |
+| 0–30 min | 100 |
+| 60 min | 90 |
+| 90 min | 75 |
+| 120 min | 50 |
+| 180+ min | 0 |
 
-Function: `_continuity_score`
+If a future source supplies latency, its anchors are 100 through 30 minutes, 75 at 45, 40 at 60, and 0 at 90 minutes; latency and alignment are then averaged equally.
 
-Continuity measures whether sleep was a continuous block or a broken night. It combines:
+### Overnight Physiology
 
-- Sleep efficiency: minutes asleep divided by the time spent in the sleep period.
-- Awake minutes: a penalty if awake time rises above 20 minutes.
+Physiology begins at 100 and can only reduce the score. Signals are grouped to avoid counting correlated measurements as independent evidence:
 
-The component is 72% efficiency score and 28% awake-minutes score.
+- Autonomic: HRV and resting heart rate.
+- Respiratory: respiratory rate and oxygen saturation.
+- Temperature: overnight temperature variation.
 
-Why: `research/Sleep Scores.pdf` treats awakenings, restlessness, and sleep efficiency as meaningful but slightly less important than duration and regularity. The implementation follows that hierarchy.
-
-### Sleep Timing
-
-Function: `_timing_score`
-
-Timing looks only at sleep start drift versus the user's usual sleep start baseline. It is related to regularity, but narrower. If baseline data is not ready, it returns 82. Once baseline data exists, it penalises drift after about 45 minutes and also penalises very late sleep starts between 2:00am and 5:00am.
-
-Why: the sleep research separates "when did the user sleep?" from "how much did they sleep?" because timing reflects circadian stability.
-
-### Sleep Physiology
-
-Function: `_sleep_physiology_score`
-
-Physiology is a small supporting component. It averages whichever of these are available:
-
-- HRV against baseline, where higher is better.
-- Resting heart rate against baseline, where lower is better.
-- Respiratory rate against baseline, where lower is better.
-- Oxygen saturation using `_spo2_score`.
-
-The baseline-based metrics use `_metric_baseline_score`. If no personal baseline exists yet, the metric returns 75 rather than being treated as good or bad.
-
-When a baseline exists, `_metric_baseline_score` compares the value against the user's median and robust spread. It starts from 80, then moves up or down by 12 points for each spread-unit of change. For HRV, being above baseline helps. For resting heart rate and respiratory rate, being below baseline helps. This makes the metric personal without making every tiny difference feel dramatic.
-
-Why: `research/Sleep Scores.pdf` says overnight physiology can explain why sleep may have been poor, but it should not define sleep quality. Those signals are more central to Readiness than Sleep.
+A group is abnormal when one signal crosses its personal two-spread boundary on two consecutive nights, or two related signals cross together tonight. Oxygen saturation below 90% creates an immediate respiratory flag. Zero, one, two, or three abnormal groups score 100, 80, 60, or 40. Missing physiology is neutral and only lowers confidence.
 
 ### Sleep Stages
 
-Function: `_stage_score`
+Stages are used only when the timeline covers at least 90% of the sleep period, agrees with total sleep within 10% or 30 minutes, and contains valid, non-overlapping intervals inside the main session. REM and deep sleep must both be present. At least 14 valid prior nights are required, with the latest 28 used as the provider-specific personal reference.
 
-Stages are optional and lightly weighted. The function reads REM and deep sleep from the stage summary, then scores:
+- Both stages within two robust spreads score 100.
+- One stage two to three spreads away scores 80.
+- One beyond three spreads, or both beyond two spreads, scores 60.
+- The same stage beyond two spreads for three consecutive valid nights scores 40.
 
-- REM percent as best between 15% and 30%.
-- Deep percent as best between 10% and 25%.
+Broad age plausibility rules can cap stages at 60, but do not award points for hitting a population quota. Missing or invalid stages remain neutral in the final formula.
 
-Both are scored with `_range_score`, then averaged.
+### Combination, Caps, and Confidence
 
-Why: the sleep research is cautious about consumer sleep stages. Stages can be useful supporting evidence, but wearable stage detection is less secure than duration, timing, and continuity.
+The available duration, regularity, continuity, and timing scores form the weighted core. The final calculation is:
 
-### Sleep Confidence and Quality
+`sleep score = 0.90 × core score + 0.05 × physiology + 0.05 × stages`
 
-Sleep's `confidence_phase` is the weakest phase among the relevant sleep baselines:
+A duration shortfall of 3, 4, or 5 hours caps the final score at 60, 40, or 25. WASO of at least 90 minutes, maintenance efficiency below 65%, or at least four long awakenings caps it at 60. Supporting signals therefore cannot rescue a severely short or fragmented night.
 
-- `sleep_minutes`
-- `sleep_start_minute`
-- `sleep_efficiency`
-
-That is handled through `_baseline_phase` and `_combined_phase`.
-
-The `data_quality` field comes from `_quality_for_components`, which counts how many components had usable scores. More usable components means stronger quality.
+Confidence never changes the arithmetic. It is provisional with sparse history, calibrating when all core components are present with at least seven comparable nights, and personalised only with all core components, a 28-night timing reference, valid stage coverage, and both supporting components. Data quality mirrors this evidence level.
 
 ## Strain Score
 
@@ -400,7 +399,7 @@ The `data_quality` field again comes from `_quality_for_components`.
 
 ## Baselines
 
-Functions: `rebuild_daily_baselines`, `_baseline_values`, `_metric_value_for_baseline`
+Functions: `rebuild_daily_baselines`, `_calculate_personal_baseline`, `_metric_value_for_baseline`
 
 Baselines are how the app learns what is normal for the user. They are rebuilt daily for these metrics:
 
@@ -410,19 +409,18 @@ Baselines are how the app learns what is normal for the user. They are rebuilt d
 - `sleep_efficiency`
 - `heart_rate_variability`
 - `resting_heart_rate`
+- `skin_temperature_variation`
 - `respiratory_rate`
 - `oxygen_saturation`
 - `strain_load`
 
 The baseline for a date only uses earlier days. It never uses the current day, so a bad night or a hard workout can affect today's score without immediately redefining what "normal" means.
 
-### Baseline Window
+### Reference and Recent Windows
 
-Function: `_baseline_values`
+Sleep duration and timing use the prior 28 calendar days. The physiological, efficiency, and strain references can use up to 60 days because they are either sparser or intended to move slowly. Every baseline also stores a recent trend from its latest seven valid comparable readings. The stable reference and recent trend have separate jobs: the reference describes normal, while the recent trend helps identify a short sustained change without immediately redefining normal.
 
-The baseline first tries the previous 28 days. If it can find at least 14 valid days, it uses that 28-day window. If not, it expands to 60 days. This gives the app enough data when history is sparse while still preferring a recent baseline when possible.
-
-Why: the readiness research recommends rolling personal baselines around 21-30 days for signals like HRV and RHR. The code uses 28 days as the preferred window and 60 days as a fallback when data is sparse.
+Only prior dates are included. The current measurement can therefore be compared with the reference without leaking into it.
 
 ### Baseline Exclusions
 
@@ -434,26 +432,41 @@ Certain days are excluded from baseline learning because they are not good examp
 - travel
 - automatic timezone shift
 - sensor anomaly
+- device change
+- non-wear
+- overload or overreaching
+
+Altitude is also excluded for oxygen saturation, respiratory rate, and resting heart rate. Menstrual-cycle context is not discarded from temperature blindly; the baseline records that cycle-aware modelling is unavailable so it does not pretend an unexplained temperature shift is cycle-adjusted.
 
 `_detect_timezone_shift_context` automatically creates a `travel_timezone_shift` context when consecutive sleep sessions show a timezone offset change of at least two hours.
 
 Why: the research files repeatedly emphasise personal baselines, but a personal baseline should represent normal life. Illness, travel, and sensor anomalies should affect the daily interpretation without becoming the new normal.
 
-### Baseline Values
+### Source Consistency
+
+The source account, platform, and device are part of comparability. A baseline uses the latest continuous source run; observations before a detected source change are not mixed into the new reference. Unknown source identity prevents the confidence phase from becoming fully personalised.
+
+This matters especially for HRV, sleep efficiency, respiratory rate, oxygen saturation, and temperature because a device or method change can shift the measurement even when the person has not changed.
+
+### Metric-Specific Calculations
 
 Function: `_metric_value_for_baseline`
 
 Each metric gets its value from the most appropriate source:
 
-- `strain_load` comes from the day's Strain score.
-- Sleep timing and efficiency come from the main sleep session.
-- HRV, resting heart rate, respiratory rate, oxygen saturation, and sleep minutes come from the daily summary.
+- Sleep duration uses only the main sleep session; naps remain separate. Workdays and free days have separate references, and the personal value is stored beside the independent adequacy target so chronically short sleep cannot redefine sufficient sleep.
+- Sleep start and end use circular medians and circular robust spread for the matching workday/free-day pattern. Times around midnight therefore stay close together.
+- Sleep efficiency uses a provider-specific rolling median and robust spread.
+- HRV uses like-for-like rMSSD measurements on the natural-log scale. The stored centre and bounds are converted back to milliseconds for consumers, while scoring uses the log-scale spread.
+- Resting heart rate uses a provider-specific median and robust spread over the consistent resting/overnight series.
+- Skin temperature variation is treated as a provider-relative measurement. The app does not mistake a provider's deviation-from-baseline metric for absolute body temperature.
+- Respiratory rate uses a provider-specific sleep-window reference.
+- Oxygen saturation uses the personal median and tenth percentile as a one-sided lower boundary, with 100% as the upper ceiling. It is not treated as a symmetric bell-shaped metric.
+- Strain uses a 28-day-half-life exponentially weighted reference across up to 60 days. Recorded zero-load rest days remain zero, while missing days remain absent. The baseline metadata also retains the matching weekday mean rather than presenting an acute:chronic ratio as an injury threshold.
 
 If a daily summary is marked as missing, the app excludes most summary-based metrics. Sleep timing, sleep efficiency, and strain load are exceptions because they come from their own sleep or score records.
 
-### Baseline Statistics
-
-Functions: `rebuild_daily_baselines`, `_robust_spread`, `_drop_extreme_outliers`
+### Stored Baseline Evidence
 
 For each baseline, the app stores:
 
@@ -466,15 +479,15 @@ For each baseline, the app stores:
 - Included dates.
 - Exclusions.
 - Confidence phase.
+- Calculation method.
+- Recent trend and valid-reading count.
+- Latest-observation recency.
+- Source identity, consistency, and source-run start.
+- Metric-specific context such as day type, HRV transform, oxygen lower tail, or strain weekday reference.
 
 The robust spread is median absolute deviation scaled by 1.4826. In plain English: it measures typical variation around the median in a way that is less sensitive to weird outlier days than standard deviation.
 
-The lower and upper bounds are:
-
-- `median - 2 * robust_spread`
-- `median + 2 * robust_spread`
-
-Before storing the baseline, `_drop_extreme_outliers` removes values more than 4 robust-spread units from the median, as long as there are at least 8 values. That keeps one strange day from dragging the baseline.
+Symmetric metrics generally use the centre plus or minus two robust spreads. Circular sleep timing, log HRV, bounded oxygen saturation, efficiency, and strain each use the metric-specific treatment described above. Extreme filtering occurs on the appropriate scale and is deliberately not applied to strain, where a real high-load day is part of the training history.
 
 ### Baseline Confidence Phases
 
@@ -483,21 +496,21 @@ Function: `_phase_for_count`
 The phase is based on how many valid days went into the baseline:
 
 - `missing`: 0 valid days.
-- `provisional`: 1 to 13 valid days.
-- `calibrating`: 14 to 27 valid days.
+- `provisional`: 1 to 6 valid readings.
+- `calibrating`: 7 to 27 valid readings.
 - `personalized`: 28 or more valid days.
 
 When a score depends on multiple baselines, `_combined_phase` takes the weakest one. This is intentionally conservative. If HRV is personalised but Strain history is still provisional, Readiness should still admit that part of the picture is young.
 
 ### How Baselines Update Over Time
 
-Baselines are not incrementally nudged by today's value. They are rebuilt from the rolling historical window each time scores are rebuilt. That means:
+Baselines are rebuilt from the rolling historical window each time scores are rebuilt. That means:
 
 - Today's score uses yesterday and earlier to define normal.
-- Tomorrow's baseline may include today, unless today is excluded because of illness, travel, timezone shift, sensor anomaly, missing data, or extreme outlier filtering.
+- Tomorrow's baseline may include today unless context, missingness, source comparability, or metric-specific quality rules exclude it.
 - One abnormal day can influence the future only if it is not excluded and not an extreme outlier, and even then it is diluted by the rest of the rolling window.
 
-This is exactly the behaviour the research points toward: react to today's signal, but do not let one unusual day rewrite the user's baseline.
+Rolling robust references adapt slowly after a persistent structural change. Short anomalies remain in the recent trend or are excluded, while a genuinely stable new level eventually becomes part of the reference.
 
 ## Reasons
 
@@ -566,4 +579,3 @@ The scoring system follows three principles from the research:
 1. Use the most reliable wearable signals most heavily. Sleep duration, timing, continuity, and HR-derived load are weighted more than fragile sleep-stage details.
 2. Compare the user to themselves. HRV, resting heart rate, respiratory rate, sleep timing, and strain are all interpreted through rolling personal baselines wherever possible.
 3. Keep the scores conceptually separate. Sleep measures the night. Strain measures load. Readiness measures recovery state. The reasons and future insight layer can explain how they interact without making any one score do too many jobs.
-

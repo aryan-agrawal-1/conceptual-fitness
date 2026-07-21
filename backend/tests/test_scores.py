@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.main import app
 from app.models import (
+    DailyBaseline,
     DailyScore,
     DailySummary,
     GoogleAccount,
@@ -20,9 +21,11 @@ from app.models import (
     Workout,
 )
 from app.services.scores import (
+    BASELINE_VERSION,
     READINESS_SCORE_VERSION,
     SLEEP_SCORE_VERSION,
     STRAIN_LOAD_VERSION,
+    rebuild_daily_baselines,
     rebuild_derived_scores,
 )
 from app.services.normalization import upsert_raw_and_normalized
@@ -213,7 +216,7 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
     )
 
     assert sleep.status.value == "scored"
-    assert sleep.confidence_phase == "personalized"
+    assert sleep.confidence_phase == "calibrating"
     assert set(sleep.components) == {
         "duration",
         "regularity",
@@ -240,6 +243,36 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
 def test_sleep_stage_score_uses_timeline_not_duplicated_summary(session) -> None:
     user = _user_with_profile(session, birth_year=1990)
     day = date.today()
+    for offset in range(14, 0, -1):
+        reference_day = day - timedelta(days=offset)
+        reference_start = _dt(reference_day, 1, 0)
+        reference_cursor = reference_start
+        reference_timeline = []
+        for stage, minutes in [("AWAKE", 20), ("LIGHT", 255), ("DEEP", 80), ("REM", 85)]:
+            reference_end = reference_cursor + timedelta(minutes=minutes)
+            reference_timeline.append(
+                {
+                    "stage": stage,
+                    "startTime": reference_cursor.isoformat().replace("+00:00", "Z"),
+                    "endTime": reference_end.isoformat().replace("+00:00", "Z"),
+                }
+            )
+            reference_cursor = reference_end
+        session.add(
+            SleepSession(
+                user_id=user.id,
+                start_time=reference_start,
+                end_time=reference_cursor,
+                civil_date=reference_day,
+                minutes_asleep=420,
+                minutes_awake=20,
+                minutes_in_sleep_period=440,
+                stages_summary=[],
+                stages=reference_timeline,
+                is_main_sleep=True,
+            )
+        )
+        _add_summary(session, user, reference_day, sleep_minutes=420)
     start = _dt(day, 2, 28)
     stages = [
         ("AWAKE", 35),
@@ -301,7 +334,131 @@ def test_sleep_stage_score_uses_timeline_not_duplicated_summary(session) -> None
     assert stages_component["deep_minutes"] == 87
     assert stages_component["rem_percent"] == 0.188
     assert stages_component["deep_percent"] == 0.256
-    assert stages_component["score"] > 90
+    assert stages_component["reference_nights"] == 14
+    assert stages_component["timeline_coverage"] == 0.997
+
+
+def test_sleep_duration_uses_shortfall_anchors_and_deadband() -> None:
+    from app.services.scores import _duration_score
+
+    assert _duration_score(450, 480)["score"] == 100
+    assert _duration_score(390, 480)["score"] == 90
+    assert _duration_score(270, 480)["score"] == 35
+    assert _duration_score(600, 480)["unusually_long"] is False
+    assert _duration_score(601, 480)["unusually_long"] is True
+
+
+def test_sleep_continuity_uses_waso_and_fragmentation_caps() -> None:
+    from app.services.scores import _continuity_score
+
+    day = date.today()
+    sleep = SleepSession(
+        user_id="test-user",
+        start_time=_dt(day, 0),
+        end_time=_dt(day, 8),
+        civil_date=day,
+        minutes_asleep=350,
+        minutes_awake=130,
+        minutes_in_sleep_period=480,
+        stages_summary=[],
+        stages=[],
+        is_main_sleep=True,
+    )
+    component = _continuity_score(sleep, age=35)
+    assert component["score"] == 0
+    assert component["severe_fragmentation"] is True
+
+
+def test_personal_baselines_use_metric_specific_calculations(session) -> None:
+    user = _user_with_profile(session)
+    baseline_day = date(2026, 7, 20)
+    workdays = [
+        baseline_day - timedelta(days=offset)
+        for offset in range(1, 29)
+        if (baseline_day - timedelta(days=offset)).weekday() < 5
+    ]
+    for index, day in enumerate(workdays):
+        _add_sleep(
+            session,
+            user,
+            day,
+            start_hour=23 if index % 2 == 0 else 0,
+            start_minute=50 if index % 2 == 0 else 10,
+        )
+        _add_summary(
+            session,
+            user,
+            day,
+            hrv=25 if index % 2 == 0 else 100,
+            rhr=55 + index % 3,
+        )
+    session.flush()
+
+    profile = session.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+    rebuild_daily_baselines(
+        session,
+        user_id=user.id,
+        profile=profile,
+        baseline_date=baseline_day,
+    )
+
+    baselines = {
+        item.metric: item
+        for item in session.scalars(
+            select(DailyBaseline).where(
+                DailyBaseline.user_id == user.id,
+                DailyBaseline.baseline_date == baseline_day,
+                DailyBaseline.algorithm_version == BASELINE_VERSION,
+            )
+        ).all()
+    }
+    start = baselines["sleep_start_minute"]
+    assert min(start.median_value, 1440 - start.median_value) <= 10
+    assert start.metadata_json["method"] == "day_type_circular_median_mad"
+    assert start.metadata_json["day_type"] == "workday"
+
+    hrv = baselines["heart_rate_variability"]
+    assert hrv.metadata_json["transform"] == "natural_log_rmssd"
+    assert round(hrv.median_value, 4) == 50
+    assert hrv.metadata_json["recent_trend"]["valid_readings"] == 7
+
+
+def test_oxygen_baseline_uses_lower_tail_not_symmetric_bounds(session) -> None:
+    user = _user_with_profile(session)
+    baseline_day = date(2026, 7, 20)
+    values = [90.0, 96.0, 97.0, 98.0, 99.0]
+    for offset, value in enumerate(values, start=1):
+        day = baseline_day - timedelta(days=offset)
+        _add_summary(session, user, day)
+        session.flush()
+        summary = session.scalar(
+            select(DailySummary).where(
+                DailySummary.user_id == user.id,
+                DailySummary.summary_date == day,
+            )
+        )
+        summary.oxygen_saturation = value
+    session.flush()
+    profile = session.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+
+    rebuild_daily_baselines(
+        session,
+        user_id=user.id,
+        profile=profile,
+        baseline_date=baseline_day,
+    )
+    baseline = session.scalar(
+        select(DailyBaseline).where(
+            DailyBaseline.user_id == user.id,
+            DailyBaseline.baseline_date == baseline_day,
+            DailyBaseline.metric == "oxygen_saturation",
+            DailyBaseline.algorithm_version == BASELINE_VERSION,
+        )
+    )
+    assert baseline.median_value == 97
+    assert baseline.lower_bound == 92.4
+    assert baseline.upper_bound == 100
+    assert baseline.metadata_json["one_sided"] == "lower"
 
 
 def test_strain_uses_observed_resting_hr_when_daily_rhr_missing(session) -> None:

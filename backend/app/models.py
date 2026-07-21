@@ -461,6 +461,7 @@ class DailyBaseline(Base):
     confidence_phase: Mapped[str] = mapped_column(String(32), default="missing")
     included_dates: Mapped[list[str]] = mapped_column(JSON, default=list)
     exclusions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

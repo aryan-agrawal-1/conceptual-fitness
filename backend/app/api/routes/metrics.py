@@ -1395,21 +1395,21 @@ def _sleep_component_items(score: DailyScore | None) -> list[dict[str, object]]:
 def _sleep_component_message(key: str, component: dict[str, Any]) -> str | None:
     if key == "duration":
         minutes = component.get("minutes")
-        target = component.get("target_minutes")
+        target = component.get("core_sleep_need_minutes")
         if isinstance(minutes, int | float) and isinstance(target, int | float):
-            return f"{_hours_text(float(minutes))} slept against a {_hours_text(float(target))} target."
+            return f"{_hours_text(float(minutes))} slept against a {_hours_text(float(target))} core need."
     if key == "regularity":
         drift = component.get("average_drift_minutes")
         if isinstance(drift, int | float):
             return f"Average bedtime/wake drift was {round(float(drift)):g} min."
     if key == "continuity":
-        efficiency = component.get("sleep_efficiency")
+        efficiency = component.get("maintenance_efficiency")
         if isinstance(efficiency, int | float):
             return f"Sleep efficiency was {round(float(efficiency) * 100):g}%."
     if key == "timing":
-        drift = component.get("start_drift_minutes")
+        drift = component.get("midsleep_alignment_drift_minutes")
         if isinstance(drift, int | float):
-            return f"Sleep start drift was {round(float(drift)):g} min."
+            return f"Midsleep alignment drift was {round(float(drift)):g} min."
     if key == "physiology":
         return "Overnight physiology is compared with your baseline."
     if key == "stages":
