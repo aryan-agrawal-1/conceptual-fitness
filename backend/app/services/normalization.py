@@ -21,6 +21,7 @@ from app.models import (
     new_uuid,
 )
 from app.services.metric_rollups import HighVolumeRecord
+from app.services.workout_records import normalize_provider_workout
 
 HEART_RATE_BULK_BATCH_SIZE = 2000
 BULK_MEASUREMENT_DATA_TYPES = {
@@ -454,7 +455,7 @@ def _replace_normalized_many(
     elif storage == "sleep":
         models = (SleepSession,)
     elif storage == "workout":
-        models = (Workout,)
+        models = ()
     elif storage == "raw":
         models = ()
     else:
@@ -581,17 +582,13 @@ def _normalize_workout(
     start_time, end_time = _record_times(payload)
     if start_time is None or end_time is None:
         return
-    session.add(
-        Workout(
-            user_id=account.user_id,
-            raw_record_id=raw_record.id,
-            workout_type=payload.get("exerciseType") or payload.get("activityType") or payload.get("type"),
-            start_time=start_time,
-            end_time=end_time,
-            civil_date=raw_record.civil_date or start_time.date(),
-            duration_seconds=int((end_time - start_time).total_seconds()),
-            raw_summary=payload,
-        )
+    normalize_provider_workout(
+        session,
+        account=account,
+        raw_record=raw_record,
+        payload=payload,
+        start_time=start_time,
+        end_time=end_time,
     )
 
 

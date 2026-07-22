@@ -135,6 +135,11 @@ final class AuthStore: ObservableObject {
         self.baseURL = baseURL
         self.session = session
         self.keychain = keychain
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-FitnessTestSession") {
+            accessToken = ProcessInfo.processInfo.environment["FITNESS_TEST_ACCESS_TOKEN"]
+        }
+        #endif
     }
 
     func bootstrap() async {
@@ -396,7 +401,10 @@ struct AuthGateView: View {
 
     var body: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-skipAuthForWeatherDebug") {
+        if ProcessInfo.processInfo.arguments.contains("-FitnessTestSession"),
+           let userID = ProcessInfo.processInfo.environment["FITNESS_TEST_USER_ID"] {
+            AppShellView(authStore: authStore, session: .fitnessTest(userID: userID))
+        } else if ProcessInfo.processInfo.arguments.contains("-skipAuthForWeatherDebug") {
             AppShellView(authStore: authStore, session: .preview)
         } else {
             authContent
@@ -503,6 +511,31 @@ struct AuthGateView: View {
         .padding(28)
     }
 }
+
+#if DEBUG
+private extension AuthSession {
+    static func fitnessTest(userID: String) -> AuthSession {
+        AuthSession(
+            user: AuthUser(
+                id: userID,
+                email: "fitness-test@local.invalid",
+                firstName: "Test",
+                lastName: "User"
+            ),
+            googleHealth: GoogleHealthStatus(
+                status: .connected,
+                connectedAt: nil,
+                lastSyncAt: nil,
+                lastError: nil
+            ),
+            profile: AuthProfileStatus(
+                onboardingCompletedAt: FitnessDate.string(Date()),
+                weatherEnabled: false
+            )
+        )
+    }
+}
+#endif
 
 final class WebAuthPresentationContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     static let shared = WebAuthPresentationContextProvider()

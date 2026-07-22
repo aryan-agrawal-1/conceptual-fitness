@@ -393,7 +393,11 @@ class SleepSession(Base):
 
 class Workout(Base):
     __tablename__ = "workouts"
-    __table_args__ = (UniqueConstraint("raw_record_id", name="uq_workout_raw_record"),)
+    __table_args__ = (
+        UniqueConstraint("raw_record_id", name="uq_workout_raw_record"),
+        UniqueConstraint("user_id", "client_id", name="uq_workout_user_client_id"),
+        Index("ix_workouts_user_status_start", "user_id", "status", "start_time"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -406,6 +410,237 @@ class Workout(Base):
     civil_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    client_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    routine_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    title: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="completed")
+    origin: Mapped[str] = mapped_column(String(24), default="wearable")
+    timezone: Mapped[str] = mapped_column(String(80), default="UTC")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_rpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    is_user_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    awaiting_wearable: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class ExerciseCatalogItem(Base):
+    __tablename__ = "exercise_catalog"
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_exercise_catalog_source_external"),
+        Index("ix_exercise_catalog_user_name", "user_id", "name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="custom")
+    source_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    name: Mapped[str] = mapped_column(String(180))
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    instructions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    media: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    force: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    mechanic: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    equipment: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    movement_pattern: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    primary_muscles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    secondary_muscles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    measurement_schema: Mapped[str] = mapped_column(String(40), default="reps_load")
+    is_unilateral: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_curated: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class ExerciseFavorite(Base):
+    __tablename__ = "exercise_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "exercise_id", name="uq_exercise_favorite_user_exercise"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    exercise_id: Mapped[str] = mapped_column(
+        ForeignKey("exercise_catalog.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WorkoutSource(Base):
+    __tablename__ = "workout_sources"
+    __table_args__ = (
+        UniqueConstraint("raw_record_id", name="uq_workout_source_raw_record"),
+        UniqueConstraint(
+            "user_id", "provider", "source_record_id", name="uq_workout_source_identity"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workout_id: Mapped[str] = mapped_column(
+        ForeignKey("workouts.id", ondelete="CASCADE"), index=True
+    )
+    raw_record_id: Mapped[str | None] = mapped_column(
+        ForeignKey("raw_health_records.id", ondelete="SET NULL"), nullable=True
+    )
+    provider: Mapped[str] = mapped_column(String(40))
+    source_record_id: Mapped[str] = mapped_column(Text)
+    source_platform: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source_device: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class WorkoutExercise(Base):
+    __tablename__ = "workout_exercises"
+    __table_args__ = (
+        UniqueConstraint("workout_id", "order_index", name="uq_workout_exercise_order"),
+        Index("ix_workout_exercises_workout_order", "workout_id", "order_index"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    workout_id: Mapped[str] = mapped_column(
+        ForeignKey("workouts.id", ondelete="CASCADE"), index=True
+    )
+    exercise_id: Mapped[str | None] = mapped_column(
+        ForeignKey("exercise_catalog.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer)
+    group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name_snapshot: Mapped[str] = mapped_column(String(180))
+    measurement_schema: Mapped[str] = mapped_column(String(40))
+    primary_muscles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    secondary_muscles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class WorkoutSet(Base):
+    __tablename__ = "workout_sets"
+    __table_args__ = (
+        UniqueConstraint("workout_exercise_id", "order_index", name="uq_workout_set_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    workout_exercise_id: Mapped[str] = mapped_column(
+        ForeignKey("workout_exercises.id", ondelete="CASCADE"), index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer)
+    set_type: Mapped[str] = mapped_column(String(24), default="working")
+    status: Mapped[str] = mapped_column(String(24), default="planned")
+    drop_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    load_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    load_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    load_per_implement: Mapped[float | None] = mapped_column(Float, nullable=True)
+    implement_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    side_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    distance_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
+    assistance_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    added_load_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rir: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class WorkoutRoutine(Base):
+    __tablename__ = "workout_routines"
+    __table_args__ = (Index("ix_workout_routines_user_archived", "user_id", "is_archived"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scheduled_weekdays: Mapped[list[int]] = mapped_column(JSON, default=list)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_performed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class RoutineExercise(Base):
+    __tablename__ = "routine_exercises"
+    __table_args__ = (
+        UniqueConstraint("routine_id", "order_index", name="uq_routine_exercise_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    routine_id: Mapped[str] = mapped_column(
+        ForeignKey("workout_routines.id", ondelete="CASCADE"), index=True
+    )
+    exercise_id: Mapped[str | None] = mapped_column(
+        ForeignKey("exercise_catalog.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer)
+    group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name_snapshot: Mapped[str] = mapped_column(String(180))
+    measurement_schema: Mapped[str] = mapped_column(String(40))
+    target_sets: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_reps_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_reps_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_load_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_load_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    target_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_distance_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_rir: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class WorkoutMatchRejection(Base):
+    __tablename__ = "workout_match_rejections"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "left_workout_id", "right_workout_id", name="uq_workout_match_rejection"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    left_workout_id: Mapped[str] = mapped_column(
+        ForeignKey("workouts.id", ondelete="CASCADE")
+    )
+    right_workout_id: Mapped[str] = mapped_column(
+        ForeignKey("workouts.id", ondelete="CASCADE")
+    )
+    reason: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

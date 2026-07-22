@@ -211,6 +211,8 @@ def _recent_workouts_payload(
             Workout.user_id == user_id,
             Workout.civil_date >= start,
             Workout.civil_date <= end,
+            Workout.status == "completed",
+            Workout.deleted_at.is_(None),
         )
         .order_by(Workout.start_time.desc())
         .limit(workout_limit)
