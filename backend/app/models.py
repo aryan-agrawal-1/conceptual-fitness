@@ -456,6 +456,7 @@ class ExerciseCatalogItem(Base):
     primary_muscles: Mapped[list[str]] = mapped_column(JSON, default=list)
     secondary_muscles: Mapped[list[str]] = mapped_column(JSON, default=list)
     measurement_schema: Mapped[str] = mapped_column(String(40), default="reps_load")
+    is_unilateral: Mapped[bool] = mapped_column(Boolean, default=False)
     default_rest_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_curated: Mapped[bool] = mapped_column(Boolean, default=False)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)

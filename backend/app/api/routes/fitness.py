@@ -158,6 +158,7 @@ class CustomExerciseWrite(BaseModel):
     primary_muscles: list[str] = Field(default_factory=list)
     secondary_muscles: list[str] = Field(default_factory=list)
     measurement_schema: MeasurementSchema
+    is_unilateral: bool = False
     default_rest_seconds: int | None = Field(default=None, ge=0, le=7200)
 
 
@@ -339,6 +340,7 @@ def create_custom_exercise(
         primary_muscles=payload.primary_muscles,
         secondary_muscles=payload.secondary_muscles,
         measurement_schema=payload.measurement_schema,
+        is_unilateral=payload.is_unilateral,
         default_rest_seconds=payload.default_rest_seconds,
         is_curated=False,
     )
@@ -365,6 +367,7 @@ def update_custom_exercise(
     item.primary_muscles = payload.primary_muscles
     item.secondary_muscles = payload.secondary_muscles
     item.measurement_schema = payload.measurement_schema
+    item.is_unilateral = payload.is_unilateral
     item.default_rest_seconds = payload.default_rest_seconds
     session.add(item)
     session.commit()
@@ -454,7 +457,7 @@ def exercise_history(
             load_kg = _load_kg(set_row.load_value, set_row.load_unit)
             max_load_kg = max(max_load_kg or 0, load_kg)
             if set_row.reps is not None:
-                total_volume_kg += load_kg * set_row.reps
+                total_volume_kg += load_kg * set_row.reps * (set_row.side_count or 1)
         if set_row.reps is not None:
             max_reps = max(max_reps or 0, set_row.reps)
         session_row["sets"].append(set_payload)
@@ -977,7 +980,7 @@ def _workout_payload(
         for item in completed:
             if item.reps is not None and item.load_value is not None:
                 load_kg = item.load_value * (0.45359237 if item.load_unit == "lb" else 1.0)
-                volume_kg += item.reps * load_kg
+                volume_kg += item.reps * load_kg * (item.side_count or 1)
         if completed:
             for muscle in exercise.primary_muscles or []:
                 muscle_counts[muscle] = muscle_counts.get(muscle, 0) + len(completed)
@@ -1086,6 +1089,7 @@ def _routine_payload(session: DbSession, routine: WorkoutRoutine) -> dict[str, A
                 "exercise_id": item.exercise_id,
                 "name": item.name_snapshot,
                 "measurement_schema": item.measurement_schema,
+                "is_unilateral": _exercise_is_unilateral(session, item.exercise_id),
                 "order_index": item.order_index,
                 "group_id": item.group_id,
                 "target_sets": item.target_sets,
@@ -1125,6 +1129,7 @@ def _exercise_payload(
         "primary_muscles": item.primary_muscles,
         "secondary_muscles": item.secondary_muscles,
         "measurement_schema": item.measurement_schema,
+        "is_unilateral": item.is_unilateral,
         "default_rest_seconds": item.default_rest_seconds,
         "is_curated": item.is_curated,
         "is_custom": item.user_id is not None,
@@ -1139,6 +1144,13 @@ def _user_workout(session: DbSession, user_id: str, workout_id: str) -> Workout:
     if workout is None or workout.user_id != user_id or workout.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Workout not found")
     return workout
+
+
+def _exercise_is_unilateral(session: DbSession, exercise_id: str | None) -> bool:
+    if exercise_id is None:
+        return False
+    item = session.get(ExerciseCatalogItem, exercise_id)
+    return bool(item and item.is_unilateral)
 
 
 def _active_workout(session: DbSession, user_id: str) -> Workout | None:

@@ -30,16 +30,51 @@ struct FitnessAPIClient {
         name: String,
         schema: String,
         equipment: String?,
-        primaryMuscles: [String]
+        primaryMuscles: [String],
+        isUnilateral: Bool
     ) async throws -> FitnessExercise {
         try await request(
             path: "/fitness/exercises",
             method: "POST",
             body: CustomExerciseBody(
                 name: name,
+                aliases: [],
+                instructions: [],
                 equipment: equipment,
+                category: "strength",
+                movementPattern: nil,
                 primaryMuscles: primaryMuscles,
-                measurementSchema: schema
+                secondaryMuscles: [],
+                measurementSchema: schema,
+                isUnilateral: isUnilateral,
+                defaultRestSeconds: 90
+            )
+        )
+    }
+
+    func updateCustomExercise(
+        exercise: FitnessExercise,
+        name: String,
+        schema: String,
+        equipment: String?,
+        primaryMuscles: [String],
+        isUnilateral: Bool
+    ) async throws -> FitnessExercise {
+        try await request(
+            path: "/fitness/exercises/\(exercise.id)",
+            method: "PATCH",
+            body: CustomExerciseBody(
+                name: name,
+                aliases: exercise.aliases,
+                instructions: exercise.instructions,
+                equipment: equipment,
+                category: exercise.category ?? "strength",
+                movementPattern: exercise.movementPattern,
+                primaryMuscles: primaryMuscles,
+                secondaryMuscles: exercise.secondaryMuscles,
+                measurementSchema: schema,
+                isUnilateral: isUnilateral,
+                defaultRestSeconds: exercise.defaultRestSeconds ?? 90
             )
         )
     }
@@ -141,15 +176,16 @@ private struct EmptyBody: Encodable {}
 
 private struct CustomExerciseBody: Encodable {
     let name: String
-    let aliases: [String] = []
-    let instructions: [String] = []
+    let aliases: [String]
+    let instructions: [String]
     let equipment: String?
-    let category: String = "strength"
-    let movementPattern: String? = nil
+    let category: String
+    let movementPattern: String?
     let primaryMuscles: [String]
-    let secondaryMuscles: [String] = []
+    let secondaryMuscles: [String]
     let measurementSchema: String
-    let defaultRestSeconds: Int = 90
+    let isUnilateral: Bool
+    let defaultRestSeconds: Int
 
     enum CodingKeys: String, CodingKey {
         case name, aliases, instructions, equipment, category
@@ -157,6 +193,7 @@ private struct CustomExerciseBody: Encodable {
         case primaryMuscles = "primary_muscles"
         case secondaryMuscles = "secondary_muscles"
         case measurementSchema = "measurement_schema"
+        case isUnilateral = "is_unilateral"
         case defaultRestSeconds = "default_rest_seconds"
     }
 }
@@ -392,8 +429,8 @@ private struct FitnessWorkoutSetBody: Encodable {
             assistanceKG = nil
             addedLoadKG = nil
             loadPerImplement = enteredLoad
-            implementCount = 2
-            loadValue = enteredLoad * 2
+            implementCount = exercise.recordsPerSide ? 1 : 2
+            loadValue = enteredLoad * Double(implementCount ?? 1)
         } else {
             assistanceKG = nil
             addedLoadKG = nil
@@ -401,7 +438,7 @@ private struct FitnessWorkoutSetBody: Encodable {
             implementCount = nil
             loadValue = enteredLoad
         }
-        sideCount = exercise.name.lowercased().contains("single") ? 2 : nil
+        sideCount = exercise.recordsPerSide ? 2 : nil
     }
 
     enum CodingKeys: String, CodingKey {

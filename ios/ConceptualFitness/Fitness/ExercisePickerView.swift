@@ -10,7 +10,7 @@ struct ExercisePickerView: View {
     @State private var results: [FitnessExercise] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var showCustomExercise = false
+    @State private var customExerciseEditor: CustomExerciseEditor?
 
     var body: some View {
         NavigationStack {
@@ -61,71 +61,103 @@ struct ExercisePickerView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showCustomExercise = true
+                        customExerciseEditor = .create
                     } label: {
                         Label("Custom", systemImage: "plus")
                     }
                 }
             }
         }
-        .sheet(isPresented: $showCustomExercise) {
-            CustomExerciseSheet(client: client) { exercise in
-                select(exercise)
+        .sheet(item: $customExerciseEditor) { editor in
+            CustomExerciseSheet(client: client, exercise: editor.exercise) { exercise in
+                if editor.exercise == nil {
+                    select(exercise)
+                } else if let index = results.firstIndex(where: { $0.id == exercise.id }) {
+                    results[index] = exercise
+                }
             }
         }
     }
 
+    @ViewBuilder
     private func exerciseRow(_ exercise: FitnessExercise) -> some View {
-        Button {
-            select(exercise)
-        } label: {
-            HStack(spacing: 13) {
-                if let media = exercise.media.first, let url = URL(string: media.url) {
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFit()
-                        } else {
-                            Image(systemName: "figure.strengthtraining.traditional")
-                                .foregroundStyle(.secondary)
-                        }
+        HStack(spacing: 8) {
+            Button {
+                select(exercise)
+            } label: {
+                HStack(spacing: 13) {
+                    exerciseImage(exercise)
+                    exerciseDetails(exercise)
+                    Spacer()
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(HealthTheme.color(for: .activity))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Adds this exercise to the workout")
+
+            if exercise.isCustom {
+                Menu {
+                    Button {
+                        customExerciseEditor = .edit(exercise)
+                    } label: {
+                        Label("Edit exercise", systemImage: "pencil")
                     }
-                    .frame(width: 58, height: 58)
-                    .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 44)
+                }
+                .accessibilityLabel("Custom exercise actions")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func exerciseImage(_ exercise: FitnessExercise) -> some View {
+        if let media = exercise.media.first, let url = URL(string: media.url) {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFit()
                 } else {
                     Image(systemName: "figure.strengthtraining.traditional")
-                        .foregroundStyle(HealthTheme.color(for: .activity))
-                        .frame(width: 58, height: 58)
-                        .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 5) {
-                        Text(exercise.name)
-                            .font(.body.weight(.semibold))
-                        if exercise.isFavorite {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.yellow)
-                        }
-                    }
-                    Text(exerciseSubtitle(exercise))
-                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if exercise.useCount > 0 {
-                        Text("Used \(exercise.useCount) time\(exercise.useCount == 1 ? "" : "s")")
-                            .font(.caption2)
-                            .foregroundStyle(HealthTheme.color(for: .activity))
-                    }
                 }
-                Spacer()
-                Image(systemName: "plus.circle.fill")
-                    .font(.title3)
+            }
+            .frame(width: 58, height: 58)
+            .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            Image(systemName: "figure.strengthtraining.traditional")
+                .foregroundStyle(HealthTheme.color(for: .activity))
+                .frame(width: 58, height: 58)
+                .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func exerciseDetails(_ exercise: FitnessExercise) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Text(exercise.name)
+                    .font(.body.weight(.semibold))
+                if exercise.isFavorite {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                }
+            }
+            Text(exerciseSubtitle(exercise))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if exercise.useCount > 0 {
+                Text("Used \(exercise.useCount) time\(exercise.useCount == 1 ? "" : "s")")
+                    .font(.caption2)
                     .foregroundStyle(HealthTheme.color(for: .activity))
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("Adds this exercise to the workout")
     }
 
     private var exercisePlaceholder: some View {
@@ -165,15 +197,36 @@ struct ExercisePickerView: View {
     }
 }
 
+private enum CustomExerciseEditor: Identifiable {
+    case create
+    case edit(FitnessExercise)
+
+    var id: String {
+        switch self {
+        case .create: return "create"
+        case .edit(let exercise): return exercise.id
+        }
+    }
+
+    var exercise: FitnessExercise? {
+        switch self {
+        case .create: return nil
+        case .edit(let exercise): return exercise
+        }
+    }
+}
+
 private struct CustomExerciseSheet: View {
     @Environment(\.dismiss) private var dismiss
     let client: FitnessAPIClient
-    let onCreate: (FitnessExercise) -> Void
+    let exercise: FitnessExercise?
+    let onSave: (FitnessExercise) -> Void
 
-    @State private var name = ""
-    @State private var schema = "reps_load"
-    @State private var equipment = ""
-    @State private var selectedMuscles: Set<String> = []
+    @State private var name: String
+    @State private var schema: String
+    @State private var equipment: String
+    @State private var selectedMuscles: Set<String>
+    @State private var isUnilateral: Bool
     @State private var options = FitnessExerciseOptions(equipment: [], muscles: [])
     @State private var isLoadingOptions = false
     @State private var isSaving = false
@@ -189,6 +242,21 @@ private struct CustomExerciseSheet: View {
         ("cardio", "Distance + time"),
     ]
 
+    init(
+        client: FitnessAPIClient,
+        exercise: FitnessExercise?,
+        onSave: @escaping (FitnessExercise) -> Void
+    ) {
+        self.client = client
+        self.exercise = exercise
+        self.onSave = onSave
+        _name = State(initialValue: exercise?.name ?? "")
+        _schema = State(initialValue: exercise?.measurementSchema ?? "reps_load")
+        _equipment = State(initialValue: exercise?.equipment ?? "")
+        _selectedMuscles = State(initialValue: Set(exercise?.primaryMuscles ?? []))
+        _isUnilateral = State(initialValue: exercise?.isUnilateral ?? false)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -197,6 +265,14 @@ private struct CustomExerciseSheet: View {
                     Picker("What do you record?", selection: $schema) {
                         ForEach(schemas, id: \.0) { value, label in
                             Text(label).tag(value)
+                        }
+                    }
+                    if recordsReps {
+                        Toggle("Performed per side", isOn: $isUnilateral)
+                        if isUnilateral {
+                            Text("Enter the reps completed on one side. Each set represents both sides.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -233,20 +309,24 @@ private struct CustomExerciseSheet: View {
                     }
                 }
             }
-            .navigationTitle("Custom exercise")
+            .navigationTitle(exercise == nil ? "Custom exercise" : "Edit exercise")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") { Task { await create() } }
+                    Button(exercise == nil ? "Create" : "Save") { Task { await save() } }
                         .fontWeight(.semibold)
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
                 }
             }
         }
         .task { await loadOptions() }
+    }
+
+    private var recordsReps: Bool {
+        ["reps_load", "bodyweight_reps", "assisted_reps"].contains(schema)
     }
 
     private var muscleSummary: String {
@@ -267,20 +347,35 @@ private struct CustomExerciseSheet: View {
         }
     }
 
-    private func create() async {
+    private func save() async {
         isSaving = true
         defer { isSaving = false }
         do {
-            let exercise = try await client.createCustomExercise(
-                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                schema: schema,
-                equipment: equipment.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
-                primaryMuscles: selectedMuscles.sorted()
-            )
-            onCreate(exercise)
+            let saved: FitnessExercise
+            if let exercise {
+                saved = try await client.updateCustomExercise(
+                    exercise: exercise,
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    schema: schema,
+                    equipment: equipment.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+                    primaryMuscles: selectedMuscles.sorted(),
+                    isUnilateral: recordsReps && isUnilateral
+                )
+            } else {
+                saved = try await client.createCustomExercise(
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    schema: schema,
+                    equipment: equipment.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+                    primaryMuscles: selectedMuscles.sorted(),
+                    isUnilateral: recordsReps && isUnilateral
+                )
+            }
+            onSave(saved)
             dismiss()
         } catch {
-            errorMessage = "Custom exercises need a connection the first time they’re created."
+            errorMessage = exercise == nil
+                ? "Custom exercises need a connection the first time they’re created."
+                : "That custom exercise couldn’t be updated."
         }
     }
 }

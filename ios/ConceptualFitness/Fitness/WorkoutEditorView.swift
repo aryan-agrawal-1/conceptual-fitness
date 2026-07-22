@@ -319,7 +319,7 @@ private struct ExerciseLogCard: View {
                 Text("METRES").frame(maxWidth: .infinity)
                 Text("SECONDS").frame(maxWidth: .infinity)
             default:
-                Text("REPS").frame(maxWidth: .infinity)
+                Text(exercise.recordsPerSide ? "REPS/SIDE" : "REPS").frame(maxWidth: .infinity)
                 Text(loadHeader).frame(maxWidth: .infinity)
             }
             Color.clear.frame(width: 36)
@@ -329,15 +329,16 @@ private struct ExerciseLogCard: View {
     }
 
     private var schemaDescription: String {
+        let reps = exercise.recordsPerSide ? "Reps per side" : "Reps"
         switch exercise.measurementSchema {
-        case "assisted_reps": return "Reps · assistance in kg"
-        case "bodyweight_reps": return "Reps · optional added load"
+        case "assisted_reps": return "\(reps) · assistance in kg"
+        case "bodyweight_reps": return "\(reps) · optional added load"
         case "duration": return "Timed hold"
         case "duration_load": return "Time · load"
         case "carry": return "Distance · time"
         case "cardio": return "Distance · time"
         default:
-            return exercise.recordsPerImplement ? "Reps · kg per dumbbell" : "Reps · total load"
+            return exercise.recordsPerImplement ? "\(reps) · kg per dumbbell" : "\(reps) · total load"
         }
     }
 

@@ -99,12 +99,14 @@ def test_custom_exercise_is_private_and_searchable(session, auth_headers) -> Non
             "measurement_schema": "reps_load",
             "equipment": "cable",
             "primary_muscles": ["chest"],
+            "is_unilateral": True,
         },
     )
 
     assert response.status_code == 201
     exercise_id = response.json()["id"]
     assert response.json()["is_custom"] is True
+    assert response.json()["is_unilateral"] is True
     assert [
         item["id"]
         for item in client.get(
@@ -116,6 +118,27 @@ def test_custom_exercise_is_private_and_searchable(session, auth_headers) -> Non
         "/fitness/exercises?query=cable",
         headers=auth_headers(other),
     ).json() == []
+
+    updated = client.patch(
+        f"/fitness/exercises/{exercise_id}",
+        headers=auth_headers(owner),
+        json={
+            "name": "My Cable Fly",
+            "measurement_schema": "reps_load",
+            "equipment": "cable",
+            "primary_muscles": ["chest", "shoulders"],
+            "is_unilateral": False,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "My Cable Fly"
+    assert updated.json()["primary_muscles"] == ["chest", "shoulders"]
+    assert updated.json()["is_unilateral"] is False
+    assert client.patch(
+        f"/fitness/exercises/{exercise_id}",
+        headers=auth_headers(other),
+        json={"name": "No", "measurement_schema": "reps_load"},
+    ).status_code == 404
 
 
 def test_exercise_options_use_catalog_and_keep_custom_values_private(session, auth_headers) -> None:
@@ -205,6 +228,31 @@ def test_workout_revision_rejects_stale_updates(session, auth_headers) -> None:
     assert response.json()["notes"] == "Updated"
     assert response.json()["revision"] == created["revision"] + 1
     assert stale.status_code == 409
+
+
+def test_unilateral_workout_volume_counts_both_sides(session, auth_headers) -> None:
+    user = _user(session)
+    item = _catalog_item(session)
+    session.commit()
+    payload = _workout_payload(item, client_id="unilateral-workout-0001")
+    payload["exercises"][0]["sets"] = [
+        {
+            "status": "completed",
+            "reps": 10,
+            "load_value": 20,
+            "load_unit": "kg",
+            "side_count": 2,
+        }
+    ]
+
+    created = TestClient(app).post(
+        "/fitness/workouts",
+        headers=auth_headers(user),
+        json=payload,
+    )
+
+    assert created.status_code == 201
+    assert created.json()["summary"]["volume_kg"] == 400.0
 
 
 def test_exercise_favorite_history_and_save_as_routine(session, auth_headers) -> None:

@@ -45,6 +45,7 @@ struct FitnessExercise: Codable, Identifiable, Hashable {
     let primaryMuscles: [String]
     let secondaryMuscles: [String]
     let measurementSchema: String
+    let isUnilateral: Bool
     let defaultRestSeconds: Int?
     let isCurated: Bool
     let isCustom: Bool
@@ -57,6 +58,7 @@ struct FitnessExercise: Codable, Identifiable, Hashable {
         case primaryMuscles = "primary_muscles"
         case secondaryMuscles = "secondary_muscles"
         case measurementSchema = "measurement_schema"
+        case isUnilateral = "is_unilateral"
         case defaultRestSeconds = "default_rest_seconds"
         case isCurated = "is_curated"
         case isCustom = "is_custom"
@@ -92,6 +94,7 @@ struct FitnessRoutineExercise: Codable, Identifiable, Hashable {
     let exerciseID: String?
     let name: String
     let measurementSchema: String
+    let isUnilateral: Bool
     let groupID: String?
     let targetSets: Int?
     let targetRepsMin: Int?
@@ -108,6 +111,7 @@ struct FitnessRoutineExercise: Codable, Identifiable, Hashable {
         case id, name, notes
         case exerciseID = "exercise_id"
         case measurementSchema = "measurement_schema"
+        case isUnilateral = "is_unilateral"
         case groupID = "group_id"
         case targetSets = "target_sets"
         case targetRepsMin = "target_reps_min"
@@ -339,6 +343,7 @@ struct LocalWorkoutExercise: Codable, Identifiable, Equatable {
     var catalogID: String?
     var name: String
     var measurementSchema: String
+    var isUnilateral: Bool?
     var equipment: String?
     var groupID: String?
     var primaryMuscles: [String]
@@ -354,6 +359,7 @@ struct LocalWorkoutExercise: Codable, Identifiable, Equatable {
         catalogID = exercise.id
         name = exercise.name
         measurementSchema = exercise.measurementSchema
+        isUnilateral = exercise.isUnilateral
         equipment = exercise.equipment
         groupID = nil
         primaryMuscles = exercise.primaryMuscles
@@ -370,6 +376,7 @@ struct LocalWorkoutExercise: Codable, Identifiable, Equatable {
         catalogID = routineExercise.exerciseID
         name = routineExercise.name
         measurementSchema = routineExercise.measurementSchema
+        isUnilateral = routineExercise.isUnilateral
         equipment = nil
         groupID = routineExercise.groupID
         primaryMuscles = []
@@ -395,6 +402,7 @@ struct LocalWorkoutExercise: Codable, Identifiable, Equatable {
         catalogID = workoutExercise.exerciseID
         name = workoutExercise.name
         measurementSchema = workoutExercise.measurementSchema
+        isUnilateral = workoutExercise.sets.contains { $0.sideCount == 2 }
         equipment = nil
         groupID = workoutExercise.groupID
         primaryMuscles = workoutExercise.primaryMuscles
@@ -409,6 +417,10 @@ struct LocalWorkoutExercise: Codable, Identifiable, Equatable {
     var recordsPerImplement: Bool {
         let value = equipment?.lowercased() ?? ""
         return value.contains("dumbbell") || value.contains("kettlebell")
+    }
+
+    var recordsPerSide: Bool {
+        isUnilateral == true
     }
 }
 
