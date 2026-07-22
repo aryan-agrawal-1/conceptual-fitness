@@ -52,6 +52,15 @@
 		01000000000000000000002B /* HealthMetricPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002E /* HealthMetricPresentation.swift */; };
 		01000000000000000000002C /* WorkoutPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000002F /* WorkoutPresentation.swift */; };
 		01000000000000000000002D /* MetricHeroPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000030 /* MetricHeroPanel.swift */; };
+		01000000000000000000002E /* FitnessModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000031 /* FitnessModels.swift */; };
+		01000000000000000000002F /* FitnessAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000032 /* FitnessAPIClient.swift */; };
+		010000000000000000000030 /* FitnessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000033 /* FitnessStore.swift */; };
+		010000000000000000000031 /* FitnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000034 /* FitnessView.swift */; };
+		010000000000000000000032 /* WorkoutEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000035 /* WorkoutEditorView.swift */; };
+		010000000000000000000033 /* ExercisePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000036 /* ExercisePickerView.swift */; };
+		010000000000000000000034 /* bodyPaths.json in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000037 /* bodyPaths.json */; };
+		010000000000000000000035 /* AnatomeMuscleMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000038 /* AnatomeMuscleMapView.swift */; };
+		010000000000000000000036 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000039 /* WebKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -103,6 +112,15 @@
 		02000000000000000000002E /* HealthMetricPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthMetricPresentation.swift; sourceTree = "<group>"; };
 		02000000000000000000002F /* WorkoutPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutPresentation.swift; sourceTree = "<group>"; };
 		020000000000000000000030 /* MetricHeroPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricHeroPanel.swift; sourceTree = "<group>"; };
+		020000000000000000000031 /* FitnessModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessModels.swift; sourceTree = "<group>"; };
+		020000000000000000000032 /* FitnessAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessAPIClient.swift; sourceTree = "<group>"; };
+		020000000000000000000033 /* FitnessStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessStore.swift; sourceTree = "<group>"; };
+		020000000000000000000034 /* FitnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessView.swift; sourceTree = "<group>"; };
+		020000000000000000000035 /* WorkoutEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutEditorView.swift; sourceTree = "<group>"; };
+		020000000000000000000036 /* ExercisePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExercisePickerView.swift; sourceTree = "<group>"; };
+		020000000000000000000037 /* bodyPaths.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = bodyPaths.json; sourceTree = "<group>"; };
+		020000000000000000000038 /* AnatomeMuscleMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnatomeMuscleMapView.swift; sourceTree = "<group>"; };
+		020000000000000000000039 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,6 +131,7 @@
 				010000000000000000000010 /* WeatherKit.framework in Frameworks */,
 				010000000000000000000011 /* CoreLocation.framework in Frameworks */,
 				010000000000000000000012 /* FoundationModels.framework in Frameworks */,
+				010000000000000000000036 /* WebKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -136,6 +155,7 @@
 				020000000000000000000013 /* ConceptualFitness.entitlements */,
 				040000000000000000000003 /* App */,
 				040000000000000000000004 /* Dashboard */,
+				04000000000000000000000A /* Fitness */,
 				040000000000000000000005 /* Weather */,
 				040000000000000000000006 /* Shared */,
 				040000000000000000000007 /* Placeholders */,
@@ -191,6 +211,21 @@
 			path = Weather;
 			sourceTree = "<group>";
 		};
+		04000000000000000000000A /* Fitness */ = {
+			isa = PBXGroup;
+			children = (
+				020000000000000000000031 /* FitnessModels.swift */,
+				020000000000000000000032 /* FitnessAPIClient.swift */,
+				020000000000000000000033 /* FitnessStore.swift */,
+				020000000000000000000034 /* FitnessView.swift */,
+				020000000000000000000035 /* WorkoutEditorView.swift */,
+				020000000000000000000036 /* ExercisePickerView.swift */,
+				020000000000000000000038 /* AnatomeMuscleMapView.swift */,
+				020000000000000000000037 /* bodyPaths.json */,
+			);
+			path = Fitness;
+			sourceTree = "<group>";
+		};
 		040000000000000000000006 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
@@ -225,6 +260,7 @@
 				020000000000000000000010 /* WeatherKit.framework */,
 				020000000000000000000011 /* CoreLocation.framework */,
 				020000000000000000000015 /* FoundationModels.framework */,
+				020000000000000000000039 /* WebKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -295,6 +331,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				010000000000000000000034 /* bodyPaths.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,6 +356,13 @@
 				01000000000000000000002B /* HealthMetricPresentation.swift in Sources */,
 				01000000000000000000002C /* WorkoutPresentation.swift in Sources */,
 				01000000000000000000002D /* MetricHeroPanel.swift in Sources */,
+				01000000000000000000002E /* FitnessModels.swift in Sources */,
+				01000000000000000000002F /* FitnessAPIClient.swift in Sources */,
+				010000000000000000000030 /* FitnessStore.swift in Sources */,
+				010000000000000000000031 /* FitnessView.swift in Sources */,
+				010000000000000000000032 /* WorkoutEditorView.swift in Sources */,
+				010000000000000000000033 /* ExercisePickerView.swift in Sources */,
+				010000000000000000000035 /* AnatomeMuscleMapView.swift in Sources */,
 				010000000000000000000006 /* Formatters.swift in Sources */,
 				010000000000000000000007 /* DashboardModels.swift in Sources */,
 				010000000000000000000008 /* DashboardAPIClient.swift in Sources */,

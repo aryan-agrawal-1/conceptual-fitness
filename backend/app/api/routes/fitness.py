@@ -266,6 +266,9 @@ def list_exercises(
             not query_value
             or query_value in item.name.lower()
             or any(query_value in alias.lower() for alias in item.aliases or [])
+            or query_value in (item.equipment or "").lower()
+            or any(query_value in value.lower() for value in item.primary_muscles or [])
+            or any(query_value in value.lower() for value in item.secondary_muscles or [])
         )
         and (
             not muscle_value

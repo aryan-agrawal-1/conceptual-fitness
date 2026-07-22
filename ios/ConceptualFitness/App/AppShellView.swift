@@ -18,6 +18,13 @@ struct AppShellView: View {
     init(authStore: AuthStore, session: AuthSession) {
         self.authStore = authStore
         self.session = session
+        #if DEBUG
+        _selectedTab = State(
+            initialValue: ProcessInfo.processInfo.arguments.contains("-OpenFitnessTab")
+                ? .fitness
+                : .dashboard
+        )
+        #endif
         _syncCoordinator = StateObject(
             wrappedValue: AppSyncCoordinator(
                 client: DashboardAPIClient(authStore: authStore),
@@ -46,11 +53,7 @@ struct AppShellView: View {
             .tag(AppTab.dashboard)
 
             NavigationStack(path: $fitnessPath) {
-                PlaceholderTabView(
-                    title: "Fitness",
-                    systemImage: "figure.run",
-                    message: "Workout history, training load, and detailed fitness trends will live here."
-                )
+                FitnessView(authStore: authStore, userID: session.user.id)
                 .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.fitness.label }

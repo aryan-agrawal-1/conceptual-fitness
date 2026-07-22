@@ -193,6 +193,8 @@ def test_exercise_favorite_history_and_save_as_routine(session, auth_headers) ->
     assert search[0]["id"] == item.id
     assert search[0]["is_favorite"] is True
     assert search[0]["use_count"] == 1
+    assert client.get("/fitness/exercises?query=barbell", headers=headers).json()[0]["id"] == item.id
+    assert client.get("/fitness/exercises?query=chest", headers=headers).json()[0]["id"] == item.id
 
     history = client.get(
         f"/fitness/exercises/{item.id}/history",
