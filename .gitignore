@@ -34,8 +34,12 @@ pip-wheel-metadata/
 coverage.xml
 htmlcov/
 
-# Xcode build output
+# Xcode build output and per-user state
 DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
 
 # Local databases and runtime files
 *.sqlite
