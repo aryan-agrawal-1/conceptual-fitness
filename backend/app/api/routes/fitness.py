@@ -295,6 +295,32 @@ def list_exercises(
     ]
 
 
+@router.get("/exercise-options")
+def exercise_options(session: DbSession, user: CurrentUser) -> dict[str, list[str]]:
+    items = session.scalars(
+        select(ExerciseCatalogItem).where(
+            ExerciseCatalogItem.is_archived.is_(False),
+            or_(ExerciseCatalogItem.user_id.is_(None), ExerciseCatalogItem.user_id == user.id),
+        )
+    ).all()
+    equipment = sorted(
+        {
+            item.equipment.strip().lower()
+            for item in items
+            if item.equipment and item.equipment.strip()
+        }
+    )
+    muscles = sorted(
+        {
+            muscle.strip().lower()
+            for item in items
+            for muscle in [*(item.primary_muscles or []), *(item.secondary_muscles or [])]
+            if muscle.strip()
+        }
+    )
+    return {"equipment": equipment, "muscles": muscles}
+
+
 @router.post("/exercises", status_code=status.HTTP_201_CREATED)
 def create_custom_exercise(
     payload: CustomExerciseWrite,

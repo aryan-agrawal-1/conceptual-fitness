@@ -22,7 +22,11 @@ struct WorkoutEditorView: View {
                                 ExerciseLogCard(
                                     exercise: exercise,
                                     store: store,
-                                    onCompletedSet: { startRest(seconds: exercise.restSeconds) }
+                                    showsRestControls: !draft.isEditingExistingWorkout,
+                                    onCompletedSet: {
+                                        guard !draft.isEditingExistingWorkout else { return }
+                                        startRest(seconds: exercise.restSeconds)
+                                    }
                                 )
                             }
                             addExerciseButton
@@ -58,7 +62,7 @@ struct WorkoutEditorView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if let restEnd {
+                if store.draft?.isEditingExistingWorkout != true, let restEnd {
                     RestTimerBar(
                         end: restEnd,
                         total: restTotal,
@@ -219,6 +223,7 @@ struct WorkoutEditorView: View {
 private struct ExerciseLogCard: View {
     let exercise: LocalWorkoutExercise
     @ObservedObject var store: FitnessStore
+    let showsRestControls: Bool
     let onCompletedSet: () -> Void
     @State private var showDetails = ProcessInfo.processInfo.arguments.contains("-OpenExerciseDetails")
 
@@ -275,18 +280,20 @@ private struct ExerciseLogCard: View {
                     Label("Add set", systemImage: "plus")
                 }
                 Spacer()
-                Menu {
-                    ForEach([45, 60, 75, 90, 120, 150, 180, 240], id: \.self) { seconds in
-                        Button(restLabel(seconds)) {
-                            store.updateDraft { draft in
-                                guard let index = draft.exercises.firstIndex(where: { $0.id == exercise.id }) else { return }
-                                draft.exercises[index].restSeconds = seconds
+                if showsRestControls {
+                    Menu {
+                        ForEach([45, 60, 75, 90, 120, 150, 180, 240], id: \.self) { seconds in
+                            Button(restLabel(seconds)) {
+                                store.updateDraft { draft in
+                                    guard let index = draft.exercises.firstIndex(where: { $0.id == exercise.id }) else { return }
+                                    draft.exercises[index].restSeconds = seconds
+                                }
                             }
                         }
+                    } label: {
+                        Label(restLabel(exercise.restSeconds), systemImage: "timer")
+                            .font(.caption.weight(.medium))
                     }
-                } label: {
-                    Label(restLabel(exercise.restSeconds), systemImage: "timer")
-                        .font(.caption.weight(.medium))
                 }
             }
             .font(.subheadline.weight(.semibold))

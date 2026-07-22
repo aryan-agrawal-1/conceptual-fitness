@@ -118,6 +118,40 @@ def test_custom_exercise_is_private_and_searchable(session, auth_headers) -> Non
     ).json() == []
 
 
+def test_exercise_options_use_catalog_and_keep_custom_values_private(session, auth_headers) -> None:
+    owner = _user(session)
+    other = _user(session)
+    _catalog_item(session)
+    session.add_all(
+        [
+            ExerciseCatalogItem(
+                user_id=owner.id,
+                source="custom",
+                name="My Cable Kickback",
+                equipment="cable",
+                primary_muscles=["glutes"],
+                measurement_schema="reps_load",
+            ),
+            ExerciseCatalogItem(
+                user_id=other.id,
+                source="custom",
+                name="Private Neck Harness",
+                equipment="other",
+                primary_muscles=["neck"],
+                measurement_schema="reps_load",
+            ),
+        ]
+    )
+    session.commit()
+    client = TestClient(app)
+
+    response = client.get("/fitness/exercise-options", headers=auth_headers(owner))
+
+    assert response.status_code == 200
+    assert response.json()["equipment"] == ["barbell", "cable"]
+    assert response.json()["muscles"] == ["chest", "glutes", "shoulders", "triceps"]
+
+
 def test_create_workout_is_idempotent_and_returns_exercise_summary(session, auth_headers) -> None:
     user = _user(session)
     item = _catalog_item(session)

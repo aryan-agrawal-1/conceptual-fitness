@@ -18,6 +18,10 @@ struct FitnessAPIClient {
         return try await request(path: components.string ?? "/fitness/exercises", method: "GET")
     }
 
+    func loadExerciseOptions() async throws -> FitnessExerciseOptions {
+        try await request(path: "/fitness/exercise-options", method: "GET")
+    }
+
     func loadWorkout(id: String) async throws -> FitnessWorkout {
         try await request(path: "/fitness/workouts/\(id)", method: "GET")
     }

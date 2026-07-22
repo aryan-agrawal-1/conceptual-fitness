@@ -65,6 +65,11 @@ struct FitnessExercise: Codable, Identifiable, Hashable {
     }
 }
 
+struct FitnessExerciseOptions: Decodable {
+    let equipment: [String]
+    let muscles: [String]
+}
+
 struct FitnessRoutine: Codable, Identifiable, Hashable {
     let id: String
     let name: String

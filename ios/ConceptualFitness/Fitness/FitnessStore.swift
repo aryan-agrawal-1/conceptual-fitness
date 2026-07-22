@@ -154,7 +154,12 @@ final class FitnessStore: ObservableObject {
 
     func addExercise(_ exercise: FitnessExercise) {
         mutateDraft { draft in
-            draft.exercises.append(LocalWorkoutExercise(exercise: exercise))
+            var workoutExercise = LocalWorkoutExercise(exercise: exercise)
+            if draft.isEditingExistingWorkout {
+                workoutExercise.sets[0].isCompleted = true
+                workoutExercise.sets[0].completedAt = draft.endTime ?? draft.startTime
+            }
+            draft.exercises.append(workoutExercise)
         }
     }
 
@@ -163,8 +168,8 @@ final class FitnessStore: ObservableObject {
             guard let index = draft.exercises.firstIndex(where: { $0.id == exerciseID }) else { return }
             var next = draft.exercises[index].sets.last ?? LocalWorkoutSet()
             next.id = UUID()
-            next.isCompleted = false
-            next.completedAt = nil
+            next.isCompleted = draft.isEditingExistingWorkout
+            next.completedAt = draft.isEditingExistingWorkout ? draft.endTime ?? draft.startTime : nil
             draft.exercises[index].sets.append(next)
         }
     }

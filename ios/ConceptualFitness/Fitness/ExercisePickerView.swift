@@ -173,16 +173,18 @@ private struct CustomExerciseSheet: View {
     @State private var name = ""
     @State private var schema = "reps_load"
     @State private var equipment = ""
-    @State private var muscles = ""
+    @State private var selectedMuscles: Set<String> = []
+    @State private var options = FitnessExerciseOptions(equipment: [], muscles: [])
+    @State private var isLoadingOptions = false
     @State private var isSaving = false
     @State private var errorMessage: String?
 
     private let schemas = [
-        ("reps_load", "Reps + load"),
+        ("reps_load", "Reps + weight"),
         ("bodyweight_reps", "Bodyweight reps"),
         ("assisted_reps", "Assisted reps"),
         ("duration", "Time"),
-        ("duration_load", "Time + load"),
+        ("duration_load", "Time + weight"),
         ("carry", "Carry"),
         ("cardio", "Distance + time"),
     ]
@@ -199,9 +201,30 @@ private struct CustomExerciseSheet: View {
                     }
                 }
                 Section("Optional") {
-                    TextField("Equipment", text: $equipment)
-                    TextField("Primary muscles, comma separated", text: $muscles)
-                        .textInputAutocapitalization(.never)
+                    Picker("Equipment", selection: $equipment) {
+                        Text("None").tag("")
+                        ForEach(options.equipment, id: \.self) { value in
+                            Text(value.displayTitle).tag(value)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+
+                    NavigationLink {
+                        MuscleSelectionView(
+                            muscles: options.muscles,
+                            selection: $selectedMuscles
+                        )
+                    } label: {
+                        LabeledContent("Muscles") {
+                            Text(muscleSummary)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if isLoadingOptions {
+                        Label("Loading exercise options", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 if let errorMessage {
                     Section {
@@ -223,6 +246,25 @@ private struct CustomExerciseSheet: View {
                 }
             }
         }
+        .task { await loadOptions() }
+    }
+
+    private var muscleSummary: String {
+        guard !selectedMuscles.isEmpty else { return "None" }
+        if selectedMuscles.count == 1 {
+            return selectedMuscles.first?.displayTitle ?? "1 selected"
+        }
+        return "\(selectedMuscles.count) selected"
+    }
+
+    private func loadOptions() async {
+        isLoadingOptions = true
+        defer { isLoadingOptions = false }
+        do {
+            options = try await client.loadExerciseOptions()
+        } catch {
+            errorMessage = "Exercise options are unavailable while offline."
+        }
     }
 
     private func create() async {
@@ -233,15 +275,56 @@ private struct CustomExerciseSheet: View {
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                 schema: schema,
                 equipment: equipment.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
-                primaryMuscles: muscles.split(separator: ",").map {
-                    $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                }.filter { !$0.isEmpty }
+                primaryMuscles: selectedMuscles.sorted()
             )
             onCreate(exercise)
             dismiss()
         } catch {
             errorMessage = "Custom exercises need a connection the first time they’re created."
         }
+    }
+}
+
+private struct MuscleSelectionView: View {
+    let muscles: [String]
+    @Binding var selection: Set<String>
+
+    var body: some View {
+        List {
+            if muscles.isEmpty {
+                ContentUnavailableView(
+                    "No muscles available",
+                    systemImage: "figure.strengthtraining.traditional",
+                    description: Text("Reconnect and try loading the exercise options again.")
+                )
+            } else {
+                ForEach(muscles, id: \.self) { muscle in
+                    Button {
+                        if selection.contains(muscle) {
+                            selection.remove(muscle)
+                        } else {
+                            selection.insert(muscle)
+                        }
+                    } label: {
+                        HStack {
+                            Text(muscle.displayTitle)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if selection.contains(muscle) {
+                                Image(systemName: "checkmark")
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(HealthTheme.color(for: .activity))
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(muscle.displayTitle), \(selection.contains(muscle) ? "selected" : "not selected")")
+                }
+            }
+        }
+        .navigationTitle("Muscles")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
