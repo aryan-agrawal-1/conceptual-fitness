@@ -235,7 +235,6 @@ private struct ExerciseLogCard: View {
                     load: setBinding(set.id, \.load, default: ""),
                     duration: setBinding(set.id, \.durationSeconds, default: ""),
                     distance: setBinding(set.id, \.distanceMeters, default: ""),
-                    rir: setBinding(set.id, \.rir, default: ""),
                     isCompleted: completedBinding(set.id),
                     canDelete: exercise.sets.count > 1,
                     onDelete: { store.removeSet(set.id, from: exercise.id) }
@@ -289,7 +288,6 @@ private struct ExerciseLogCard: View {
                 Text("REPS").frame(maxWidth: .infinity)
                 Text(loadHeader).frame(maxWidth: .infinity)
             }
-            Text("RIR").frame(width: 42)
             Color.clear.frame(width: 36)
         }
         .font(.caption2.weight(.bold))
@@ -370,7 +368,6 @@ private struct SetInputRow: View {
     @Binding var load: String
     @Binding var duration: String
     @Binding var distance: String
-    @Binding var rir: String
     @Binding var isCompleted: Bool
     let canDelete: Bool
     let onDelete: () -> Void
@@ -401,7 +398,6 @@ private struct SetInputRow: View {
                 numericField("Reps", text: $reps)
                 numericField(perImplement ? "Each" : "kg", text: $load, decimal: true)
             }
-            numericField("RIR", text: $rir, width: 42, decimal: true)
 
             Button {
                 isCompleted.toggle()
