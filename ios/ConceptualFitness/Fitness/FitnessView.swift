@@ -71,12 +71,15 @@ struct FitnessView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Label("Workout in progress", systemImage: "bolt.fill")
+                    Label(
+                        draft.isEditingExistingWorkout ? "Editing workout" : "Workout in progress",
+                        systemImage: draft.isEditingExistingWorkout ? "pencil" : "bolt.fill"
+                    )
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(HealthTheme.color(for: .activity))
                     Text(draft.title ?? "Strength Workout")
                         .font(.title3.weight(.bold))
-                    Text("\(draft.exercises.count) exercises · \(completedSets(in: draft)) sets logged")
+                    Text(resumeSummary(draft))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -92,7 +95,10 @@ struct FitnessView: View {
             Button {
                 showEditor = true
             } label: {
-                Label("Resume workout", systemImage: "play.fill")
+                Label(
+                    draft.isEditingExistingWorkout ? "Continue editing" : "Resume workout",
+                    systemImage: draft.isEditingExistingWorkout ? "pencil" : "play.fill"
+                )
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
             }
@@ -405,6 +411,13 @@ struct FitnessView: View {
 
     private func completedSets(in draft: LocalWorkoutDraft) -> Int {
         draft.exercises.reduce(0) { $0 + $1.sets.filter(\.isCompleted).count }
+    }
+
+    private func resumeSummary(_ draft: LocalWorkoutDraft) -> String {
+        if draft.isEditingExistingWorkout {
+            return "From \(draft.startTime.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return "\(draft.exercises.count) exercises · \(completedSets(in: draft)) sets logged"
     }
 
     private func elapsed(from start: Date, to end: Date) -> String {

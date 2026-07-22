@@ -36,7 +36,7 @@ struct WorkoutEditorView: View {
                     ContentUnavailableView("Workout finished", systemImage: "checkmark.circle.fill")
                 }
             }
-            .navigationTitle(store.draft?.isRetrospective == true ? "Edit workout" : "Live workout")
+            .navigationTitle(editorTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -49,7 +49,7 @@ struct WorkoutEditorView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Discard workout", role: .destructive) {
+                        Button(discardActionTitle, role: .destructive) {
                             showDiscardConfirmation = true
                         }
                     } label: {
@@ -82,11 +82,11 @@ struct WorkoutEditorView: View {
             }
         }
         .confirmationDialog(
-            "Discard this workout?",
+            discardConfirmationTitle,
             isPresented: $showDiscardConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Discard workout", role: .destructive) {
+            Button(discardActionTitle, role: .destructive) {
                 Task {
                     if await store.discardDraft() {
                         dismiss()
@@ -94,10 +94,31 @@ struct WorkoutEditorView: View {
                 }
             }
         } message: {
-            Text("The local draft will be removed. A copy already synced to the backend may remain in your history.")
+            Text(discardConfirmationMessage)
         }
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+    }
+
+    private var editorTitle: String {
+        guard let draft = store.draft else { return "Workout" }
+        if draft.isEditingExistingWorkout { return "Edit workout" }
+        return draft.isRetrospective ? "Log past workout" : "Live workout"
+    }
+
+    private var discardActionTitle: String {
+        store.draft?.isEditingExistingWorkout == true ? "Discard changes" : "Discard workout"
+    }
+
+    private var discardConfirmationTitle: String {
+        store.draft?.isEditingExistingWorkout == true ? "Discard your changes?" : "Discard this workout?"
+    }
+
+    private var discardConfirmationMessage: String {
+        if store.draft?.isEditingExistingWorkout == true {
+            return "Your unsaved edits will be removed. The original workout will remain in your history."
+        }
+        return "This workout and its local draft will be removed."
     }
 
     private func workoutHeader(_ draft: LocalWorkoutDraft) -> some View {
@@ -111,7 +132,11 @@ struct WorkoutEditorView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if draft.isRetrospective {
+                if draft.isEditingExistingWorkout {
+                    Label("Editing", systemImage: "pencil")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(HealthTheme.color(for: .activity))
+                } else if draft.isRetrospective {
                     Label("Past", systemImage: "clock.arrow.circlepath")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(HealthTheme.color(for: .activity))
@@ -126,7 +151,9 @@ struct WorkoutEditorView: View {
             HStack(spacing: 18) {
                 Label("\(draft.exercises.count) exercises", systemImage: "dumbbell")
                 Label("\(completedSets(draft)) sets", systemImage: "checkmark.circle")
-                if store.isSyncing {
+                if draft.isEditingExistingWorkout {
+                    Label("Changes stay local", systemImage: "iphone")
+                } else if store.isSyncing {
                     Label("Syncing", systemImage: "arrow.triangle.2.circlepath")
                 } else {
                     Label("Saved", systemImage: "checkmark.icloud")

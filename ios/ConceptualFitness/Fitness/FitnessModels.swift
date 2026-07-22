@@ -258,6 +258,11 @@ struct LocalWorkoutDraft: Codable, Identifiable, Equatable {
     var sessionRPE: String
     var exercises: [LocalWorkoutExercise]
     var pendingCompletion: Bool
+    var editingOriginalRevision: Int?
+
+    var isEditingExistingWorkout: Bool {
+        editingOriginalRevision != nil
+    }
 
     init(
         clientID: String,
@@ -271,7 +276,8 @@ struct LocalWorkoutDraft: Codable, Identifiable, Equatable {
         notes: String,
         sessionRPE: String,
         exercises: [LocalWorkoutExercise],
-        pendingCompletion: Bool
+        pendingCompletion: Bool,
+        editingOriginalRevision: Int? = nil
     ) {
         self.clientID = clientID
         self.serverID = serverID
@@ -285,6 +291,7 @@ struct LocalWorkoutDraft: Codable, Identifiable, Equatable {
         self.sessionRPE = sessionRPE
         self.exercises = exercises
         self.pendingCompletion = pendingCompletion
+        self.editingOriginalRevision = editingOriginalRevision
     }
 
     static func empty(startTime: Date, retrospective: Bool) -> LocalWorkoutDraft {
@@ -300,7 +307,8 @@ struct LocalWorkoutDraft: Codable, Identifiable, Equatable {
             notes: "",
             sessionRPE: "",
             exercises: [],
-            pendingCompletion: false
+            pendingCompletion: false,
+            editingOriginalRevision: nil
         )
     }
 
@@ -317,6 +325,7 @@ struct LocalWorkoutDraft: Codable, Identifiable, Equatable {
         sessionRPE = workout.sessionRPE.map(FitnessNumber.string) ?? ""
         exercises = workout.exercises.map(LocalWorkoutExercise.init)
         pendingCompletion = false
+        editingOriginalRevision = workout.status == "completed" ? workout.revision : nil
     }
 }
 

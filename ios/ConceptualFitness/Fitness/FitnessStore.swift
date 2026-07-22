@@ -188,7 +188,9 @@ final class FitnessStore: ObservableObject {
     }
 
     func syncNow() async {
-        guard var current = draft, !current.pendingCompletion else { return }
+        guard var current = draft,
+              !current.pendingCompletion,
+              !current.isEditingExistingWorkout else { return }
         isSyncing = true
         defer { isSyncing = false }
         do {
@@ -256,7 +258,8 @@ final class FitnessStore: ObservableObject {
 
     func discardDraft() async -> Bool {
         syncTask?.cancel()
-        if let serverID = draft?.serverID {
+        let isEditingExistingWorkout = draft?.isEditingExistingWorkout == true
+        if !isEditingExistingWorkout, let serverID = draft?.serverID {
             do {
                 try await client.deleteWorkout(id: serverID)
             } catch {
@@ -296,7 +299,9 @@ final class FitnessStore: ObservableObject {
         change(&value)
         draft = value
         persist()
-        scheduleSync()
+        if !value.isEditingExistingWorkout {
+            scheduleSync()
+        }
     }
 
     private func scheduleSync() {
