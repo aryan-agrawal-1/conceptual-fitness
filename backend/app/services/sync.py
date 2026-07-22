@@ -19,7 +19,6 @@ from app.models import (
     SyncCursor,
     SyncStatus,
     UserProfile,
-    Workout,
 )
 from app.services.health_dates import timezone_for_profile
 from app.services.normalization import (
@@ -29,6 +28,7 @@ from app.services.normalization import (
     upsert_measurement_points_fast,
     upsert_raw_and_normalized,
 )
+from app.services.workout_records import remove_provider_workouts
 from app.services.metric_rollups import (
     HIGH_VOLUME_DATA_TYPES,
     MINUTE_ROLLUP_METRICS,
@@ -878,7 +878,7 @@ def _prune_missing_exercise_records(
     ]
     if not stale_ids:
         return 0
-    session.execute(delete(Workout).where(Workout.raw_record_id.in_(stale_ids)))
+    remove_provider_workouts(session, raw_record_ids=stale_ids)
     session.execute(delete(RawHealthRecord).where(RawHealthRecord.id.in_(stale_ids)))
     return len(stale_ids)
 

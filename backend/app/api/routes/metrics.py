@@ -521,6 +521,8 @@ def _heart_rate_workouts(
             Workout.user_id == user_id,
             Workout.civil_date >= start,
             Workout.civil_date <= end,
+            Workout.status == "completed",
+            Workout.deleted_at.is_(None),
         )
         .order_by(Workout.start_time.desc())
         .limit(12)
@@ -2321,6 +2323,8 @@ def workouts(
             Workout.user_id == user.id,
             Workout.civil_date >= start,
             Workout.civil_date <= end,
+            Workout.status == "completed",
+            Workout.deleted_at.is_(None),
         )
         .order_by(Workout.start_time)
     ).all()
@@ -2387,6 +2391,10 @@ def _workout_summary_payload(
         "end_time": workout.end_time,
         "date": workout.civil_date,
         "duration_seconds": workout.duration_seconds,
+        "title": workout.title,
+        "status": workout.status,
+        "origin": workout.origin,
+        "awaiting_wearable": workout.awaiting_wearable,
         "distance_meters": _rounded(distance),
         "active_calories": _rounded(active_calories),
         "heart_rate": {

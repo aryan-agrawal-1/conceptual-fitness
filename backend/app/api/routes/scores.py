@@ -286,6 +286,8 @@ def _strain_workouts(session: DbSession, user_id: str, start: date, end: date) -
             Workout.user_id == user_id,
             Workout.civil_date >= start,
             Workout.civil_date <= end,
+            Workout.status == "completed",
+            Workout.deleted_at.is_(None),
         )
         .order_by(Workout.start_time.desc())
     ).all()

@@ -234,7 +234,12 @@ def _heart_rate_samples(session: Session, user_id: str, day: date) -> list[Metri
 def _workouts_for_day(session: Session, user_id: str, day: date) -> list[Workout]:
     return session.scalars(
         select(Workout)
-        .where(Workout.user_id == user_id, Workout.civil_date == day)
+        .where(
+            Workout.user_id == user_id,
+            Workout.civil_date == day,
+            Workout.status == "completed",
+            Workout.deleted_at.is_(None),
+        )
         .order_by(Workout.start_time)
     ).all()
 

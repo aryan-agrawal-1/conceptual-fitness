@@ -99,6 +99,8 @@ def rebuild_daily_summaries(
             Workout.user_id == user_id,
             Workout.civil_date >= start,
             Workout.civil_date <= end,
+            Workout.status == "completed",
+            Workout.deleted_at.is_(None),
         )
     ).all()
     workout_counts: dict[date, int] = defaultdict(int)
