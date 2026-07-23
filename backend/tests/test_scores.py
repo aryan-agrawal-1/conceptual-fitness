@@ -594,7 +594,7 @@ def test_strain_does_not_add_steps_or_calories_as_load(session) -> None:
         )
     )
 
-    assert strain.value == 0
+    assert strain.value is None
     assert strain.status == ScoreStatus.missing_data
     assert "daily_activity_load" not in strain.components
 
@@ -918,7 +918,7 @@ def test_strain_detail_returns_timeframe_scoped_page_payload(session, auth_heade
 
 def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_headers) -> None:
     user = _user_with_profile(session, birth_year=1990)
-    anchor = date.today()
+    anchor = datetime.now(UTC).date()
     start = anchor - timedelta(days=14)
     for offset in range(15):
         day = start + timedelta(days=offset)
@@ -932,7 +932,7 @@ def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_he
             sleep_minutes=440 + offset,
             steps=6500 + offset * 100,
         )
-        if offset in {3, 7, 13}:
+        if offset in {3, 7, 10, 13}:
             _add_hr_workout(session, user, day, bpm=150 + offset)
 
     rebuild_derived_scores(session, user_id=user.id, start=start, end=anchor)

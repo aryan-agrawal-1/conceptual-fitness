@@ -173,7 +173,7 @@ def _upsert_strain_score(
     reasons = _strain_reasons(total, components)
     return _set_score(
         score,
-        value=total,
+        value=None if status == ScoreStatus.missing_data else total,
         unit="load_points",
         status=status,
         confidence_phase=confidence,
