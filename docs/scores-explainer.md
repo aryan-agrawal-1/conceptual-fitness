@@ -7,7 +7,7 @@ Here we explain how the app turns the given API data into our own daily Sleep, S
 The three local research files map directly to the three scores:
 
 - `research/Sleep Scores.pdf` gives duration 35%, regularity 25%, continuity 20%, timing and onset 10%, overnight physiology 5%, and stages 5%. It defines the interpolation anchors, data-validity rules, caps, and confidence requirements implemented below.
-- `research/Strain Scores.pdf` explains why strain is accumulated load points rather than a bounded 0–100 quality score. It supports heart-rate-reserve cardio load, daily activity, muscular load, and a separate weekly target interpretation.
+- `research/Strain Scores.pdf` defines two additive load channels: movement-gated heart-rate-reserve cardio load and exercise-specific muscular load. External work, provider zones, and RPE can fill missing coverage within a channel, while a separate weekly target provides interpretation.
 - `research/Readiness Scores.pdf` defines a personalised, baseline-driven combination of sleep, autonomic recovery, recent load, illness-like anomaly signals, and confidence.
 
 Those recommendations are implemented in `scores.py` through `_upsert_sleep_score`, `_upsert_strain_score`, `_upsert_readiness_score`, and the helper functions described below.
@@ -148,109 +148,134 @@ Confidence never changes the arithmetic. It is provisional with sparse history, 
 
 Function: `_upsert_strain_score`
 
-Strain is not a 0-100 score. It is accumulated `load_points`. This follows `research/Strain Scores.pdf`, which argues that strain is a dose of work, not a quality rating. There is no natural maximum where 100 means "complete"; going above a target can be meaningful and should remain visible.
+Strain is an unbounded accumulation of `load_points`, not a 0–100 quality score. It answers how much cardiovascular and muscular load occurred. A value above 100 is valid, and poor sleep or readiness never reduces work that already happened.
 
-The Strain score is built from:
+The only additive channels are:
 
-- Cardio load from heart-rate reserve.
-- Provider zone load as a fallback when raw heart-rate coverage is weak.
-- Daily activity load from steps or active calories.
-- Muscular load for strength-like workouts.
-- RPE load, currently present as a placeholder but not implemented.
+`daily strain = cardiovascular load + muscular load`
 
-If there is no heart-rate, workout, or activity data, Strain is marked as waiting or missing. For today it is `in_progress`; for past days it is `missing_data`.
+Heart-rate zones, session RPE, exercise type, distance, steps, and other external work are routing or validation evidence. They do not receive independent percentages and are never added on top of a better estimate of the same channel. Steps and calories cannot create load by themselves.
+
+If there is no usable heart-rate, zone, RPE, or muscular evidence, a past day is `missing_data`, not an assumed rest day. The current day remains `in_progress`.
 
 ### Cardio Load
 
 Function: `_cardio_load_from_hr`
 
-Cardio load is the backbone of Strain. It uses heart-rate reserve:
+Each usable minute starts with heart-rate reserve:
 
-`intensity = (heart_rate - resting_heart_rate) / (max_heart_rate - resting_heart_rate)`
+`HRR = clamp((HR - RHR) / (HRmax - RHR), 0, 1)`
 
-The resting heart rate comes from `_resting_hr_for_strain`, which tries:
+Its full-intensity dose is:
 
-1. The user's resting-heart-rate baseline.
-2. The daily summary's resting heart rate.
-3. A low-percentile estimate from raw heart-rate samples.
+`cardio dose = 0.64 × HRR × exp(k × HRR)`
 
-The max heart rate starts with `estimated_max_heart_rate`, then `_credible_observed_max_hr` can replace it if workout samples show a sustained observed max above the formula estimate.
+The coefficient `k` is 1.92 for males, 1.67 for females, and 1.795 when sex is unavailable or not specified. Eligibility is continuous:
 
-Only intensities above 30% of heart-rate reserve create cardio load. Above that, points rise nonlinearly:
+- Below 30% HRR: multiplier 0.
+- From 30% to below 40% HRR: multiplier `(HRR - 0.30) / 0.10`.
+- At or above 40% HRR: multiplier 1.
 
-`points_per_minute = 2.5 * ((intensity - 0.30) / 0.70) ** 1.7`
+The final minute value is the exponential dose times this multiplier. Daily cardio load sums all eligible minutes.
 
-Each heart-rate sample contributes up to the next 120 seconds. Longer gaps are counted, but not allowed to create unlimited load from stale data.
+RHR uses the stable personal baseline first, then the daily summary, then the observed tenth-percentile estimate when enough readings exist. HRmax uses a sustained credible workout observation when available. Otherwise it uses:
 
-Why: `research/Strain Scores.pdf` points to Google Cardio Load and older TRIMP-style ideas: load should increase with both duration and intensity, and heart-rate reserve is more personalised than raw heart rate.
+`HRmax = 208.9 - 0.74 × age`
 
-### Cardio Confidence
+A minute needs at least 30 seconds of valid coverage. Gaps up to 90 seconds inside a workout can be interpolated; longer gaps stay missing. A recorded workout supplies movement evidence. Outside workouts, the matching hour needs positive step or distance evidence so caffeine, illness, or stress is not scored as exercise.
 
-Function: `_cardio_load_from_hr`
-
-The same function also classifies raw heart-rate coverage:
+Cardio confidence sits beside the result and does not change it:
 
 - `strong`: at least 720 covered minutes, or at least 70% workout coverage.
 - `moderate`: at least 240 covered minutes, or at least 30% workout coverage.
 - `weak`: less than that.
 
-This confidence matters because the app only adds provider zone load when raw heart-rate coverage is weak. It also controls how much gap-fill daily activity load is allowed to contribute.
+### Cardio Fallback Routing
 
-### Provider Zone Load
+Functions: `_source_zone_load`, `_source_zone_load_from_intervals`, `_cardio_rpe_fallback`
 
-Functions: `_source_zone_load`, `_source_zone_load_from_intervals`
+Provider zones fill only time not already covered by direct HRR. Zone duration is passed through the same cardio equation using these HRR midpoints:
 
-When raw heart-rate coverage is weak, the app tries to use provider-supplied heart-rate zones instead. There are two sources:
+| Provider zone | HRR midpoint |
+| --- | ---: |
+| Light | 0.350 |
+| Moderate | 0.500 |
+| Vigorous | 0.725 |
+| Peak | 0.925 |
 
-- Workout summaries through `_source_zone_load`.
-- Interval records through `_source_zone_load_from_intervals`.
+Interval records are compared minute by minute with direct coverage. Summary-only zones are reduced by the uncovered share of that workout.
 
-The logic is simple: minutes in higher zones are worth more points. For workout summaries, the weights are:
+If neither HRR nor zones cover an endurance, team-sport, or cardio-circuit workout, session RPE can fill the uncovered duration:
 
-- Zone 1: 0.1 per minute
-- Zone 2: 0.35 per minute
-- Zone 3: 0.8 per minute
-- Zone 4: 1.4 per minute
-- Zone 5: 2.0 per minute
+`fallback cardio load = active minutes × session RPE / 10`
 
-Why: this preserves the same research principle as cardio load: time at higher intensity should count more than time at low intensity.
+A generic strength workout does not use overall session RPE to invent cardio load. RPE may describe its muscular effort instead. Direct HRR, zones, and RPE are mutually exclusive for the same cardio interval.
 
-### Daily Activity Load
+### Detailed Muscular Load
 
-Function: `_daily_activity_load`
+Functions: `_detailed_muscular_load`, `_set_dose`, `_exercise_e1rm`
 
-Daily activity load catches ordinary activity that may not appear as a workout. It uses the larger of:
+Completed logged sets use:
 
-- Step load: up to 8 points at 10,000 steps.
-- Active-calorie load: up to 12 points at 600 active calories.
+`set dose = repetitions × relative load × exercise involvement × set difficulty × set-status factor`
 
-Then it adjusts based on cardio confidence:
+`relative load = effective load / current exercise-specific e1RM`
 
-- If cardio confidence is strong, most movement was probably already captured, so only a tiny gap-fill amount remains.
-- If cardio confidence is moderate, activity load is capped at 6.
-- If cardio confidence is weak, activity load can contribute more.
+For sets of ten repetitions or fewer:
 
-Why: `research/Strain Scores.pdf` says low-intensity activity should not be ignored, but it should not double-count what heart rate already captured.
+`set e1RM = load × (1 + (repetitions + RIR) / 30)`
 
-### Muscular Load
+RIR enters the e1RM estimate only when it is supplied from 0 to 3. The exercise baseline uses the strongest credible estimate from the previous 90 days. After 42 days without evidence it decays by 0.5% per week, capped at a 10% fall. A first session can use its strongest qualifying set as a provisional within-session baseline.
 
-Function: `_muscular_load`
+Exercise involvement is:
 
-Muscular load looks for strength-like workout types, including terms such as strength, weight, resistance, crossfit, hiit, and circuit. Each matching workout contributes:
+- 0.6 for a small isolation exercise.
+- 0.8 for a larger single-joint exercise.
+- 1.0 for a multi-joint upper-body exercise.
+- 1.2 for a lower-body or full-body compound exercise.
 
-`min(20, workout_minutes * 0.18)`
+Set difficulty is 1.00 at 0–3 RIR or when RIR is missing, 0.85 at 4–5, 0.70 at 6–7, and 0.55 at 8 or more. A warm-up receives a 0.25 set-status factor; working and drop sets receive 1.0. Assisted work subtracts assistance, added load is added, pounds are converted to kilograms, and per-implement loads are multiplied by implement count.
 
-Why: the strain research is explicit that heart rate undercounts strength training and other non-steady-state work. This is a first-pass estimate until the app has richer exercise, set, rep, weight, or RPE data.
+Isometrics replace repetitions with `seconds / 30` and relative intensity. Loaded carries use carried load and distance. Bodyweight and assisted exercise routes use effective body mass when external load is absent.
+
+### Muscle Allocation and Diminishing Returns
+
+Function: `_local_muscular_points`
+
+Each set assigns 70% of its dose equally across primary muscles and 30% equally across secondary muscles. An exercise without secondary muscles assigns 100% to its primary group.
+
+For each muscle:
+
+- If raw local dose is at most 5, local points equal raw dose.
+- Above 5:
+
+`local points = 5 + 10 × ln(1 + (raw local dose - 5) / 10)`
+
+Muscular load is the sum of local points. This makes repeated work on one tissue grow more slowly than balanced work across several tissues.
+
+Session RPE modifies the completed muscular result only when fewer than 70% of working sets have RIR:
+
+`session effort modifier = clamp(0.80, 1.20, 0.80 + 0.04 × session RPE)`
+
+This maps RPE 5 to no change and limits the adjustment to ±20%.
+
+### Generic Strength Fallback
+
+Function: `_generic_muscular_load`
+
+A duration-only strength workout uses:
+
+`generic muscular load = category points per active minute × estimated active minutes × session effort modifier`
+
+Active-time fractions are 35% for upper-, lower-, and full-body lifting, 60% for calisthenics, and 70% for circuits. Starting priors are 0.8 points per active minute for upper body, 1.0 for lower body, 1.1 for full body, 0.8 for calisthenics, and 0.9 for circuits.
+
+After at least three detailed sessions in the category, the prior is replaced by the median points per active minute from up to the eight most recent qualifying sessions in the prior 90 days. The generic route and detailed set route are never both applied to one workout.
 
 ### Total Strain
 
 Function: `_upsert_strain_score`
 
-Total Strain is:
-
-`cardio_load + optional_source_zone_load + daily_activity_load + muscular_load`
-
-The result is rounded and stored as `load_points`.
+The stored total is `cardio load + muscular load`. Both channels and their routing evidence remain in `components`, including workout contributions, local muscle points, coverage, fallback use, and confidence. The displayed one-decimal score is derived from the unrounded channel estimates.
 
 Reasons are created with `_strain_reasons`, and confidence comes from `_strain_confidence_phase`, which is based on how many prior Strain days exist.
 
@@ -260,7 +285,7 @@ Function: `_upsert_strain_target`
 
 The weekly target is the interpretation layer for Strain. Daily Strain says "how much load happened today." The weekly target says "how does this week's load compare to what this person is used to?"
 
-The target uses the previous 60 days of Strain scores, then `_chronic_load` takes the mean of the most recent 28 valid days. The weekly target is:
+The target uses up to the previous 60 valid Strain days. `_chronic_load` calculates both the mean of the latest 28 valid days and an exponentially weighted history with `alpha = 2 / 29`, then retains the higher reference so a short break does not collapse the target. The weekly target is:
 
 `chronic_daily_load * 7`
 

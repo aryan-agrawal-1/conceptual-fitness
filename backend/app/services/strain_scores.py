@@ -273,7 +273,13 @@ def _cardio_load_from_hr(
         if gap > 75 and workout is None:
             continue
         seconds = min(gap, 60)
-        hr = current.value
+        if seconds < 30:
+            continue
+        hr = (
+            mean((current.value, nxt.value))
+            if gap > 60 and workout is not None
+            else current.value
+        )
         if hr < 35 or hr > 230:
             continue
         minute_start = current.observed_at.replace(second=0, microsecond=0)
