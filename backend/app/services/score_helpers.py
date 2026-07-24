@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from math import atan2, cos, log, pi, sin
 from statistics import mean, median
 from typing import Any
@@ -30,7 +30,7 @@ BASELINE_VERSION = "baseline_v2"
 
 SLEEP_SCORE_VERSION = "sleep_score_v2"
 
-READINESS_SCORE_VERSION = "readiness_score_v1"
+READINESS_SCORE_VERSION = "readiness_score_v2"
 
 STRAIN_LOAD_VERSION = "strain_load_v2"
 
@@ -260,6 +260,59 @@ def _strain_loads(session: Session, user_id: str, start: date, end: date) -> lis
         .order_by(DailyScore.score_date)
     ).all()
     return [(score.score_date, float(score.value or 0)) for score in scores]
+
+
+def _strain_channel_load(
+    session: Session,
+    user_id: str,
+    day: date,
+    channel: str,
+) -> float | None:
+    score = _score_for_day(session, user_id, day, "strain", STRAIN_LOAD_VERSION)
+    if score is None or score.value is None or score.status not in {
+        ScoreStatus.scored,
+        ScoreStatus.in_progress,
+    }:
+        return None
+    components = score.components or {}
+    if channel == "cardio":
+        cardio = components.get("cardio_load")
+        if not isinstance(cardio, dict) or cardio.get("confidence") not in {"moderate", "strong"}:
+            return None
+        value = cardio.get("load_points")
+    elif channel == "muscular":
+        muscular = components.get("muscular_load")
+        if not isinstance(muscular, dict):
+            return None
+        value = muscular.get("load_points")
+        if float(value or 0) > 0 and muscular.get("confidence") not in {"moderate", "strong"}:
+            return None
+        if float(value or 0) <= 0 and score.data_quality not in {"moderate", "strong"}:
+            return None
+    else:
+        raise ValueError(f"Unknown strain channel: {channel}")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+# decay the previous three reliable strain days into today's residual exposure
+def _residual_load_exposure(
+    session: Session,
+    user_id: str,
+    day: date,
+    channel: str,
+) -> tuple[float, list[float]] | None:
+    weights = {
+        "cardio": (0.60, 0.30, 0.10),
+        "muscular": (0.50, 0.30, 0.20),
+    }[channel]
+    loads = [
+        _strain_channel_load(session, user_id, day - timedelta(days=offset), channel)
+        for offset in range(1, 4)
+    ]
+    if any(value is None for value in loads):
+        return None
+    values = [float(value) for value in loads if value is not None]
+    return sum(weight * value for weight, value in zip(weights, values)), values
 
 
 def _baseline_for_metric(

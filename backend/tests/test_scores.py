@@ -159,6 +159,38 @@ def _add_hr_workout(session, user: User, day: date, *, bpm: float = 152) -> None
         )
 
 
+def _add_baseline(
+    session,
+    user: User,
+    day: date,
+    metric: str,
+    *,
+    centre: float,
+    spread: float,
+    valid_days: int = 14,
+    lower: float | None = None,
+    upper: float | None = None,
+    metadata: dict | None = None,
+) -> None:
+    session.add(
+        DailyBaseline(
+            user_id=user.id,
+            baseline_date=day,
+            metric=metric,
+            algorithm_version=BASELINE_VERSION,
+            window_days=28,
+            valid_day_count=valid_days,
+            mean_value=centre,
+            median_value=centre,
+            spread_value=spread,
+            lower_bound=lower if lower is not None else centre - 2 * spread,
+            upper_bound=upper if upper is not None else centre + 2 * spread,
+            confidence_phase="calibrating",
+            metadata_json=metadata or {},
+        )
+    )
+
+
 def test_scores_wait_for_required_sleep(session) -> None:
     user = _user_with_profile(session)
     day = date.today() - timedelta(days=1)
@@ -193,8 +225,14 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
     for offset in range(31):
         day = start + timedelta(days=offset)
         _add_sleep(session, user, day)
-        _add_summary(session, user, day)
-    _add_hr_workout(session, user, today, bpm=154)
+        _add_summary(
+            session,
+            user,
+            day,
+            hrv=56 + offset % 4,
+            rhr=55 + offset % 3,
+        )
+        _add_hr_workout(session, user, day, bpm=142 + offset % 5 * 3)
 
     result = rebuild_derived_scores(session, user_id=user.id, start=start, end=today)
     session.commit()
@@ -249,6 +287,12 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
     assert readiness.status.value == "scored"
     assert readiness.value and readiness.value > 60
     assert readiness.inputs["uses_same_day_strain"] is False
+    assert readiness.inputs["algorithm_config"]["core_weights"] == {
+        "sleep_adequacy_debt": 0.35,
+        "autonomic_recovery": 0.35,
+        "recent_load_fit": 0.30,
+    }
+    assert readiness.components["confidence"]["level"] in {"moderate", "high"}
 
 
 def test_sleep_stage_score_uses_timeline_not_duplicated_summary(session) -> None:
@@ -378,6 +422,169 @@ def test_sleep_continuity_uses_waso_and_fragmentation_caps() -> None:
     component = _continuity_score(sleep, age=35)
     assert component["score"] == 0
     assert component["severe_fragmentation"] is True
+
+
+def test_readiness_sleep_recovery_carries_burden_without_double_counting_latest_shortfall(
+    session,
+) -> None:
+    from app.services.readiness_scores import _readiness_sleep_component
+
+    user = _user_with_profile(session)
+    end = date.today() - timedelta(days=1)
+    for offset in range(7, -1, -1):
+        _add_sleep(session, user, end - timedelta(days=offset), minutes_asleep=420, minutes_awake=20)
+    session.flush()
+    profile = session.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+    sleep = session.scalar(
+        select(SleepSession).where(
+            SleepSession.user_id == user.id,
+            SleepSession.civil_date == end,
+        )
+    )
+
+    component = _readiness_sleep_component(session, user.id, profile, end, sleep)
+
+    assert component["duration"]["shortfall_minutes"] == 30
+    assert component["sleep_burden_minutes"] == 170.9
+    assert component["burden_before_latest_shortfall_minutes"] == 140.9
+    assert component["missing_sleep_nights_7d"] == 0
+    assert component["score"] == 96.1
+
+
+def test_readiness_autonomic_recovery_uses_current_and_three_night_deviations(session) -> None:
+    from app.services.readiness_scores import _autonomic_component
+
+    user = _user_with_profile(session)
+    end = date.today() - timedelta(days=1)
+    for offset in range(3, -1, -1):
+        day = end - timedelta(days=offset)
+        _add_summary(session, user, day, hrv=90.4837, rhr=62)
+        _add_baseline(
+            session,
+            user,
+            day,
+            "heart_rate_variability",
+            centre=100,
+            spread=10,
+            metadata={
+                "transform": "natural_log_rmssd",
+                "log_spread": 0.1,
+                "hrv_measurement_type": "rmssd",
+            },
+        )
+        _add_baseline(session, user, day, "resting_heart_rate", centre=60, spread=2)
+    session.flush()
+
+    component = _autonomic_component(session, user.id, end)
+
+    assert component["score"] == 85
+    assert component["hrv"]["current_z"] == -1
+    assert component["hrv"]["recent_valid_nights"] == 3
+    assert component["rhr"]["adverse_deviation"] == 1
+
+
+def test_readiness_load_recovery_weights_the_more_affected_channel(session) -> None:
+    from app.services.readiness_scores import _load_recovery_component
+
+    user = _user_with_profile(session)
+    day = date.today() - timedelta(days=1)
+    cardio_loads = [200, 100, 0]
+    muscular_loads = [0, 100, 0]
+    for offset, (cardio, muscular) in enumerate(zip(cardio_loads, muscular_loads), start=1):
+        session.add(
+            DailyScore(
+                user_id=user.id,
+                score_date=day - timedelta(days=offset),
+                score_type="strain",
+                algorithm_version=STRAIN_LOAD_VERSION,
+                value=cardio + muscular,
+                value_unit="load_points",
+                status=ScoreStatus.scored,
+                confidence_phase="calibrating",
+                data_quality="strong",
+                components={
+                    "cardio_load": {
+                        "load_points": cardio,
+                        "confidence": "strong",
+                    },
+                    "muscular_load": {
+                        "load_points": muscular,
+                        "confidence": "strong",
+                        "workouts": [],
+                    },
+                },
+            )
+        )
+    _add_baseline(
+        session,
+        user,
+        day,
+        "cardio_residual_exposure",
+        centre=100,
+        spread=50,
+    )
+    _add_baseline(
+        session,
+        user,
+        day,
+        "muscular_residual_exposure",
+        centre=10,
+        spread=10,
+    )
+    session.flush()
+
+    component = _load_recovery_component(session, user.id, day)
+
+    assert component["cardio"]["residual_exposure"] == 150
+    assert component["cardio"]["score"] == 90
+    assert component["muscular"]["residual_exposure"] == 30
+    assert component["muscular"]["score"] == 65
+    assert component["score"] == 72.5
+
+
+def test_readiness_anomaly_modifier_requires_persistence_and_caps_severe_oxygen(session) -> None:
+    from app.services.readiness_scores import _anomaly_component
+
+    user = _user_with_profile(session)
+    day = date.today() - timedelta(days=1)
+    for current in (day - timedelta(days=1), day):
+        _add_summary(session, user, current)
+        _add_baseline(
+            session,
+            user,
+            current,
+            "respiratory_rate",
+            centre=14,
+            spread=1,
+            upper=16,
+        )
+        _add_baseline(
+            session,
+            user,
+            current,
+            "oxygen_saturation",
+            centre=97,
+            spread=1,
+            lower=94,
+            upper=100,
+        )
+    session.flush()
+    summaries = session.scalars(
+        select(DailySummary)
+        .where(DailySummary.user_id == user.id)
+        .order_by(DailySummary.summary_date)
+    ).all()
+    for summary in summaries:
+        summary.respiratory_rate = 17
+    summaries[-1].oxygen_saturation = 89
+    session.flush()
+
+    component = _anomaly_component(session, user.id, day, {"score": 65})
+
+    assert component["respiratory_group"]["persistent"] is True
+    assert component["penalty"] == 10
+    assert component["readiness_cap"] == 40
+    assert component["cap_reason"] == "severe_oxygen_warning"
 
 
 def test_personal_baselines_use_metric_specific_calculations(session) -> None:
@@ -930,8 +1137,7 @@ def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_he
             sleep_minutes=440 + offset,
             steps=6500 + offset * 100,
         )
-        if offset in {3, 7, 10, 13}:
-            _add_hr_workout(session, user, day, bpm=150 + offset)
+        _add_hr_workout(session, user, day, bpm=145 + offset % 5 * 3)
 
     rebuild_derived_scores(session, user_id=user.id, start=start, end=anchor)
     session.commit()
@@ -955,8 +1161,6 @@ def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_he
         "sleep_adequacy_debt",
         "autonomic_recovery",
         "recent_load_fit",
-        "illness_anomaly_context",
-        "confidence",
     }
     assert payload["context"]["sleep_debt_minutes_7d"] is not None
     assert payload["context"]["hrv_baseline_relation"] in {
@@ -969,7 +1173,9 @@ def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_he
         "below_baseline",
         "at_baseline",
     }
-    assert payload["context"]["load_ratio"] is not None
+    assert payload["context"]["cardio_residual_exposure"] is not None
+    assert payload["context"]["muscular_residual_exposure"] is not None
+    assert payload["context"]["load_ratio"] is None
     assert payload["guidance"]["message"]
     assert payload["data_quality"]["expected_days"] == 7
     assert payload["data_quality"]["scored_days"] > 0
@@ -1009,7 +1215,7 @@ def test_readiness_context_uses_selected_period_aggregates(session, auth_headers
                 components={
                     "sleep_adequacy_debt": {
                         "score": 80,
-                        "sleep_debt_minutes_7d": 999,
+                        "sleep_burden_minutes": 120 + offset * 10,
                     },
                     "autonomic_recovery": {
                         "score": 80,
@@ -1026,8 +1232,8 @@ def test_readiness_context_uses_selected_period_aggregates(session, auth_headers
                     },
                     "recent_load_fit": {
                         "score": 90,
-                        "load_ratio": 1.0 + offset * 0.1,
-                        "yesterday_load": 10 + offset * 2,
+                        "cardio": {"residual_exposure": 20 + offset * 2},
+                        "muscular": {"residual_exposure": 10 + offset},
                         "valid_strain_days": 14 + offset,
                     },
                 },
@@ -1045,13 +1251,16 @@ def test_readiness_context_uses_selected_period_aggregates(session, auth_headers
 
     assert response.status_code == 200
     context = response.json()["context"]
-    assert context["sleep_debt_minutes"] == 210
-    assert context["sleep_debt_minutes_7d"] == 210
+    assert context["sleep_burden_minutes"] == 150
+    assert context["sleep_debt_minutes"] == 150
+    assert context["sleep_debt_minutes_7d"] == 150
     assert context["sleep_debt_period_days"] == 7
     assert context["hrv_baseline_relation"] == "below_baseline"
     assert context["rhr_baseline_relation"] == "below_baseline"
-    assert context["load_ratio"] == 1.3
-    assert context["yesterday_load"] == 16
+    assert context["cardio_residual_exposure"] == 26
+    assert context["muscular_residual_exposure"] == 13
+    assert context["load_ratio"] is None
+    assert context["yesterday_load"] is None
     assert context["valid_strain_days"] == 20
 
 
@@ -1065,8 +1274,7 @@ def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers)
             break
         _add_sleep(session, user, day)
         _add_summary(session, user, day, hrv=54 + (offset % 12), rhr=58 - (offset % 5))
-        if offset % 9 == 0:
-            _add_hr_workout(session, user, day, bpm=148 + (offset % 8))
+        _add_hr_workout(session, user, day, bpm=145 + offset % 5 * 3)
 
     rebuild_derived_scores(session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=15)))
     session.commit()

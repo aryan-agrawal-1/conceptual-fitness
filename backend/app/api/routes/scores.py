@@ -16,8 +16,6 @@ from app.services.scores import (
     READINESS_SCORE_VERSION,
     SCORE_VERSIONS,
     STRAIN_LOAD_VERSION,
-    _adjusted_sleep_need_minutes,
-    _main_sleep,
     rebuild_derived_scores,
 )
 
@@ -758,29 +756,14 @@ def _readiness_component_items(score: DailyScore | None) -> list[dict[str, objec
 
 def _readiness_component_message(key: str, component: dict[str, Any]) -> str | None:
     if key == "sleep_adequacy_debt":
-        debt = component.get("sleep_debt_minutes_7d")
-        if isinstance(debt, int | float):
-            hours = round(float(debt) / 60, 1)
-            return f"7-day sleep debt is {hours:g}h."
+        burden = component.get("sleep_burden_minutes")
+        if isinstance(burden, int | float):
+            hours = round(float(burden) / 60, 1)
+            return f"Current sleep burden is {hours:g}h."
     if key == "autonomic_recovery":
-        trend_penalty = component.get("trend_penalty")
-        if isinstance(trend_penalty, int | float) and trend_penalty > 0:
-            return f"Autonomic trend penalty is {round(float(trend_penalty), 1):g} points."
-        return "HRV and resting heart rate are compared with your baseline."
+        return "The current night and recent three-night trend are compared with your baseline."
     if key == "recent_load_fit":
-        ratio = component.get("load_ratio")
-        if isinstance(ratio, int | float):
-            return f"Recent load is {round(float(ratio), 2):g}x your comparison window."
-        return "Recent strain history is still calibrating."
-    if key == "illness_anomaly_context":
-        anomalies = component.get("anomalies")
-        if isinstance(anomalies, list) and anomalies:
-            return f"{len(anomalies)} recovery anomaly signals detected."
-        return "No major anomaly signals detected."
-    if key == "confidence":
-        phase = component.get("phase")
-        if isinstance(phase, str):
-            return f"Personalization phase: {phase.replace('_', ' ')}."
+        return "Cardiovascular and muscular load decay across the previous three days."
     return None
 
 
@@ -795,15 +778,15 @@ def _readiness_component_detail(key: str, component: dict[str, Any]) -> dict[str
             detail["rhr_score"] = rhr.get("score")
         return detail
     if key == "recent_load_fit":
+        cardio = component.get("cardio") if isinstance(component.get("cardio"), dict) else {}
+        muscular = component.get("muscular") if isinstance(component.get("muscular"), dict) else {}
         return {
-            "load_ratio": component.get("load_ratio"),
-            "yesterday_load": component.get("yesterday_load"),
+            "cardio_score": cardio.get("score"),
+            "cardio_residual_exposure": cardio.get("residual_exposure"),
+            "muscular_score": muscular.get("score"),
+            "muscular_residual_exposure": muscular.get("residual_exposure"),
             "valid_strain_days": component.get("valid_strain_days"),
-        }
-    if key == "illness_anomaly_context":
-        return {
-            "anomalies": component.get("anomalies") or [],
-            "readiness_cap": component.get("readiness_cap"),
+            "local_readiness_warnings": component.get("local_readiness_warnings") or [],
         }
     return {}
 
@@ -824,48 +807,46 @@ def _readiness_context(
     anomaly = components.get("illness_anomaly_context") if isinstance(components.get("illness_anomaly_context"), dict) else {}
     hrv = _average_readiness_metric_context(valid_scores, "hrv", higher_is_better=True)
     rhr = _average_readiness_metric_context(valid_scores, "rhr", higher_is_better=False)
-    load_ratio = _average_readiness_component_value(valid_scores, "recent_load_fit", "load_ratio")
-    prior_day_load = _average_readiness_component_value(valid_scores, "recent_load_fit", "yesterday_load")
-    sleep_debt = (
-        sleep.get("sleep_debt_minutes_7d")
-        if timeframe == "day" and isinstance(sleep, dict)
-        else _readiness_period_sleep_debt_minutes(session, user_id, profile, start, end)
+    sleep_burden = (
+        sleep.get("sleep_burden_minutes")
+        if timeframe == "day"
+        else _average_readiness_component_value(
+            valid_scores,
+            "sleep_adequacy_debt",
+            "sleep_burden_minutes",
+        )
     )
-    sleep_debt_days = 7 if timeframe == "day" else (end - start).days + 1
+    cardio_exposure = _average_nested_readiness_component_value(
+        valid_scores,
+        "recent_load_fit",
+        "cardio",
+        "residual_exposure",
+    )
+    muscular_exposure = _average_nested_readiness_component_value(
+        valid_scores,
+        "recent_load_fit",
+        "muscular",
+        "residual_exposure",
+    )
     return {
-        "sleep_debt_minutes": sleep_debt,
-        "sleep_debt_minutes_7d": sleep_debt,
-        "sleep_debt_period_days": sleep_debt_days,
+        "sleep_burden_minutes": sleep_burden,
+        "sleep_debt_minutes": sleep_burden,
+        "sleep_debt_minutes_7d": sleep_burden,
+        "sleep_debt_period_days": (end - start).days + 1,
         "hrv_score": hrv["score"],
         "hrv_baseline_relation": hrv["baseline_relation"],
         "rhr_score": rhr["score"],
         "rhr_baseline_relation": rhr["baseline_relation"],
-        "load_ratio": load_ratio,
-        "yesterday_load": prior_day_load,
+        "cardio_residual_exposure": cardio_exposure,
+        "muscular_residual_exposure": muscular_exposure,
+        "load_ratio": None,
+        "yesterday_load": None,
         "valid_strain_days": _max_readiness_component_value(valid_scores, "recent_load_fit", "valid_strain_days"),
         "anomalies": (anomaly.get("anomalies") if isinstance(anomaly, dict) else []) or [],
         "readiness_cap": anomaly.get("readiness_cap") if isinstance(anomaly, dict) else None,
         "confidence_phase": latest.confidence_phase if latest else None,
         "data_quality": latest.data_quality if latest else "missing",
     }
-
-
-def _readiness_period_sleep_debt_minutes(
-    session: DbSession,
-    user_id: str,
-    profile: Any,
-    start: date,
-    end: date,
-) -> int:
-    debt = 0
-    day = start
-    while day <= end:
-        sleep = _main_sleep(session, user_id, day)
-        if sleep is not None and sleep.minutes_asleep is not None:
-            target = _adjusted_sleep_need_minutes(session, user_id, profile, day)
-            debt += max(0, target - sleep.minutes_asleep)
-        day += timedelta(days=1)
-    return debt
 
 
 def _average_readiness_metric_context(
@@ -912,6 +893,21 @@ def _average_readiness_component_value(
         for score in scores
         if isinstance((value := _readiness_component(score, component_key).get(value_key)), int | float)
     ]
+    return round(mean(values), 3) if values else None
+
+
+def _average_nested_readiness_component_value(
+    scores: list[DailyScore],
+    component_key: str,
+    nested_key: str,
+    value_key: str,
+) -> float | None:
+    values = []
+    for score in scores:
+        nested = _readiness_component(score, component_key).get(nested_key)
+        value = nested.get(value_key) if isinstance(nested, dict) else None
+        if isinstance(value, int | float):
+            values.append(float(value))
     return round(mean(values), 3) if values else None
 
 
@@ -1071,17 +1067,13 @@ def _readiness_period_trend(timeframe: str, scores: list[DailyScore], values: li
 
 
 _READINESS_COMPONENT_LABELS = {
-    "sleep_adequacy_debt": "Sleep adequacy",
+    "sleep_adequacy_debt": "Sleep recovery",
     "autonomic_recovery": "Autonomic recovery",
-    "recent_load_fit": "Recent load fit",
-    "illness_anomaly_context": "Anomaly context",
-    "confidence": "Confidence",
+    "recent_load_fit": "Recent load recovery",
 }
 
 _READINESS_COMPONENT_WEIGHTS = {
-    "sleep_adequacy_debt": 0.30,
-    "autonomic_recovery": 0.30,
-    "recent_load_fit": 0.25,
-    "illness_anomaly_context": 0.10,
-    "confidence": 0.05,
+    "sleep_adequacy_debt": 0.35,
+    "autonomic_recovery": 0.35,
+    "recent_load_fit": 0.30,
 }
