@@ -441,11 +441,9 @@ def _strain_component_items(scores: list[DailyScore]) -> list[dict[str, object]]
 
 def _user_facing_load_split(components: dict[str, Any]) -> dict[str, float]:
     cardio = components.get("cardio_load")
-    source_zone = components.get("source_zone_load")
-    daily_activity = _component_load(components.get("daily_activity_load"))
     muscular = _component_load(components.get("muscular_load"))
     workout_load = muscular
-    general_activity_load = daily_activity
+    general_activity_load = 0.0
 
     if isinstance(cardio, dict):
         cardio_total = _component_load(cardio)
@@ -460,18 +458,6 @@ def _user_facing_load_split(components: dict[str, Any]) -> dict[str, float]:
             ratio = max(0.0, min(1.0, ratio))
             workout_load += cardio_total * ratio
             general_activity_load += cardio_total * (1 - ratio)
-
-    source_zone_load = _component_load(source_zone)
-    if isinstance(source_zone, dict):
-        zone_workout = source_zone.get("workout_load_points")
-        zone_general = source_zone.get("general_activity_load_points")
-        if isinstance(zone_workout, int | float) or isinstance(zone_general, int | float):
-            workout_load += float(zone_workout or 0.0)
-            general_activity_load += float(zone_general or 0.0)
-        elif source_zone.get("source") == "provider_zones":
-            workout_load += source_zone_load
-        else:
-            general_activity_load += source_zone_load
 
     return {
         "workouts": workout_load,

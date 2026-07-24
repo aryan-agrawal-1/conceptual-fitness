@@ -10,6 +10,7 @@ from app.models import (
     DailyBaseline,
     DailyScore,
     DailySummary,
+    ExerciseCatalogItem,
     GoogleAccount,
     MetricSample,
     ScoreStatus,
@@ -19,6 +20,8 @@ from app.models import (
     User,
     UserProfile,
     Workout,
+    WorkoutExercise,
+    WorkoutSet,
 )
 from app.services.scores import (
     BASELINE_VERSION,
@@ -31,7 +34,13 @@ from app.services.scores import (
 from app.services.normalization import upsert_raw_and_normalized
 
 
-def _user_with_profile(session, *, birth_year: int = 1992) -> User:
+def _user_with_profile(
+    session,
+    *,
+    birth_year: int = 1992,
+    sex: str | None = None,
+    weight_kg: float | None = None,
+) -> User:
     user = User()
     session.add(user)
     session.flush()
@@ -40,6 +49,8 @@ def _user_with_profile(session, *, birth_year: int = 1992) -> User:
             user_id=user.id,
             timezone="UTC",
             birth_year=birth_year,
+            sex=sex,
+            weight_kg=weight_kg,
             sleep_target_minutes=480,
         )
     )
@@ -177,7 +188,7 @@ def test_scores_wait_for_required_sleep(session) -> None:
 
 def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) -> None:
     user = _user_with_profile(session, birth_year=1990)
-    today = date.today()
+    today = datetime.now(UTC).date()
     start = today - timedelta(days=30)
     for offset in range(31):
         day = start + timedelta(days=offset)
@@ -466,6 +477,17 @@ def test_strain_uses_observed_resting_hr_when_daily_rhr_missing(session) -> None
     day = date.today() - timedelta(days=1)
     _add_summary(session, user, day, rhr=None, steps=0, active_calories=0)
     start = _dt(day, 6, 0)
+    session.add(
+        Workout(
+            user_id=user.id,
+            workout_type="running",
+            start_time=start,
+            end_time=start + timedelta(hours=3),
+            civil_date=day,
+            duration_seconds=10800,
+            raw_summary={},
+        )
+    )
     for index in range(180):
         bpm = 58 if index < 30 else 128
         session.add(
@@ -531,14 +553,200 @@ def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> 
     )
 
     assert strain.components["source_zone_load"] == {
-        "load_points": 24.0,
+        "load_points": 51.15,
         "zones_seen": 1,
         "source": "time_in_heart_rate_zone",
         "workout_load_points": 0.0,
-        "general_activity_load_points": 24.0,
+        "general_activity_load_points": 51.15,
         "workouts": [],
     }
-    assert strain.value == 24.0
+    assert strain.value == 51.1
+
+
+def test_strain_cardio_dose_uses_sex_coefficient_and_eligibility_ramp() -> None:
+    from app.services.strain_scores import _cardio_dose, _cardio_k
+
+    assert _cardio_k("male") == 1.92
+    assert _cardio_k("female") == 1.67
+    assert _cardio_k("not_specified") == 1.795
+    assert _cardio_dose(0.29, _cardio_k("male")) == 0
+    assert round(_cardio_dose(0.35, _cardio_k("male")), 4) == 0.2193
+    assert round(_cardio_dose(0.50, _cardio_k("male")), 4) == 0.8357
+    assert round(_cardio_dose(0.50, _cardio_k("female")), 4) == 0.7375
+
+
+def test_strain_does_not_add_steps_or_calories_as_load(session) -> None:
+    user = _user_with_profile(session)
+    day = datetime.now(UTC).date() - timedelta(days=1)
+    _add_summary(session, user, day, steps=20000, active_calories=1200)
+
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    session.commit()
+
+    strain = session.scalar(
+        select(DailyScore).where(
+            DailyScore.user_id == user.id,
+            DailyScore.score_date == day,
+            DailyScore.score_type == "strain",
+            DailyScore.algorithm_version == STRAIN_LOAD_VERSION,
+        )
+    )
+
+    assert strain.value is None
+    assert strain.status == ScoreStatus.missing_data
+    assert "daily_activity_load" not in strain.components
+
+
+def test_strain_uses_session_rpe_only_for_uncovered_cardio(session) -> None:
+    user = _user_with_profile(session)
+    day = date.today() - timedelta(days=1)
+    start = _dt(day, 8)
+    session.add(
+        Workout(
+            user_id=user.id,
+            workout_type="running",
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            civil_date=day,
+            duration_seconds=3600,
+            session_rpe=7,
+            raw_summary={},
+        )
+    )
+
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    session.commit()
+
+    strain = session.scalar(
+        select(DailyScore).where(
+            DailyScore.user_id == user.id,
+            DailyScore.score_date == day,
+            DailyScore.score_type == "strain",
+            DailyScore.algorithm_version == STRAIN_LOAD_VERSION,
+        )
+    )
+
+    assert strain.value == 42
+    assert strain.components["cardio_load"]["rpe_fallback_load_points"] == 42
+    assert strain.components["muscular_load"]["load_points"] == 0
+
+
+def test_strain_calculates_detailed_muscular_set_dose(session) -> None:
+    user = _user_with_profile(session, weight_kg=80)
+    day = date.today() - timedelta(days=1)
+    catalog = ExerciseCatalogItem(
+        source="custom",
+        name="Back Squat",
+        mechanic="compound",
+        primary_muscles=["quadriceps", "glutes"],
+        secondary_muscles=["hamstrings"],
+        measurement_schema="reps_load",
+    )
+    session.add(catalog)
+    session.flush()
+    start = _dt(day, 18)
+    workout = Workout(
+        user_id=user.id,
+        workout_type="strength",
+        start_time=start,
+        end_time=start + timedelta(minutes=45),
+        civil_date=day,
+        duration_seconds=2700,
+        session_rpe=10,
+        raw_summary={},
+    )
+    session.add(workout)
+    session.flush()
+    exercise = WorkoutExercise(
+        workout_id=workout.id,
+        exercise_id=catalog.id,
+        order_index=0,
+        name_snapshot=catalog.name,
+        measurement_schema="reps_load",
+        primary_muscles=catalog.primary_muscles,
+        secondary_muscles=catalog.secondary_muscles,
+    )
+    session.add(exercise)
+    session.flush()
+    session.add_all(
+        [
+            WorkoutSet(
+                workout_exercise_id=exercise.id,
+                order_index=0,
+                set_type="warmup",
+                status="completed",
+                reps=5,
+                load_value=50,
+                load_unit="kg",
+                rir=3,
+            ),
+            WorkoutSet(
+                workout_exercise_id=exercise.id,
+                order_index=1,
+                set_type="working",
+                status="completed",
+                reps=5,
+                load_value=100,
+                load_unit="kg",
+                rir=2,
+            ),
+        ]
+    )
+
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    session.commit()
+
+    strain = session.scalar(
+        select(DailyScore).where(
+            DailyScore.user_id == user.id,
+            DailyScore.score_date == day,
+            DailyScore.score_type == "strain",
+            DailyScore.algorithm_version == STRAIN_LOAD_VERSION,
+        )
+    )
+    muscular = strain.components["muscular_load"]
+
+    assert strain.value == 5.5
+    assert muscular["load_points"] == 5.47
+    assert muscular["confidence"] == "strong"
+    assert muscular["workouts"][0]["session_effort_modifier"] == 1
+    assert muscular["workouts"][0]["exercises"][0]["e1rm_source"] == "current_session_provisional"
+
+
+def test_strain_generic_strength_uses_category_prior(session) -> None:
+    user = _user_with_profile(session)
+    day = date.today() - timedelta(days=1)
+    start = _dt(day, 18)
+    session.add(
+        Workout(
+            user_id=user.id,
+            workout_type="strength",
+            start_time=start,
+            end_time=start + timedelta(hours=1),
+            civil_date=day,
+            duration_seconds=3600,
+            raw_summary={},
+        )
+    )
+
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    session.commit()
+
+    strain = session.scalar(
+        select(DailyScore).where(
+            DailyScore.user_id == user.id,
+            DailyScore.score_date == day,
+            DailyScore.score_type == "strain",
+            DailyScore.algorithm_version == STRAIN_LOAD_VERSION,
+        )
+    )
+    muscular = strain.components["muscular_load"]["workouts"][0]
+
+    assert strain.value == 23.1
+    assert muscular["source"] == "generic_category_prior"
+    assert muscular["category"] == "full_body"
+    assert muscular["active_minutes"] == 21
+    assert muscular["points_per_active_minute"] == 1.1
 
 
 def test_scores_api_rebuild_and_history(session, auth_headers) -> None:
@@ -669,7 +877,7 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
 
 def test_strain_detail_returns_timeframe_scoped_page_payload(session, auth_headers) -> None:
     user = _user_with_profile(session, birth_year=1990)
-    anchor = date.today()
+    anchor = datetime.now(UTC).date()
     start = anchor - timedelta(days=14)
     for offset in range(15):
         day = start + timedelta(days=offset)
@@ -708,7 +916,7 @@ def test_strain_detail_returns_timeframe_scoped_page_payload(session, auth_heade
 
 def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_headers) -> None:
     user = _user_with_profile(session, birth_year=1990)
-    anchor = date.today()
+    anchor = datetime.now(UTC).date()
     start = anchor - timedelta(days=14)
     for offset in range(15):
         day = start + timedelta(days=offset)
@@ -722,7 +930,7 @@ def test_readiness_detail_returns_timeframe_scoped_page_payload(session, auth_he
             sleep_minutes=440 + offset,
             steps=6500 + offset * 100,
         )
-        if offset in {3, 7, 13}:
+        if offset in {3, 7, 10, 13}:
             _add_hr_workout(session, user, day, bpm=150 + offset)
 
     rebuild_derived_scores(session, user_id=user.id, start=start, end=anchor)

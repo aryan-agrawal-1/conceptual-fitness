@@ -32,7 +32,7 @@ SLEEP_SCORE_VERSION = "sleep_score_v2"
 
 READINESS_SCORE_VERSION = "readiness_score_v1"
 
-STRAIN_LOAD_VERSION = "strain_load_v1"
+STRAIN_LOAD_VERSION = "strain_load_v2"
 
 SCORE_VERSIONS = {
     "sleep": SLEEP_SCORE_VERSION,
