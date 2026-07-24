@@ -8,9 +8,9 @@ The three local research files map directly to the three scores:
 
 - `research/Sleep Scores.pdf` gives duration 35%, regularity 25%, continuity 20%, timing and onset 10%, overnight physiology 5%, and stages 5%. It defines the interpolation anchors, data-validity rules, caps, and confidence requirements implemented below.
 - `research/Strain Scores.pdf` defines two additive load channels: movement-gated heart-rate-reserve cardio load and exercise-specific muscular load. External work, provider zones, and RPE can fill missing coverage within a channel, while a separate weekly target provides interpretation.
-- `research/Readiness Scores.pdf` defines a personalised, baseline-driven combination of sleep, autonomic recovery, recent load, illness-like anomaly signals, and confidence.
+- `research/Readiness Scores.pdf` defines a 35/35/30 readiness core built from sleep recovery, autonomic recovery, and recent load recovery. Illness-like signals become post-score modifiers, and confidence remains separate from the arithmetic.
 
-Those recommendations are implemented in `scores.py` through `_upsert_sleep_score`, `_upsert_strain_score`, `_upsert_readiness_score`, and the helper functions described below.
+Those recommendations are implemented by the score service modules through `_upsert_sleep_score`, `_upsert_strain_score`, `_upsert_readiness_score`, and the helper functions described below.
 
 ## How Scores Are Rebuilt
 
@@ -310,117 +310,165 @@ Why: `research/Strain Scores.pdf` points to Apple-style 7-day versus 28-day inte
 
 Function: `_upsert_readiness_score`
 
-Readiness is a 0-100 score. It only calculates when there is a main sleep session for the day. If sleep is missing, Readiness waits with reason `waiting_for_main_sleep`, because the score is meant to describe the body after overnight recovery.
+Readiness is a whole-number score from 0 to 100 estimating preparedness for physical strain during the coming day. It requires the main sleep ending on that day, at least one valid autonomic input, reliable activity coverage for each of the previous three days, and at least seven comparable reference days for the autonomic and residual-load inputs.
 
-The current weights are:
+The core calculation is:
 
+`core readiness = 0.35 × sleep recovery + 0.35 × autonomic recovery + 0.30 × recent load recovery`
 
-| Component               | Weight | Function                     |
-| ----------------------- | ------ | ---------------------------- |
-| Sleep adequacy and debt | 30%    | `_readiness_sleep_component` |
-| Autonomic recovery      | 30%    | `_autonomic_component`       |
-| Recent load fit         | 25%    | `_load_fit_component`        |
-| Illness/anomaly context | 10%    | `_anomaly_component`         |
-| Confidence              | 5%     | `_confidence_component`      |
+All three blocks are required and each runs from 0 to 100. A missing block is not redistributed across the others. The record instead remains `missing_data` with a calibration reason and the available components.
 
+Respiratory, oxygen, temperature, and explicit illness signals do not receive positive weights. They can apply a post-score penalty or cap. Confidence is also excluded from the arithmetic.
 
-The final number is produced by `_weighted_score`, then possibly capped by anomaly context. This follows `research/Readiness Scores.pdf`: readiness should be a personalised estimate of whether the body looks recovered enough for strain today, not just a sleep score and not just an HRV score.
-
-### Sleep Adequacy and Debt
+### Sleep Recovery
 
 Function: `_readiness_sleep_component`
 
-This component combines:
+Readiness consumes the duration and continuity calculations defined by the Sleep score, but does not consume the full Sleep score. This avoids counting sleep timing, stages, and overnight physiology again.
 
-- Sleep duration score from `_duration_score`.
-- Sleep continuity score from `_continuity_score`.
-- Seven-day sleep debt from `_sleep_debt_minutes`.
+Recent sleep burden follows:
 
-Duration contributes 65%, continuity contributes 35%, and sleep debt subtracts up to 28 points. Sleep debt is the sum, across the last seven days including the current day, of how many minutes the user slept below target.
+`burden_today = max(0, 0.90 × burden_yesterday + shortfall - 0.50 × extra sleep)`
 
-Why: the readiness research says sleep adequacy and accumulated sleep debt should be a major part of readiness because poor sleep affects performance, mood, recovery, and autonomic state.
+Shortfall uses total valid sleep across the sleep day, including valid naps:
+
+`shortfall = max(0, core sleep need - valid sleep achieved - 30 minutes)`
+
+Extra sleep is the valid amount above core need, capped at 120 minutes for one day. A missing night carries the prior burden without decay. Two or more missing nights in the latest seven prevent a precise burden and therefore withhold the complete Readiness score.
+
+The latest shortfall is already represented by duration. It is removed from the burden input before scoring:
+
+`pre-existing burden = max(0, current burden - latest shortfall)`
+
+`burden nights = pre-existing burden / core sleep need`
+
+Burden is interpolated between:
+
+| Burden nights | Burden score |
+| ---: | ---: |
+| 0 | 100 |
+| 0.5 | 90 |
+| 1 | 75 |
+| 2 | 50 |
+| 3 | 25 |
+| 4+ | 0 |
+
+Sleep recovery is:
+
+`sleep recovery = 0.55 × duration + 0.25 × continuity + 0.20 × burden score`
+
+Duration and burden are required. If continuity is unavailable, the duration and burden weights are rescaled within this block and confidence falls.
+
+Readiness is capped at 70 after a three-hour duration shortfall, 50 after four hours, and 30 after five hours or more. Severe fragmentation caps it at 70.
 
 ### Autonomic Recovery
 
 Function: `_autonomic_component`
 
-Autonomic recovery compares the day's overnight physiology against the user's own baselines:
+Autonomic recovery uses overnight or controlled resting measurements from a consistent source. RMSSD is preferred. SDNN can be used as a separate source-specific fallback when it is the only valid HRV measure; it is never converted into estimated RMSSD or mixed into the same reference. The current Google Health integration supplies Fitbit RMSSD.
 
-- HRV, where higher than baseline is better.
-- Resting heart rate, where lower than baseline is better.
+HRV is transformed with the natural logarithm before comparison. Resting heart rate remains on its native scale:
 
-Each metric is scored by `_metric_baseline_score`, then the available scores are averaged. `_autonomic_trend_penalty` can subtract up to 16 points if the recent multi-day trend is bad:
+`zHRV = (ln(HRV) - log-scale HRV centre) / log-scale HRV spread`
 
-- 8 points if recent HRV is below the baseline lower bound.
-- 8 points if recent resting heart rate is above the baseline upper bound.
+`zRHR = (RHR - RHR centre) / RHR spread`
 
-Why: `research/Readiness Scores.pdf` stresses that HRV is useful only against a personal baseline and preferably over multiple days. The trend penalty is the code's way of making persistent deviations matter more than a single noisy reading.
+For each metric, recent `z` is the median of the latest three valid comparable nights, normally inside the latest four calendar nights. The current night remains visible:
 
-### Recent Load Fit
+`HRV adverse deviation = max(0, -(0.40 × current zHRV + 0.60 × recent zHRV))`
 
-Function: `_load_fit_component`
+`RHR adverse deviation = max(0, 0.40 × current zRHR + 0.60 × recent zRHR)`
 
-Recent load fit asks whether recent Strain is normal for the user. It looks back up to 60 days and adapts based on how much history exists:
+Favourable deviations stop at zero adverse deviation and do not award more than 100. Adverse deviation is interpolated between:
 
-- 4 to 6 valid days: compare yesterday to the average.
-- 7 to 13 valid days: use a 3-day acute window against the remaining history.
-- 14 to 27 valid days: use a 7-day acute window against the remaining history.
-- 28 or more valid days: use 7-day acute load against 28-day chronic load.
+| Adverse spreads | Metric score |
+| ---: | ---: |
+| 0–0.5 | 100 |
+| 1 | 85 |
+| 1.5 | 65 |
+| 2 | 40 |
+| 3 | 10 |
+| 4+ | 0 |
 
-The ratio is then scored:
+With both metrics:
 
-- Up to 1.20: 100.
-- 1.20 to 1.50: falls from 100 to 75.
-- 1.50 to 2.00: falls from 75 to 40.
-- Above 2.00: 35.
+`autonomic recovery = 0.60 × HRV score + 0.40 × RHR score`
 
-If yesterday's load is more than twice chronic load, the score loses another 12 points.
+If only one is valid, that metric supplies the block and confidence falls. HRV and RHR are not charged again by the anomaly modifier.
 
-Why: the readiness research says recent load should stop Readiness from becoming only a sleep or HRV number. The strain research also cautions that acute-versus-chronic load should be used as an interpretation tool, not a magic injury prediction number. This component follows that: it penalises unusual spikes without claiming to diagnose risk.
+### Recent Load Recovery
 
-### Illness and Anomaly Context
+Function: `_load_recovery_component`
+
+Readiness consumes the separate cardiovascular and muscular channels stored by Strain. The previous three days decay into today's residual exposure:
+
+`cardio residual exposure = 0.60 × C1 + 0.30 × C2 + 0.10 × C3`
+
+`muscular residual exposure = 0.50 × M1 + 0.30 × M2 + 0.20 × M3`
+
+Every prior day must have reliable coverage. Missing activity remains unknown rather than becoming a zero-load rest day. A reliably observed rest day remains zero.
+
+Each channel has its own median and robust-spread reference. The normal reference window is 28 days and extends to 60 calendar days when fewer than 28 valid observations are available:
+
+`adverse exposure = max(0, (residual exposure - centre) / spread)`
+
+The channel score is interpolated between:
+
+| Adverse spreads | Channel score |
+| ---: | ---: |
+| 0–0.5 | 100 |
+| 1 | 90 |
+| 2 | 65 |
+| 3 | 35 |
+| 4+ | 10 |
+
+If both channels are valid:
+
+`recent load recovery = 0.70 × lower channel score + 0.30 × higher channel score`
+
+If only one channel is reliable, it supplies the block and confidence falls.
+
+Detailed resistance-training load is also decayed per muscle group. A local residual above two personal spreads creates a `reduced` local-readiness warning; above three creates `very_reduced`. These warnings explain the muscular result and do not subtract from the global score again.
+
+### Illness-Like Signals and Concordance
 
 Function: `_anomaly_component`
 
-This component starts at 100 and looks for recovery signals that are outside the normal range:
+Signals are grouped so correlated measurements do not each collect a full penalty:
 
-- Respiratory rate scoring poorly against baseline.
-- Oxygen saturation below 94.
-- HRV scoring poorly.
-- Resting heart rate scoring poorly.
-- A user or system context tag for illness.
+- Autonomic group: autonomic recovery below 70.
+- Respiratory group: respiratory rate above its personal alert boundary, oxygen saturation below its personal lower boundary, or both adverse together.
+- Temperature group: overnight skin-temperature variation above its personal alert boundary.
 
-Each anomaly subtracts 18 points, up to 70 points. It can also cap the whole Readiness score:
+A non-autonomic group is active when one of its metrics crosses on two consecutive valid nights. The respiratory group can also activate when respiratory rate and oxygen saturation cross together tonight. A single mild crossing remains an explanation and does not change the score.
 
-- Two anomalies cap Readiness at 70.
-- Three or more anomalies cap Readiness at 55.
+The modifier is:
 
-Why: this follows the Apple Vitals-style idea discussed in `research/Readiness Scores.pdf`: one odd metric can be noise, but several overnight signals moving in the wrong direction together should matter a lot.
+| Active condition | Penalty | Cap |
+| --- | ---: | ---: |
+| No non-autonomic group | 0 | none |
+| One respiratory or temperature group | 5 | none |
+| One non-autonomic group plus impaired autonomic recovery | 10 | 75 |
+| Respiratory and temperature groups | 12 | none |
+| Both groups plus impaired autonomic recovery | 18 | 60 |
+
+An explicit illness tag or oxygen saturation below 90% caps Readiness at 40 and produces cautious health language rather than a diagnosis.
+
+After the penalty, the lowest sleep or anomaly cap is applied:
+
+`final readiness = round(clamp(core readiness - anomaly penalty, 0, 100))`
 
 ### Confidence
 
-Function: `_confidence_component`
+Function: `_readiness_confidence`
 
-Confidence turns baseline maturity into a small score contribution:
+Confidence is metadata beside the score and never changes the number.
 
-- `missing`: 30
-- `provisional`: 55
-- `calibrating`: 78
-- `personalized`: 100
+- High confidence requires duration and continuity, both HRV and RHR, both load channels, complete optional anomaly groups, stable sources, no recent missing sleep, and at least 28 comparable reference days.
+- Moderate confidence has the required inputs with 14–27 comparable days or one supporting input missing.
+- Low confidence has 7–13 comparable days, only one autonomic input, one reliable load channel, or more limited optional coverage.
 
-It checks the phases for HRV, resting heart rate, strain load, and sleep minutes, then uses `_combined_phase` to take the weakest phase.
-
-Why: the readiness score is supposed to be personalised. If the app does not yet know the user's normal ranges, the score can still be useful, but it should be less confident.
-
-### Readiness Confidence and Quality
-
-Readiness's `confidence_phase` is the weakest phase among:
-
-- HRV baseline.
-- Resting-heart-rate baseline.
-- Strain confidence phase.
-
-The `data_quality` field again comes from `_quality_for_components`.
+These levels map to `personalized`, `calibrating`, and `provisional` phases and to `strong`, `moderate`, and `weak` data quality. When a required block is absent, the score stays in calibration rather than silently moving that block's weight elsewhere.
 
 ## Baselines
 
@@ -438,6 +486,8 @@ Baselines are how the app learns what is normal for the user. They are rebuilt d
 - `respiratory_rate`
 - `oxygen_saturation`
 - `strain_load`
+- `cardio_residual_exposure`
+- `muscular_residual_exposure`
 
 The baseline for a date only uses earlier days. It never uses the current day, so a bad night or a hard workout can affect today's score without immediately redefining what "normal" means.
 
@@ -488,6 +538,7 @@ Each metric gets its value from the most appropriate source:
 - Respiratory rate uses a provider-specific sleep-window reference.
 - Oxygen saturation uses the personal median and tenth percentile as a one-sided lower boundary, with 100% as the upper ceiling. It is not treated as a symmetric bell-shaped metric.
 - Strain uses a 28-day-half-life exponentially weighted reference across up to 60 days. Recorded zero-load rest days remain zero, while missing days remain absent. The baseline metadata also retains the matching weekday mean rather than presenting an acute:chronic ratio as an injury threshold.
+- Cardio and muscular residual exposure use separate median and robust-spread references. They start with the latest 28 calendar days and extend to 60 when fewer than 28 valid residual observations are available.
 
 If a daily summary is marked as missing, the app excludes most summary-based metrics. Sleep timing, sleep efficiency, and strain load are exceptions because they come from their own sleep or score records.
 
@@ -581,7 +632,9 @@ Readiness reasons scan the component scores:
 
 - If a component is below 70, it adds a medium-severity negative reason.
 - If a component is 90 or higher, it adds a low-severity positive reason.
-- If anomaly context capped the score, it inserts `readiness_anomaly_cap` first with high severity.
+- A persistent or concordant anomaly modifier adds a high-severity reason.
+- An active sleep, illness-like, or safety cap adds the highest-priority reason.
+- Elevated local muscular residuals add a muscle-group recovery reason without another deduction.
 
 Only the first four reasons are kept.
 
