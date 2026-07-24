@@ -196,9 +196,7 @@ def _upsert_strain_score(
 def _upsert_strain_target(session: Session, *, user_id: str, week_start: date) -> StrainTarget:
     target = _get_or_create_strain_target(session, user_id, week_start)
     week_end = week_start + timedelta(days=6)
-    prior_loads = _strain_loads(
-        session, user_id, week_start - timedelta(days=60), week_start - timedelta(days=1)
-    )
+    prior_loads = _strain_loads(session, user_id, week_start - timedelta(days=60), week_start - timedelta(days=1))
     current_loads = _strain_loads(session, user_id, week_start, week_end)
     chronic = _chronic_load(prior_loads)
     progress = sum(value for _, value in current_loads)
@@ -938,9 +936,7 @@ def _source_zone_load_from_intervals(
             interval.end_time,
             covered,
         )
-        uncovered_ratio = (
-            0.0 if interval_minutes <= 0 else min(1.0, uncovered_minutes / interval_minutes)
-        )
+        uncovered_ratio = 0.0 if interval_minutes <= 0 else min(1.0, uncovered_minutes / interval_minutes)
         interval_load = interval_minutes * _cardio_dose(midpoint, k) * uncovered_ratio
         if interval_load <= 0:
             continue
@@ -960,9 +956,7 @@ def _source_zone_load_from_intervals(
             contribution = interval_load * min(1.0, overlap / interval_seconds)
             attributed_load += contribution
             workout_total += contribution
-            workout_contributions[workout.id] = (
-                workout_contributions.get(workout.id, 0.0) + contribution
-            )
+            workout_contributions[workout.id] = workout_contributions.get(workout.id, 0.0) + contribution
         general_activity_total += max(0.0, interval_load - attributed_load)
         zones_seen += 1
     if zones_seen == 0:
@@ -1129,9 +1123,7 @@ def _credible_observed_max_hr(
     if formula_max is None or not samples:
         return formula_max, formula_source
     workout_samples = [
-        sample.value
-        for sample in samples
-        if _timestamp_inside_workout(sample.observed_at, workouts)
+        sample.value for sample in samples if _timestamp_inside_workout(sample.observed_at, workouts)
     ]
     candidates = workout_samples or [sample.value for sample in samples]
     high_values = sorted([value for value in candidates if 80 <= value <= 230], reverse=True)
@@ -1207,21 +1199,11 @@ def _strain_reasons(total: float, components: dict[str, Any]) -> list[dict[str, 
         reasons.append(_reason("no_strain_detected", "info", "No meaningful strain was detected."))
     elif cardio >= max(muscular, 1):
         reasons.append(
-            _reason(
-                "cardio_load_primary",
-                "low",
-                "Most strain came from cardiovascular load.",
-                "neutral",
-            )
+            _reason("cardio_load_primary", "low", "Most strain came from cardiovascular load.", "neutral")
         )
     if muscular > 0:
         reasons.append(
-            _reason(
-                "muscular_load_estimated",
-                "low",
-                "Strength-like activity added muscular load.",
-                "neutral",
-            )
+            _reason("muscular_load_estimated", "low", "Strength-like activity added muscular load.", "neutral")
         )
     return reasons[:3]
 

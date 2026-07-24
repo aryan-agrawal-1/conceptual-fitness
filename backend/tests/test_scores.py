@@ -533,9 +533,7 @@ def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> 
                 "interval": {
                     "startTime": f"{day.isoformat()}T08:00:00Z",
                     "endTime": f"{day.isoformat()}T08:30:00Z",
-                    "civilStartTime": {
-                        "date": {"year": day.year, "month": day.month, "day": day.day}
-                    },
+                    "civilStartTime": {"date": {"year": day.year, "month": day.month, "day": day.day}},
                 },
                 "heartRateZoneType": "VIGOROUS",
             },
@@ -1070,9 +1068,7 @@ def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers)
         if offset % 9 == 0:
             _add_hr_workout(session, user, day, bpm=148 + (offset % 8))
 
-    rebuild_derived_scores(
-        session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=15))
-    )
+    rebuild_derived_scores(session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=15)))
     session.commit()
 
     response = TestClient(app).get(
@@ -1086,7 +1082,5 @@ def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers)
     assert payload["chart"]["kind"] == "monthly_average_scores"
     assert payload["summary"]["trend"] is None
     assert len(payload["chart"]["points"]) == 12
-    scored_month = next(
-        point for point in payload["chart"]["points"] if point["average_score"] is not None
-    )
+    scored_month = next(point for point in payload["chart"]["points"] if point["average_score"] is not None)
     assert scored_month["month_start_date"] == start.isoformat()

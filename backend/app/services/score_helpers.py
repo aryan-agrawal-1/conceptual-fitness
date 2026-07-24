@@ -195,9 +195,8 @@ def _main_sleep(session: Session, user_id: str, day: date) -> SleepSession | Non
     candidates = mains or sleeps
     return max(
         candidates,
-        key=lambda sleep: (
-            sleep.minutes_asleep or int((sleep.end_time - sleep.start_time).total_seconds() / 60)
-        ),
+        key=lambda sleep: sleep.minutes_asleep
+        or int((sleep.end_time - sleep.start_time).total_seconds() / 60),
     )
 
 
@@ -211,9 +210,7 @@ def _sleep_source_signature(session: Session, sleep: SleepSession) -> tuple[str,
     return raw.google_account_id, source
 
 
-def _heart_rate_samples(
-    session: Session, user_id: str, day: date
-) -> list[MetricSample | RollupPoint]:
+def _heart_rate_samples(session: Session, user_id: str, day: date) -> list[MetricSample | RollupPoint]:
     rollups = rollup_points_for_metric(
         session,
         user_id=user_id,
@@ -247,9 +244,7 @@ def _workouts_for_day(session: Session, user_id: str, day: date) -> list[Workout
     ).all()
 
 
-def _strain_loads(
-    session: Session, user_id: str, start: date, end: date
-) -> list[tuple[date, float]]:
+def _strain_loads(session: Session, user_id: str, start: date, end: date) -> list[tuple[date, float]]:
     if end < start:
         return []
     scores = session.scalars(
@@ -440,10 +435,7 @@ def _circular_mean_minutes(values: list[float]) -> float:
 
 
 def _circular_median_minutes(values: list[float]) -> float:
-    return min(
-        values,
-        key=lambda candidate: sum(_circular_minutes_diff(candidate, item) for item in values),
-    )
+    return min(values, key=lambda candidate: sum(_circular_minutes_diff(candidate, item) for item in values))
 
 
 def _circular_robust_spread(values: list[float], centre: float) -> float:
@@ -494,9 +486,7 @@ def _core_sleep_need_minutes(profile: UserProfile, day: date) -> int:
     return max(low, min(high, target))
 
 
-def _range_score(
-    value: float, low_good: float, high_good: float, low_bad: float, high_bad: float
-) -> float:
+def _range_score(value: float, low_good: float, high_good: float, low_bad: float, high_bad: float) -> float:
     if low_good <= value <= high_good:
         return 100.0
     if value < low_good:
