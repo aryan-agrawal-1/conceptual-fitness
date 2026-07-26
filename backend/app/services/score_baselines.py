@@ -29,6 +29,7 @@ from app.services.score_helpers import (
     _get_or_create_baseline,
     _main_sleep,
     _phase_for_count,
+    _residual_load_exposure,
     _robust_spread,
     _score_for_day,
     _sleep_efficiency,
@@ -48,6 +49,8 @@ BASELINE_METRICS = (
     "respiratory_rate",
     "oxygen_saturation",
     "strain_load",
+    "cardio_residual_exposure",
+    "muscular_residual_exposure",
 )
 
 
@@ -121,6 +124,16 @@ def _calculate_personal_baseline(
         baseline_date=baseline_date,
         window_days=window_days,
     )
+    if metric in {"cardio_residual_exposure", "muscular_residual_exposure"} and len(observations) < 28:
+        window_days = 60
+        observations, exclusions = _baseline_observations(
+            session,
+            user_id=user_id,
+            profile=profile,
+            metric=metric,
+            baseline_date=baseline_date,
+            window_days=window_days,
+        )
     observations, source_metadata = _source_consistent_observations(observations)
     observations = _drop_observation_outliers(observations, metric)
     values = [item.value for item in observations]
@@ -145,6 +158,9 @@ def _calculate_personal_baseline(
     if metric == "strain_load":
         metadata["weekday"] = baseline_date.weekday()
         metadata["weekday_recent_mean"] = _weekday_mean(observations, baseline_date.weekday())
+        metadata["missing_days_are_zero"] = False
+        metadata["genuine_rest_days_are_zero"] = True
+    if metric in {"cardio_residual_exposure", "muscular_residual_exposure"}:
         metadata["missing_days_are_zero"] = False
         metadata["genuine_rest_days_are_zero"] = True
 
@@ -178,6 +194,7 @@ def _calculate_personal_baseline(
         upper = exp(centre_log + 2 * spread_log)
         spread = (upper - lower) / 4
         metadata["transform"] = "natural_log_rmssd"
+        metadata["hrv_measurement_type"] = "rmssd"
         metadata["log_spread"] = spread_log
     elif metric == "oxygen_saturation":
         centre = float(median(values))
@@ -274,6 +291,10 @@ def _metric_value_for_baseline(
     if metric == "strain_load":
         score = _score_for_day(session, user_id, day, "strain", STRAIN_LOAD_VERSION)
         return score.value if score and score.value is not None else None
+    if metric in {"cardio_residual_exposure", "muscular_residual_exposure"}:
+        channel = metric.removesuffix("_residual_exposure")
+        exposure = _residual_load_exposure(session, user_id, day, channel)
+        return exposure[0] if exposure is not None else None
     if metric in {
         "sleep_minutes",
         "sleep_start_minute",
@@ -327,6 +348,8 @@ def _baseline_method(metric: str) -> str:
         "respiratory_rate": "provider_specific_sleep_window_median_mad",
         "oxygen_saturation": "provider_specific_median_lower_tail",
         "strain_load": "zero_preserving_28_day_half_life_ewma",
+        "cardio_residual_exposure": "three_day_cardio_decay_median_mad",
+        "muscular_residual_exposure": "three_day_muscular_decay_median_mad",
     }[metric]
 
 
@@ -336,7 +359,7 @@ def _metric_source_for_day(
     day: date,
     metric: str,
 ) -> str:
-    if metric == "strain_load":
+    if metric in {"strain_load", "cardio_residual_exposure", "muscular_residual_exposure"}:
         return STRAIN_LOAD_VERSION
     if metric.startswith("sleep_"):
         sleep = _main_sleep(session, user_id, day)
