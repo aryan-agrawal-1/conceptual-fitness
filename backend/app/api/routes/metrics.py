@@ -1569,7 +1569,7 @@ def _sleep_local_minute(profile: UserProfile, value: datetime) -> int:
 def _sleep_band(value: float | None) -> str | None:
     if value is None:
         return None
-    if value >= 80:
+    if value >= 75:
         return "good"
     if value >= 60:
         return "fair"
@@ -1613,11 +1613,11 @@ _SLEEP_COMPONENT_LABELS = {
 }
 
 _SLEEP_COMPONENT_WEIGHTS = {
-    "duration": 0.35,
-    "regularity": 0.25,
-    "continuity": 0.20,
-    "timing": 0.10,
-    "physiology": 0.05,
+    "duration": 0.4275,
+    "regularity": 0.19,
+    "continuity": 0.2375,
+    "timing": 0.095,
+    "physiology": 0.0,
     "stages": 0.05,
 }
 

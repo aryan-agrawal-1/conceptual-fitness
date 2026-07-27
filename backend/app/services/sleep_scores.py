@@ -38,6 +38,66 @@ from app.services.score_helpers import (
 from app.services.score_baselines import _metric_value_for_baseline
 
 
+SLEEP_V3_CONFIG = {
+    "behavioural_weights": {
+        "duration": 0.45,
+        "regularity": 0.20,
+        "continuity": 0.25,
+        "timing": 0.10,
+    },
+    "behavioural_share_with_stages": 0.95,
+    "stage_weight": 0.05,
+    "missing_one_optional_cap": 97.0,
+    "missing_both_optional_cap": 95.0,
+}
+
+DURATION_SCORE_ANCHORS = [
+    (0, 100),
+    (15, 97),
+    (30, 94),
+    (60, 84),
+    (90, 70),
+    (120, 55),
+    (180, 30),
+    (240, 10),
+    (300, 0),
+]
+
+REGULARITY_SCORE_ANCHORS = [
+    (0, 100),
+    (15, 100),
+    (30, 95),
+    (60, 85),
+    (90, 70),
+    (120, 50),
+    (180, 20),
+    (240, 0),
+]
+
+CONTINUITY_SCORE_ANCHORS = [
+    (0, 100),
+    (10, 100),
+    (20, 95),
+    (30, 85),
+    (40, 70),
+    (50, 50),
+    (60, 30),
+    (90, 0),
+]
+
+TIMING_SCORE_ANCHORS = [
+    (0, 100),
+    (15, 100),
+    (30, 95),
+    (60, 85),
+    (90, 70),
+    (120, 50),
+    (180, 0),
+]
+
+PHYSIOLOGY_SCORE_PENALTIES = {100: 0.0, 80: 3.0, 60: 6.0, 40: 9.0}
+
+
 def _upsert_sleep_score(
     session: Session,
     *,
@@ -64,6 +124,13 @@ def _upsert_sleep_score(
     timing = _timing_score(session, user_id, profile, day, sleep)
     physiology = _sleep_physiology_score(session, user_id, profile, day)
     stages = _stage_score(session, user_id, profile, day, sleep)
+    timing_is_duplicate = _timing_duplicates_regularity(regularity, timing)
+    if timing_is_duplicate:
+        timing = {
+            **timing,
+            "excluded_from_score": True,
+            "exclusion_reason": "duplicates_regularity_without_latency",
+        }
     components = {
         "duration": duration,
         "regularity": regularity,
@@ -72,14 +139,12 @@ def _upsert_sleep_score(
         "physiology": physiology,
         "stages": stages,
     }
-    core_weights = {
-        "duration": 0.35,
-        "regularity": 0.25,
-        "continuity": 0.20,
-        "timing": 0.10,
-    }
+    scored_components = {**components}
+    if timing_is_duplicate:
+        scored_components["timing"] = None
+    core_weights = SLEEP_V3_CONFIG["behavioural_weights"]
     supporting_core_count = sum(
-        components[key] is not None and components[key].get("score") is not None
+        scored_components[key] is not None and scored_components[key].get("score") is not None
         for key in ("regularity", "continuity", "timing")
     )
     if supporting_core_count < 2:
@@ -105,31 +170,54 @@ def _upsert_sleep_score(
             ],
         )
 
-    core_score = _weighted_score(components, core_weights)
-    physiology_value = physiology["score"] if physiology else 100.0
-    stage_value = stages["score"] if stages else 100.0
-    # combine core sleep quality with physiology and stage modifiers
-    value = 0.90 * float(core_score or 0) + 0.05 * physiology_value + 0.05 * stage_value
-    caps: list[dict[str, Any]] = []
+    core_score = float(_weighted_score(scored_components, core_weights) or 0)
+    stage_adjusted_score = _stage_adjusted_sleep_score(core_score, stages)
+    physiology_penalty = _sleep_physiology_penalty(physiology)
+    value = max(0.0, min(100.0, stage_adjusted_score - physiology_penalty))
+    cap_rules: list[dict[str, Any]] = []
+    missing_optional_count = sum(component is None for component in (physiology, stages))
+    if missing_optional_count == 2:
+        cap_rules.append(
+            {
+                "reason": "missing_physiology_and_stages",
+                "value": SLEEP_V3_CONFIG["missing_both_optional_cap"],
+            }
+        )
+    elif missing_optional_count == 1:
+        cap_rules.append(
+            {
+                "reason": "missing_optional_sleep_evidence",
+                "value": SLEEP_V3_CONFIG["missing_one_optional_cap"],
+            }
+        )
     shortfall = duration["shortfall_minutes"]
     if shortfall >= 300:
-        caps.append({"reason": "duration_shortfall_5h", "value": 25.0})
+        cap_rules.append({"reason": "duration_shortfall_5h", "value": 20.0})
     elif shortfall >= 240:
-        caps.append({"reason": "duration_shortfall_4h", "value": 40.0})
+        cap_rules.append({"reason": "duration_shortfall_4h", "value": 30.0})
     elif shortfall >= 180:
-        caps.append({"reason": "duration_shortfall_3h", "value": 60.0})
+        cap_rules.append({"reason": "duration_shortfall_3h", "value": 45.0})
     if continuity.get("severe_fragmentation"):
-        caps.append({"reason": "severe_fragmentation", "value": 60.0})
-    if caps:
-        value = min(value, *(cap["value"] for cap in caps))
+        cap_rules.append({"reason": "severe_fragmentation", "value": 50.0})
+    caps = [cap for cap in cap_rules if value > float(cap["value"])]
+    if cap_rules:
+        value = min(value, *(float(cap["value"]) for cap in cap_rules))
     reasons = _sleep_reasons(components)
     if caps:
+        evidence_only = all(
+            cap["reason"] in {"missing_optional_sleep_evidence", "missing_physiology_and_stages"}
+            for cap in caps
+        )
         reasons.insert(
             0,
             _reason(
                 "sleep_score_capped",
-                "high",
-                "A severe sleep shortfall or fragmented night capped the score.",
+                "info" if evidence_only else "high",
+                (
+                    "Missing optional evidence limited the highest supported sleep score."
+                    if evidence_only
+                    else "A severe sleep shortfall or fragmented night capped the score."
+                ),
             ),
         )
     phase = _sleep_confidence_phase(components, sleep)
@@ -147,27 +235,45 @@ def _upsert_sleep_score(
             "valid_sleep_achieved_minutes": achieved,
             "main_sleep_minutes": sleep.minutes_asleep,
             "valid_nap_minutes": max(0, achieved - int(sleep.minutes_asleep or 0)),
+            "behavioural_core": round(core_score, 2),
+            "stage_adjusted_score": round(stage_adjusted_score, 2),
+            "physiology_penalty": physiology_penalty,
             "caps_applied": caps,
+            "algorithm_config": SLEEP_V3_CONFIG,
         },
         reasons=reasons,
     )
 
 
 def _duration_score(minutes: int, target: int) -> dict[str, Any]:
-    # score sleep shortfall after the thirty-minute allowance
-    shortfall = max(0, target - minutes - 30)
-    score = _interpolate_anchors(
-        shortfall,
-        [(0, 100), (30, 95), (60, 90), (90, 80), (120, 65), (180, 35), (240, 10), (300, 0)],
-    )
+    shortfall = max(0, target - minutes)
+    score = _interpolate_anchors(shortfall, DURATION_SCORE_ANCHORS)
     return {
         "score": round(score, 1),
         "minutes": minutes,
         "core_sleep_need_minutes": target,
-        "allowance_minutes": 30,
+        "allowance_minutes": 0,
         "shortfall_minutes": shortfall,
         "unusually_long": minutes > target + 120,
     }
+
+
+def _stage_adjusted_sleep_score(
+    behavioural_core: float,
+    stages: dict[str, Any] | None,
+) -> float:
+    if not stages or not isinstance(stages.get("score"), int | float):
+        return behavioural_core
+    return (
+        SLEEP_V3_CONFIG["behavioural_share_with_stages"] * behavioural_core
+        + SLEEP_V3_CONFIG["stage_weight"] * float(stages["score"])
+    )
+
+
+def _sleep_physiology_penalty(physiology: dict[str, Any] | None) -> float:
+    if not physiology or not isinstance(physiology.get("score"), int | float):
+        return 0.0
+    return PHYSIOLOGY_SCORE_PENALTIES.get(round(float(physiology["score"])), 0.0)
 
 
 def _regularity_score(
@@ -186,10 +292,7 @@ def _regularity_score(
     end_diff = _circular_minutes_diff(end_minute, references["end_minute"])
     # average bedtime and wake-time drift before interpolation
     avg_diff = (start_diff + end_diff) / 2
-    score = _interpolate_anchors(
-        avg_diff,
-        [(0, 100), (30, 100), (60, 90), (90, 75), (120, 55), (180, 20), (240, 0)],
-    )
+    score = _interpolate_anchors(avg_diff, REGULARITY_SCORE_ANCHORS)
     return {
         "score": round(score, 1),
         "average_drift_minutes": round(avg_diff, 1),
@@ -209,24 +312,23 @@ def _continuity_score(sleep: SleepSession, *, age: int | None = None) -> dict[st
     if awake is None:
         return None
     # map wake-after-sleep-onset minutes onto the continuity scale
-    score = _interpolate_anchors(
-        awake,
-        [(0, 100), (20, 100), (30, 90), (40, 75), (50, 55), (60, 35), (90, 0)],
-    )
+    score = _interpolate_anchors(awake, CONTINUITY_SCORE_ANCHORS)
     caps: list[dict[str, Any]] = []
     if efficiency is not None:
         if efficiency < 0.65:
-            caps.append({"reason": "maintenance_efficiency_below_65", "value": 20.0})
+            caps.append({"reason": "maintenance_efficiency_below_65", "value": 15.0})
         elif efficiency < 0.75:
-            caps.append({"reason": "maintenance_efficiency_below_75", "value": 40.0})
+            caps.append({"reason": "maintenance_efficiency_below_75", "value": 30.0})
         elif efficiency < 0.85:
-            caps.append({"reason": "maintenance_efficiency_below_85", "value": 80.0})
+            caps.append({"reason": "maintenance_efficiency_below_85", "value": 65.0})
     long_awakenings = _long_awakening_count(sleep)
     if long_awakenings is not None:
         if long_awakenings >= 4:
-            caps.append({"reason": "four_or_more_long_awakenings", "value": 60.0})
-        elif long_awakenings >= 3 or (long_awakenings == 2 and (age is None or age < 65)):
-            caps.append({"reason": "two_or_three_long_awakenings", "value": 85.0})
+            caps.append({"reason": "four_or_more_long_awakenings", "value": 45.0})
+        elif long_awakenings >= 3:
+            caps.append({"reason": "three_long_awakenings", "value": 70.0})
+        elif long_awakenings == 2 and (age is None or age < 65):
+            caps.append({"reason": "two_long_awakenings", "value": 85.0})
     if caps:
         score = min(score, *(cap["value"] for cap in caps))
     return {
@@ -257,10 +359,7 @@ def _timing_score(
     target_midpoint = _circular_midpoint(references["start_minute"], references["end_minute"])
     drift = _circular_minutes_diff(actual_midpoint, target_midpoint)
     # score circular midpoint drift against the timing anchors
-    score = _interpolate_anchors(
-        drift,
-        [(0, 100), (30, 100), (60, 90), (90, 75), (120, 50), (180, 0)],
-    )
+    score = _interpolate_anchors(drift, TIMING_SCORE_ANCHORS)
     return {
         "score": round(score, 1),
         "sleep_latency_minutes": None,
@@ -268,6 +367,21 @@ def _timing_score(
         "midsleep_alignment_drift_minutes": round(drift, 1),
         "reference_nights": references["count"],
     }
+
+
+def _timing_duplicates_regularity(
+    regularity: dict[str, Any] | None,
+    timing: dict[str, Any] | None,
+) -> bool:
+    if not regularity or not timing or timing.get("sleep_latency_minutes") is not None:
+        return False
+    regularity_drift = regularity.get("average_drift_minutes")
+    timing_drift = timing.get("midsleep_alignment_drift_minutes")
+    return (
+        isinstance(regularity_drift, int | float)
+        and isinstance(timing_drift, int | float)
+        and abs(float(regularity_drift) - float(timing_drift)) <= 0.1
+    )
 
 
 def _sleep_physiology_score(
@@ -746,7 +860,11 @@ def _sleep_confidence_phase(components: dict[str, Any], sleep: SleepSession) -> 
 def _sleep_reasons(components: dict[str, Any]) -> list[dict[str, Any]]:
     reasons = []
     for key, component in components.items():
-        if not isinstance(component, dict) or component.get("score") is None:
+        if (
+            not isinstance(component, dict)
+            or component.get("score") is None
+            or component.get("excluded_from_score")
+        ):
             continue
         if component["score"] < 70:
             reasons.append(

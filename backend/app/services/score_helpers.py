@@ -28,9 +28,9 @@ from app.services.metric_rollups import RollupPoint, rollup_points_for_metric
 
 BASELINE_VERSION = "baseline_v2"
 
-SLEEP_SCORE_VERSION = "sleep_score_v2"
+SLEEP_SCORE_VERSION = "sleep_score_v3"
 
-READINESS_SCORE_VERSION = "readiness_score_v2"
+READINESS_SCORE_VERSION = "readiness_score_v3"
 
 STRAIN_LOAD_VERSION = "strain_load_v2"
 

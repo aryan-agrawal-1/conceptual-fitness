@@ -287,10 +287,9 @@ def test_rebuild_scores_materializes_sleep_strain_readiness_and_target(session) 
     assert readiness.status.value == "scored"
     assert readiness.value and readiness.value > 60
     assert readiness.inputs["uses_same_day_strain"] is False
-    assert readiness.inputs["algorithm_config"]["core_weights"] == {
-        "sleep_adequacy_debt": 0.35,
-        "autonomic_recovery": 0.35,
-        "recent_load_fit": 0.30,
+    assert readiness.inputs["algorithm_config"]["base_weights"] == {
+        "sleep_adequacy_debt": 0.55,
+        "autonomic_recovery": 0.45,
     }
     assert readiness.components["confidence"]["level"] in {"moderate", "high"}
 
@@ -393,14 +392,23 @@ def test_sleep_stage_score_uses_timeline_not_duplicated_summary(session) -> None
     assert stages_component["timeline_coverage"] == 0.997
 
 
-def test_sleep_duration_uses_shortfall_anchors_and_deadband() -> None:
+def test_sleep_duration_uses_full_shortfall_anchors() -> None:
     from app.services.scores import _duration_score
 
-    assert _duration_score(450, 480)["score"] == 100
-    assert _duration_score(390, 480)["score"] == 90
-    assert _duration_score(270, 480)["score"] == 35
+    assert _duration_score(450, 480)["score"] == 94
+    assert _duration_score(390, 480)["score"] == 70
+    assert _duration_score(270, 480)["score"] == 20
+    assert _duration_score(450, 480)["allowance_minutes"] == 0
     assert _duration_score(600, 480)["unusually_long"] is False
     assert _duration_score(601, 480)["unusually_long"] is True
+
+
+def test_sleep_stages_are_a_direct_five_percent_component() -> None:
+    from app.services.sleep_scores import _stage_adjusted_sleep_score
+
+    assert _stage_adjusted_sleep_score(80, {"score": 100}) == 81
+    assert _stage_adjusted_sleep_score(80, {"score": 40}) == 78
+    assert _stage_adjusted_sleep_score(80, None) == 80
 
 
 def test_sleep_continuity_uses_waso_and_fragmentation_caps() -> None:
@@ -444,11 +452,12 @@ def test_readiness_sleep_recovery_carries_burden_without_double_counting_latest_
 
     component = _readiness_sleep_component(session, user.id, profile, end, sleep)
 
-    assert component["duration"]["shortfall_minutes"] == 30
+    assert component["duration"]["shortfall_minutes"] == 60
     assert component["sleep_burden_minutes"] == 170.9
     assert component["burden_before_latest_shortfall_minutes"] == 140.9
     assert component["missing_sleep_nights_7d"] == 0
-    assert component["score"] == 96.1
+    assert component["score"] == 87.4
+    assert component["duration_ceiling"] == 99
 
 
 def test_readiness_autonomic_recovery_uses_current_and_three_night_deviations(session) -> None:
@@ -477,9 +486,10 @@ def test_readiness_autonomic_recovery_uses_current_and_three_night_deviations(se
 
     component = _autonomic_component(session, user.id, end)
 
-    assert component["score"] == 85
+    assert component["score"] == 65
     assert component["hrv"]["current_z"] == -1
     assert component["hrv"]["recent_valid_nights"] == 3
+    assert component["hrv"]["favourable_deviation"] == -1
     assert component["rhr"]["adverse_deviation"] == 1
 
 
@@ -536,10 +546,10 @@ def test_readiness_load_recovery_weights_the_more_affected_channel(session) -> N
     component = _load_recovery_component(session, user.id, day)
 
     assert component["cardio"]["residual_exposure"] == 150
-    assert component["cardio"]["score"] == 90
+    assert component["cardio"]["score"] == 75
     assert component["muscular"]["residual_exposure"] == 30
-    assert component["muscular"]["score"] == 65
-    assert component["score"] == 72.5
+    assert component["muscular"]["score"] == 55
+    assert component["score"] == 61
 
 
 def test_readiness_anomaly_modifier_requires_persistence_and_caps_severe_oxygen(session) -> None:

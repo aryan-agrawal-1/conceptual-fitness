@@ -761,9 +761,9 @@ def _readiness_component_message(key: str, component: dict[str, Any]) -> str | N
             hours = round(float(burden) / 60, 1)
             return f"Current sleep burden is {hours:g}h."
     if key == "autonomic_recovery":
-        return "The current night and recent three-night trend are compared with your baseline."
+        return "The current night and previous three-night trend are compared with your baseline."
     if key == "recent_load_fit":
-        return "Cardiovascular and muscular load decay across the previous three days."
+        return "Cardiovascular and muscular load decay across the previous three days and act as a readiness limiter."
     return None
 
 
@@ -801,7 +801,24 @@ def _readiness_context(
     end: date,
 ) -> dict[str, object]:
     valid_scores = [score for score in scores if score.value is not None]
+    if not valid_scores:
+        latest_prior = session.scalar(
+            select(DailyScore)
+            .where(
+                DailyScore.user_id == user_id,
+                DailyScore.score_type == "readiness",
+                DailyScore.algorithm_version == READINESS_SCORE_VERSION,
+                DailyScore.value.is_not(None),
+                DailyScore.score_date <= end,
+            )
+            .order_by(DailyScore.score_date.desc())
+            .limit(1)
+        )
+        if latest_prior is not None:
+            valid_scores = [latest_prior]
     latest = _latest_scored_score(scores) or _latest_score(scores)
+    if latest is None and valid_scores:
+        latest = valid_scores[-1]
     components = latest.components if latest and latest.components else {}
     sleep = components.get("sleep_adequacy_debt") if isinstance(components.get("sleep_adequacy_debt"), dict) else {}
     anomaly = components.get("illness_anomaly_context") if isinstance(components.get("illness_anomaly_context"), dict) else {}
@@ -1028,7 +1045,7 @@ def _latest_scored_score(scores: list[DailyScore]) -> DailyScore | None:
 def _readiness_band(value: float | None) -> str | None:
     if value is None:
         return None
-    if value >= 80:
+    if value >= 85:
         return "high"
     if value >= 60:
         return "medium"
@@ -1073,7 +1090,7 @@ _READINESS_COMPONENT_LABELS = {
 }
 
 _READINESS_COMPONENT_WEIGHTS = {
-    "sleep_adequacy_debt": 0.35,
-    "autonomic_recovery": 0.35,
-    "recent_load_fit": 0.30,
+    "sleep_adequacy_debt": 0.55,
+    "autonomic_recovery": 0.45,
+    "recent_load_fit": 0.0,
 }

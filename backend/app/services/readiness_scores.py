@@ -42,45 +42,52 @@ from app.services.sleep_scores import (
 )
 
 
-READINESS_V2_CONFIG = {
-    "core_weights": {
-        "sleep_adequacy_debt": 0.35,
-        "autonomic_recovery": 0.35,
-        "recent_load_fit": 0.30,
+READINESS_V3_CONFIG = {
+    "base_weights": {
+        "sleep_adequacy_debt": 0.55,
+        "autonomic_recovery": 0.45,
     },
-    "sleep_weights": {"duration": 0.55, "continuity": 0.25, "burden": 0.20},
+    "sleep_weights": {"duration": 0.60, "continuity": 0.25, "burden": 0.15},
     "autonomic_weights": {"hrv": 0.60, "rhr": 0.40},
-    "current_autonomic_weight": 0.40,
-    "recent_autonomic_weight": 0.60,
+    "current_autonomic_weight": 0.70,
+    "recent_autonomic_weight": 0.30,
     "affected_load_weight": 0.70,
     "better_load_weight": 0.30,
+    "load_penalty_weight": 0.40,
+    "load_neutral_score": 90.0,
+    "duration_ceiling_buffer": 15.0,
 }
 
 AUTONOMIC_SCORE_ANCHORS = [
-    (0.0, 100.0),
-    (0.5, 100.0),
-    (1.0, 85.0),
-    (1.5, 65.0),
-    (2.0, 40.0),
-    (3.0, 10.0),
-    (4.0, 0.0),
+    (-4.0, 0.0),
+    (-3.0, 10.0),
+    (-2.0, 35.0),
+    (-1.5, 50.0),
+    (-1.0, 65.0),
+    (-0.5, 75.0),
+    (0.0, 82.0),
+    (0.5, 90.0),
+    (1.0, 96.0),
+    (1.5, 100.0),
 ]
 
 LOAD_SCORE_ANCHORS = [
-    (0.0, 100.0),
-    (0.5, 100.0),
-    (1.0, 90.0),
-    (2.0, 65.0),
-    (3.0, 35.0),
+    (0.0, 90.0),
+    (0.25, 90.0),
+    (0.5, 85.0),
+    (1.0, 75.0),
+    (2.0, 55.0),
+    (3.0, 30.0),
     (4.0, 10.0),
 ]
 
 BURDEN_SCORE_ANCHORS = [
-    (0.0, 100.0),
-    (0.5, 90.0),
-    (1.0, 75.0),
-    (2.0, 50.0),
-    (3.0, 25.0),
+    (0.0, 95.0),
+    (0.25, 90.0),
+    (0.5, 82.0),
+    (1.0, 68.0),
+    (2.0, 42.0),
+    (3.0, 20.0),
     (4.0, 0.0),
 ]
 
@@ -133,7 +140,7 @@ def _upsert_readiness_score(
                 "main_sleep_id": sleep.id,
                 "uses_same_day_strain": False,
                 "required_blocks_missing": missing_blocks,
-                "algorithm_config": READINESS_V2_CONFIG,
+                "algorithm_config": READINESS_V3_CONFIG,
             },
             reasons=[
                 _reason(
@@ -145,21 +152,29 @@ def _upsert_readiness_score(
             ],
         )
 
-    core = sum(
+    base_readiness = sum(
         float(components[key]["score"]) * weight
-        for key, weight in READINESS_V2_CONFIG["core_weights"].items()
+        for key, weight in READINESS_V3_CONFIG["base_weights"].items()
     )
-    value = _clamp(core - float(anomaly["penalty"]), 0, 100)
-    caps = [*sleep_component["readiness_caps"]]
+    load_penalty = READINESS_V3_CONFIG["load_penalty_weight"] * max(
+        0.0,
+        READINESS_V3_CONFIG["load_neutral_score"] - float(load_recovery["score"]),
+    )
+    value = _clamp(base_readiness - load_penalty - float(anomaly["penalty"]), 0, 100)
+    cap_rules = [*sleep_component["readiness_caps"]]
+    duration_ceiling = float(sleep_component["duration_ceiling"])
+    if value > duration_ceiling:
+        cap_rules.append({"reason": "sleep_duration_ceiling", "value": duration_ceiling})
     if anomaly.get("readiness_cap") is not None:
-        caps.append(
+        cap_rules.append(
             {
                 "reason": anomaly.get("cap_reason") or "illness_anomaly",
                 "value": float(anomaly["readiness_cap"]),
             }
         )
-    if caps:
-        value = min(value, *(float(cap["value"]) for cap in caps))
+    caps = [cap for cap in cap_rules if value > float(cap["value"])]
+    if cap_rules:
+        value = min(value, *(float(cap["value"]) for cap in cap_rules))
     value = round(value)
     return _set_score(
         score,
@@ -172,10 +187,11 @@ def _upsert_readiness_score(
         inputs={
             "main_sleep_id": sleep.id,
             "uses_same_day_strain": False,
-            "core_readiness": round(core, 2),
+            "base_readiness": round(base_readiness, 2),
+            "load_penalty": round(load_penalty, 2),
             "anomaly_penalty": anomaly["penalty"],
             "caps_applied": caps,
-            "algorithm_config": READINESS_V2_CONFIG,
+            "algorithm_config": READINESS_V3_CONFIG,
         },
         reasons=_readiness_reasons(components, caps),
     )
@@ -201,30 +217,27 @@ def _readiness_sleep_component(
     score = None
     if burden["precise"]:
         numerator = (
-            READINESS_V2_CONFIG["sleep_weights"]["duration"] * float(duration["score"])
-            + READINESS_V2_CONFIG["sleep_weights"]["burden"] * burden_score
+            READINESS_V3_CONFIG["sleep_weights"]["duration"] * float(duration["score"])
+            + READINESS_V3_CONFIG["sleep_weights"]["burden"] * burden_score
         )
         denominator = (
-            READINESS_V2_CONFIG["sleep_weights"]["duration"]
-            + READINESS_V2_CONFIG["sleep_weights"]["burden"]
+            READINESS_V3_CONFIG["sleep_weights"]["duration"]
+            + READINESS_V3_CONFIG["sleep_weights"]["burden"]
         )
         if continuity is not None:
             numerator += (
-                READINESS_V2_CONFIG["sleep_weights"]["continuity"] * float(continuity["score"])
+                READINESS_V3_CONFIG["sleep_weights"]["continuity"] * float(continuity["score"])
             )
-            denominator += READINESS_V2_CONFIG["sleep_weights"]["continuity"]
+            denominator += READINESS_V3_CONFIG["sleep_weights"]["continuity"]
         score = round(numerator / denominator, 1)
 
     caps: list[dict[str, Any]] = []
-    shortfall = float(duration["shortfall_minutes"])
-    if shortfall >= 300:
-        caps.append({"reason": "duration_shortfall_5h", "value": 30.0})
-    elif shortfall >= 240:
-        caps.append({"reason": "duration_shortfall_4h", "value": 50.0})
-    elif shortfall >= 180:
-        caps.append({"reason": "duration_shortfall_3h", "value": 70.0})
     if continuity and continuity.get("severe_fragmentation"):
-        caps.append({"reason": "severe_fragmentation", "value": 70.0})
+        caps.append({"reason": "severe_fragmentation", "value": 65.0})
+    duration_ceiling = min(
+        100.0,
+        float(duration["score"]) + READINESS_V3_CONFIG["duration_ceiling_buffer"],
+    )
     return {
         "score": score,
         "duration": duration,
@@ -240,6 +253,7 @@ def _readiness_sleep_component(
             3,
         ),
         "missing_sleep_nights_7d": burden["missing_nights_7d"],
+        "duration_ceiling": round(duration_ceiling, 1),
         "readiness_caps": caps,
     }
 
@@ -293,7 +307,7 @@ def _sleep_burden_state(
     }
 
 
-# combine the current autonomic deviation with the latest three-night median
+# combine the current autonomic deviation with the previous three-night median
 def _autonomic_component(session: Session, user_id: str, day: date) -> dict[str, Any] | None:
     hrv = _autonomic_metric_component(session, user_id, day, "heart_rate_variability")
     rhr = _autonomic_metric_component(session, user_id, day, "resting_heart_rate")
@@ -301,8 +315,8 @@ def _autonomic_component(session: Session, user_id: str, day: date) -> dict[str,
         return None
     if hrv is not None and rhr is not None:
         score = (
-            READINESS_V2_CONFIG["autonomic_weights"]["hrv"] * float(hrv["score"])
-            + READINESS_V2_CONFIG["autonomic_weights"]["rhr"] * float(rhr["score"])
+            READINESS_V3_CONFIG["autonomic_weights"]["hrv"] * float(hrv["score"])
+            + READINESS_V3_CONFIG["autonomic_weights"]["rhr"] * float(rhr["score"])
         )
     else:
         score = float((hrv or rhr or {})["score"])
@@ -324,18 +338,18 @@ def _autonomic_metric_component(
     if current is None:
         return None
     recent = []
-    for current_day in _date_range(day - timedelta(days=3), day):
+    for current_day in _date_range(day - timedelta(days=4), day - timedelta(days=1)):
         item = _metric_z_for_day(session, user_id, current_day, metric)
         if item is not None:
             recent.append(item)
     recent = recent[-3:]
-    recent_z = float(median(item["z"] for item in recent))
+    recent_z = float(median(item["z"] for item in recent)) if recent else float(current["z"])
     combined_z = (
-        READINESS_V2_CONFIG["current_autonomic_weight"] * float(current["z"])
-        + READINESS_V2_CONFIG["recent_autonomic_weight"] * recent_z
+        READINESS_V3_CONFIG["current_autonomic_weight"] * float(current["z"])
+        + READINESS_V3_CONFIG["recent_autonomic_weight"] * recent_z
     )
-    adverse = max(0.0, -combined_z if metric == "heart_rate_variability" else combined_z)
-    score = _interpolate_anchors(adverse, AUTONOMIC_SCORE_ANCHORS)
+    favourable = combined_z if metric == "heart_rate_variability" else -combined_z
+    score = _interpolate_anchors(favourable, AUTONOMIC_SCORE_ANCHORS)
     return {
         "score": round(score, 1),
         "value": current["value"],
@@ -343,7 +357,8 @@ def _autonomic_metric_component(
         "spread": current["spread"],
         "current_z": round(float(current["z"]), 3),
         "recent_z": round(recent_z, 3),
-        "adverse_deviation": round(adverse, 3),
+        "favourable_deviation": round(favourable, 3),
+        "adverse_deviation": round(max(0.0, -favourable), 3),
         "recent_valid_nights": len(recent),
         "reference_days": current["reference_days"],
         "measurement_type": current.get("measurement_type"),
@@ -401,8 +416,8 @@ def _load_recovery_component(session: Session, user_id: str, day: date) -> dict[
     if len(channel_scores) == 2:
         lower, higher = sorted(channel_scores)
         score = (
-            READINESS_V2_CONFIG["affected_load_weight"] * lower
-            + READINESS_V2_CONFIG["better_load_weight"] * higher
+            READINESS_V3_CONFIG["affected_load_weight"] * lower
+            + READINESS_V3_CONFIG["better_load_weight"] * higher
         )
     else:
         score = channel_scores[0]
@@ -787,6 +802,16 @@ def _readiness_reasons(
     reasons = []
     for key in ("sleep_adequacy_debt", "autonomic_recovery", "recent_load_fit"):
         component = components[key]
+        if key == "recent_load_fit":
+            if component["score"] < READINESS_V3_CONFIG["load_neutral_score"]:
+                reasons.append(
+                    _reason(
+                        "readiness_recent_load_fit_low",
+                        "medium",
+                        "Recent load reduced readiness.",
+                    )
+                )
+            continue
         if component["score"] < 70:
             reasons.append(_reason(f"readiness_{key}_low", "medium", f"{key} reduced readiness."))
         elif component["score"] >= 90:
