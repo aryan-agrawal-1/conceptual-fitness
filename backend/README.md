@@ -50,3 +50,18 @@ FastAPI backend for Conceptual Fitness. It handles Google Health API OAuth, encr
 - `GET /sync/status`
 - `GET /dashboard/today`
 - `GET /summaries/daily?start=YYYY-MM-DD&end=YYYY-MM-DD`
+
+## Sync and calibration
+
+Run `celery -A app.tasks.celery_app worker --loglevel=info` alongside the API for
+background imports. The initial import covers 14 calendar days; the historical
+job then covers a fixed 90-day range with separate cursors for each source.
+Completed sources are preserved when a failed or interrupted job is retried.
+The hourly task also queues unfinished calibration work. Interrupted work becomes
+retryable after its one-hour lease expires.
+
+`GET /sync/current/status` reports today's refresh with `is_running`, `is_fresh`,
+and `has_failure`. Historical progress is separate in `historical_backfill`
+(range, overall status, completed/total sources, and source statuses).
+`POST /sync/current/historical-backfill/retry` retries unfinished history.
+Apply migrations before running the updated API and worker.

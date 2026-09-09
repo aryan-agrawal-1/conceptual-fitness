@@ -14,6 +14,7 @@ from app.main import app
 from app.models import (
     ConnectionStatus,
     GoogleAccount,
+    HistoricalBackfill,
     MetricDailyRollup,
     MetricHourlyRollup,
     MetricInterval,
@@ -30,10 +31,17 @@ from app.services.sync import (
     SyncResult,
     SyncWindow,
     run_initial_backfill,
+    run_historical_backfill,
     sync_google_account_range,
     sync_window_from_cursors,
 )
 from app.tasks import sync as sync_tasks
+
+
+@pytest.fixture(autouse=True)
+def isolate_backfill_queue(monkeypatch):
+    monkeypatch.setattr(sync_routes, "enqueue_historical_backfill", lambda account_id: True)
+    monkeypatch.setattr(sync_tasks, "enqueue_historical_backfill", lambda account_id: True)
 
 
 def _connected_account(session) -> GoogleAccount:
@@ -57,6 +65,12 @@ class FixedDate(date):
     @classmethod
     def today(cls) -> date:
         return cls(2026, 6, 21)
+
+
+class FixedNextDate(date):
+    @classmethod
+    def today(cls) -> date:
+        return cls(2026, 6, 22)
 
 
 def _add_success_cursors(
@@ -918,6 +932,72 @@ async def test_initial_backfill_uses_cursor_window_when_account_was_already_sync
     assert captured["end"] == date(2026, 6, 21)
 
 
+@pytest.mark.asyncio
+async def test_historical_backfill_tracks_each_source_and_retries_only_failures(
+    session,
+    monkeypatch,
+) -> None:
+    account = _connected_account(session)
+    calls: list[tuple[str, date, date]] = []
+    sleep_attempts = 0
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start: date,
+        end: date,
+        data_types,
+        client=None,
+        historical_cursor=None,
+    ):
+        nonlocal sleep_attempts
+        data_type = data_types[0]
+        calls.append((data_type, start, end))
+        if data_type == "sleep":
+            sleep_attempts += 1
+        succeeded = data_type != "sleep" or sleep_attempts > 1
+        if not succeeded:
+            historical_cursor.status = SyncStatus.failed
+            historical_cursor.last_error = "provider unavailable"
+            session.add(historical_cursor)
+            session.commit()
+        return SyncResult(
+            google_account_id=account.id,
+            start=start,
+            end=end,
+            records_seen=0,
+            records_stored=0,
+            data_types=[data_type] if succeeded else [],
+        )
+
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("steps", "sleep"))
+    monkeypatch.setattr(sync_service, "sync_google_account_range", fake_sync_google_account_range)
+
+    first = await run_historical_backfill(
+        session,
+        account=account,
+        today=date(2026, 6, 21),
+    )
+    assert [(row.data_type, row.status) for row in first] == [
+        ("steps", SyncStatus.succeeded),
+        ("sleep", SyncStatus.failed),
+    ]
+    monkeypatch.setattr(sync_service, "date", FixedNextDate)
+    second = await run_historical_backfill(
+        session,
+        account=account,
+    )
+
+    assert all(end - start == timedelta(days=89) for _, start, end in calls)
+    assert [data_type for data_type, _, _ in calls] == ["steps", "sleep", "sleep"]
+    assert [(row.data_type, row.status) for row in second] == [
+        ("steps", SyncStatus.succeeded),
+        ("sleep", SyncStatus.succeeded),
+    ]
+    assert session.scalars(select(HistoricalBackfill)).all()
+
+
 def test_sync_all_connected_accounts_uses_cursor_window(session, monkeypatch) -> None:
     account = _connected_account(session)
     _add_success_cursors(
@@ -1076,6 +1156,7 @@ def test_current_sync_reports_already_running(session, auth_headers, monkeypatch
             status=SyncStatus.running,
         )
     )
+    account.last_sync_at = datetime.now(UTC)
     session.commit()
     user = session.get(User, account.user_id)
 
@@ -1090,6 +1171,61 @@ def test_current_sync_reports_already_running(session, auth_headers, monkeypatch
     payload = response.json()
     assert payload["status"] == "already_running"
     assert payload["is_running"] is True
+
+
+def test_current_sync_retries_only_failed_sources_even_when_fresh(
+    session,
+    auth_headers,
+    monkeypatch,
+) -> None:
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC)
+    session.add_all(
+        [
+            SyncCursor(
+                google_account_id=account.id,
+                data_type="steps",
+                status=SyncStatus.succeeded,
+                last_successful_end=date.today(),
+            ),
+            SyncCursor(
+                google_account_id=account.id,
+                data_type="sleep",
+                status=SyncStatus.failed,
+                last_error="provider unavailable",
+            ),
+        ]
+    )
+    session.commit()
+    user = session.get(User, account.user_id)
+    captured: dict[str, object] = {}
+
+    async def fake_sync_google_account_range(
+        session,
+        *,
+        account,
+        start,
+        end,
+        data_types,
+        client=None,
+    ):
+        captured["data_types"] = data_types
+        return SyncResult(
+            google_account_id=account.id,
+            start=start,
+            end=end,
+            records_seen=0,
+            records_stored=0,
+            data_types=list(data_types),
+        )
+
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+
+    response = TestClient(app).post("/sync/current", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "synced"
+    assert captured["data_types"] == ("sleep",)
 
 
 def test_current_sync_status_is_scoped_to_current_user(session, auth_headers) -> None:
@@ -1124,6 +1260,50 @@ def test_current_sync_status_is_scoped_to_current_user(session, auth_headers) ->
     assert payload["account_id"] == account.id
     assert payload["is_running"] is False
     assert payload["cursors"] == []
+
+
+def test_current_sync_status_exposes_stable_historical_backfill_progress(
+    session,
+    auth_headers,
+) -> None:
+    account = _connected_account(session)
+    session.add_all(
+        [
+            HistoricalBackfill(
+                google_account_id=account.id,
+                data_type="steps",
+                range_start=date(2026, 3, 24),
+                range_end=date(2026, 6, 21),
+                status=SyncStatus.succeeded,
+            ),
+            HistoricalBackfill(
+                google_account_id=account.id,
+                data_type="sleep",
+                range_start=date(2026, 3, 24),
+                range_end=date(2026, 6, 21),
+                status=SyncStatus.pending,
+            ),
+        ]
+    )
+    session.commit()
+    user = session.get(User, account.user_id)
+
+    response = TestClient(app).get("/sync/current/status", headers=auth_headers(user))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["is_running"] is False
+    assert payload["historical_backfill"] == {
+        "range_start": "2026-03-24",
+        "range_end": "2026-06-21",
+        "completed_sources": 1,
+        "total_sources": 2,
+        "status": "running",
+        "sources": [
+            {"data_type": "sleep", "status": "pending", "last_error": None},
+            {"data_type": "steps", "status": "succeeded", "last_error": None},
+        ],
+    }
 
 
 def test_manual_sync_without_dates_uses_cursor_window(session, monkeypatch) -> None:
@@ -1218,3 +1398,183 @@ def test_manual_sync_with_explicit_dates_keeps_requested_range(session, monkeypa
     assert response.status_code == 200
     assert captured["start"] == date(2026, 6, 1)
     assert captured["end"] == date(2026, 6, 3)
+
+
+@pytest.mark.parametrize("recent_account_timestamp", [False, True])
+def test_stale_core_sources_refresh_despite_optional_failure(
+    session, auth_headers, monkeypatch, recent_account_timestamp,
+):
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC) - timedelta(minutes=0 if recent_account_timestamp else 30)
+    _add_success_cursors(session, account, {"steps": date.today() - timedelta(days=17)})
+    session.add(SyncCursor(
+        google_account_id=account.id, data_type="nutrition-log", status=SyncStatus.failed,
+        last_error="missing scope",
+    ))
+    session.commit()
+    captured = []
+
+    async def fake_sync(session, *, account, start, end, data_types):
+        captured.extend(data_types)
+        return SyncResult(account.id, start, end, 0, 0, list(data_types))
+
+    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync)
+    headers = auth_headers(session.get(User, account.user_id))
+    status = TestClient(app).get("/sync/current/status", headers=headers).json()
+    assert status["is_fresh"] is False
+    assert status["has_failure"] is False
+    assert TestClient(app).post("/sync/current", headers=headers).status_code == 200
+    assert tuple(captured) == MVP_SYNC_DATA_TYPES
+
+
+@pytest.mark.asyncio
+async def test_current_sync_stays_running_through_score_rebuild(session, monkeypatch):
+    account = _connected_account(session)
+    observed = []
+
+    def rebuild(session, **kwargs):
+        observed.append(sync_service.account_has_running_sync(session, account))
+
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", rebuild)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", rebuild)
+    await sync_google_account_range(
+        session, account=account, start=date.today(), end=date.today(),
+        data_types=("sleep",), client=FakeResumeGoogleHealthClient(),
+    )
+    assert observed == [True, True]
+    assert account.sync_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_historical_backfill_keeps_current_cursors_and_freshness(session, monkeypatch):
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC)
+    stamp = account.last_sync_at
+    _add_success_cursors(session, account, {"sleep": date.today()})
+    cursor = session.scalar(select(SyncCursor).where(SyncCursor.google_account_id == account.id))
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", lambda *args, **kwargs: None)
+    rows = await run_historical_backfill(session, account=account, client=FakeResumeGoogleHealthClient())
+    assert rows[0].status == SyncStatus.succeeded
+    assert rows[0].range_end - rows[0].range_start == timedelta(days=89)
+    assert cursor.last_successful_start == date.today()
+    assert cursor.last_successful_end == date.today()
+    assert account.last_sync_at == stamp
+
+
+@pytest.mark.asyncio
+async def test_historical_backfill_resumes_saved_page_after_failure(session, monkeypatch):
+    account = _connected_account(session)
+    tokens = []
+
+    class InterruptedClient(FakeResumeGoogleHealthClient):
+        async def iter_data_point_pages_with_tokens(self, data_type, access_token, **kwargs):
+            token = kwargs.get("page_token")
+            tokens.append(token)
+            if token is None:
+                yield [], "next-page"
+                raise RuntimeError("interrupted")
+            yield [], None
+
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", lambda *args, **kwargs: None)
+    first = await run_historical_backfill(session, account=account, client=InterruptedClient())
+    assert first[0].status == SyncStatus.failed
+    assert first[0].last_page_token == "next-page"
+    second = await run_historical_backfill(session, account=account, client=InterruptedClient())
+    assert second[0].status == SyncStatus.succeeded
+    assert tokens == [None, "next-page"]
+    assert session.scalars(select(SyncCursor)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_failed_source_does_not_stop_successful_sources(session, monkeypatch):
+    account = _connected_account(session)
+    calls = []
+
+    class PartialClient(FakeResumeGoogleHealthClient):
+        async def iter_data_point_pages_with_tokens(self, data_type, access_token, **kwargs):
+            calls.append(data_type)
+            if data_type == "sleep":
+                raise RuntimeError("provider unavailable")
+            yield [], None
+
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", lambda *args, **kwargs: None)
+    result = await sync_google_account_range(
+        session, account=account, start=date.today(), end=date.today(),
+        data_types=("sleep", "steps"), client=PartialClient(),
+    )
+    assert calls == ["sleep", "steps"]
+    assert result.data_types == ["steps"]
+    assert account.status == ConnectionStatus.connected
+    assert account.sync_started_at is None
+
+
+@pytest.mark.asyncio
+async def test_score_rebuild_failure_remains_visible_and_retryable(session, auth_headers, monkeypatch):
+    account = _connected_account(session)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("rebuild failed")
+
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", fail)
+    with pytest.raises(RuntimeError):
+        await sync_google_account_range(
+            session, account=account, start=date.today(), end=date.today(),
+            data_types=("sleep",), client=FakeResumeGoogleHealthClient(),
+        )
+    headers = auth_headers(session.get(User, account.user_id))
+    payload = TestClient(app).get("/sync/current/status", headers=headers).json()
+    assert payload["is_running"] is False
+    assert payload["has_failure"] is True
+    assert account.last_sync_at is None
+
+
+def test_historical_queue_is_visible_and_deduplicated(session, monkeypatch):
+    monkeypatch.undo()
+    account = _connected_account(session)
+    session.commit()
+    queued = []
+    monkeypatch.setattr(sync_tasks.historical_backfill, "delay", queued.append)
+    assert sync_tasks.enqueue_historical_backfill(account.id)
+    assert sync_tasks.enqueue_historical_backfill(account.id)
+    assert queued == [account.id]
+    rows = session.scalars(select(HistoricalBackfill)).all()
+    assert len(rows) == len(MVP_SYNC_DATA_TYPES)
+    assert all(row.status == SyncStatus.pending for row in rows)
+    rows[0].status = SyncStatus.succeeded
+    for row in rows[1:]:
+        row.status = SyncStatus.failed
+    session.commit()
+
+    def unavailable(*args):
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(sync_tasks.historical_backfill, "delay", unavailable)
+    assert not sync_tasks.enqueue_historical_backfill(account.id)
+    session.expire_all()
+    assert rows[0].status == SyncStatus.succeeded
+    assert all(row.status == SyncStatus.failed for row in rows[1:])
+
+
+def test_interrupted_historical_job_can_be_retried(session, auth_headers, monkeypatch):
+    account = _connected_account(session)
+    session.add(HistoricalBackfill(
+        google_account_id=account.id, data_type="sleep", status=SyncStatus.running,
+        range_start=date.today() - timedelta(days=89), range_end=date.today(),
+        updated_at=datetime.now(UTC) - timedelta(hours=2),
+    ))
+    session.commit()
+    queued = []
+    monkeypatch.setattr(sync_routes, "enqueue_historical_backfill", lambda account_id: queued.append(account_id) or True)
+    headers = auth_headers(session.get(User, account.user_id))
+    client = TestClient(app)
+    payload = client.get("/sync/current/status", headers=headers).json()
+    assert payload["is_running"] is False
+    assert payload["historical_backfill"]["status"] == "failed"
+    assert client.post("/sync/current/historical-backfill/retry", headers=headers).json()["status"] == "queued"
+    assert queued == [account.id]
