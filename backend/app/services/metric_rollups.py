@@ -38,7 +38,8 @@ HIGH_VOLUME_METRICS = {
     "steps",
     "distance",
 }
-MINUTE_ROLLUP_METRICS = {"heart_rate"}
+MOVEMENT_MINUTE_METRICS = {"steps", "distance"}
+MINUTE_ROLLUP_METRICS = {"heart_rate"} | MOVEMENT_MINUTE_METRICS
 HOURLY_ROLLUP_METRICS = {"distance", "steps", "total_calories"}
 SUM_METRICS = {"time_in_heart_rate_zone", "active_calories", "total_calories", "steps", "distance"}
 SOURCE_PLATFORM_PRIORITY = {
@@ -130,8 +131,10 @@ def replace_high_volume_rollups(
             MetricMinuteRollup.bucket_start < bucket_end,
         ),
     )
-    if metric not in MINUTE_ROLLUP_METRICS:
+    if metric not in MINUTE_ROLLUP_METRICS or metric in HOURLY_ROLLUP_METRICS:
         if metric in HOURLY_ROLLUP_METRICS:
+            if metric in MOVEMENT_MINUTE_METRICS:
+                _insert_minute_aggregates(session, _build_minute_aggregates(account.user_id, records))
             _delete_count(
                 session,
                 delete(MetricHourlyRollup).where(
@@ -415,6 +418,9 @@ def _minute_values(record: HighVolumeRecord) -> list[tuple[datetime, float]]:
     if record.start_time is None or record.end_time is None or record.end_time <= record.start_time:
         return []
     duration = (record.end_time - record.start_time).total_seconds()
+    # Coarse intervals cannot establish movement in any particular minute.
+    if record.metric in MOVEMENT_MINUTE_METRICS and duration > 60:
+        return []
     cursor = _truncate_minute(record.start_time)
     values: list[tuple[datetime, float]] = []
     while cursor < record.end_time:
