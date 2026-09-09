@@ -769,14 +769,20 @@ def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> 
         )
     )
 
-    assert strain.components["source_zone_load"] == {
-        "load_points": 51.15,
-        "zones_seen": 1,
-        "source": "time_in_heart_rate_zone",
-        "workout_load_points": 0.0,
-        "general_activity_load_points": 51.15,
-        "workouts": [],
-    }
+    assert strain.components["source_zone_load"] is None
+    assert strain.value is None
+    # A recorded stationary workout qualifies even without steps.
+    workout = Workout(
+        user_id=user.id, workout_type="cycling", civil_date=day,
+        start_time=_dt(day, 8), end_time=_dt(day, 8, 30),
+        duration_seconds=1800, raw_summary={},
+    )
+    session.add(workout)
+    session.flush()
+    session.expire_all()
+    rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    assert strain.components["source_zone_load"]["workout_load_points"] == 51.15
+    assert strain.components["source_zone_load"]["general_activity_load_points"] == 0
     assert strain.value == 51.1
 
 
@@ -1302,3 +1308,43 @@ def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers)
     assert len(payload["chart"]["points"]) == 12
     scored_month = next(point for point in payload["chart"]["points"] if point["average_score"] is not None)
     assert scored_month["month_start_date"] == start.isoformat()
+
+
+def test_strain_requires_same_minute_movement_except_inside_workouts(session) -> None:
+    from app.services.metric_rollups import HighVolumeRecord, replace_high_volume_rollups
+    from app.services.strain_scores import _cardio_load_from_hr, _movement_minutes
+
+    user = _user_with_profile(session)
+    account = session.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id))
+    day = date(2026, 9, 7)
+    start = _dt(day, 8)
+    records = [
+        HighVolumeRecord(
+            data_type="steps", metric="steps", value=10, unit="count",
+            source_platform="FITBIT", source_device=None, civil_date=day,
+            start_time=start, end_time=start + timedelta(minutes=1),
+        ),
+        HighVolumeRecord(
+            data_type="steps", metric="steps", value=100, unit="count",
+            source_platform="HEALTH_KIT", source_device=None, civil_date=day,
+            start_time=start, end_time=start + timedelta(hours=1),
+        ),
+    ]
+    replace_high_volume_rollups(session, account=account, metric="steps", records=records,
+                                range_start=start, range_end=start + timedelta(hours=1))
+    movement = _movement_minutes(session, user.id, day)
+    assert len(movement) == 1  # A whole-hour total must not become 60 eligible minutes.
+    # SQLite returns naive timestamps; keep the test samples aligned with stored evidence.
+    start = next(iter(movement))
+    samples = [MetricSample(observed_at=start + timedelta(minutes=i), value=140) for i in range(61)]
+    options = dict(movement_minutes=movement, rhr=60, max_hr=200, sex=None)
+    incidental = _cardio_load_from_hr(samples, [], **options)
+    assert incidental["covered_minutes"] == 1
+    assert incidental["general_activity_load_points"] > 0
+    gym = Workout(id="gym", start_time=start + timedelta(minutes=30),
+                  end_time=start + timedelta(minutes=40))
+    with_gym = _cardio_load_from_hr(samples, [gym], **options)
+    assert with_gym["covered_minutes"] == 11
+    assert with_gym["workout_load_points"] > 0
+    assert with_gym["general_activity_load_points"] == incidental["general_activity_load_points"]
+    assert _cardio_load_from_hr(samples, [], **(options | {"movement_minutes": set()}))["load_points"] == 0

@@ -744,3 +744,38 @@ def test_normalizes_body_metrics_and_updates_profile(session) -> None:
     profile = session.scalar(select(UserProfile).where(UserProfile.user_id == account.user_id))
     assert profile.height_cm == 181
     assert profile.weight_kg == 78.5
+
+
+def test_sleep_uses_local_wake_date_and_repairs_unchanged_records(session) -> None:
+    account = _account(session)
+    session.add(UserProfile(user_id=account.user_id, timezone="Europe/London"))
+    point = {
+        "name": "sleep-midnight",
+        "sleep": {
+            "interval": {
+                "startTime": "2026-09-08T20:00:00Z",
+                "endTime": "2026-09-08T23:30:00Z",
+                "endUtcOffset": "3600s",
+            },
+            "metadata": {"mainSleep": True},
+            "summary": {"minutesAsleep": "200"},
+        },
+    }
+    raw = upsert_raw_and_normalized(session, account=account, data_type="sleep", data_point=point)
+    session.flush()
+    sleep = session.scalar(select(SleepSession))
+    assert sleep.civil_date == raw.civil_date == date(2026, 9, 9)
+    assert sleep.is_main_sleep
+    sleep_id = sleep.id
+    raw.civil_date = sleep.civil_date = date(2026, 9, 8)
+    sleep.is_main_sleep = False
+    session.flush()
+    upsert_raw_and_normalized(session, account=account, data_type="sleep", data_point=point)
+    assert sleep.id == sleep_id
+    assert sleep.civil_date == raw.civil_date == date(2026, 9, 9)
+    assert sleep.is_main_sleep
+    del point["sleep"]["interval"]["endUtcOffset"]
+    upsert_raw_and_normalized(session, account=account, data_type="sleep", data_point=point)
+    session.flush()
+    session.expire_all()
+    assert session.scalar(select(SleepSession)).civil_date == date(2026, 9, 9)

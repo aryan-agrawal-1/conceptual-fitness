@@ -1544,7 +1544,7 @@ struct DashboardData {
     let connections: DashboardConnections?
     let syncStatus: [DashboardSyncStatus]
     let dateContext: DashboardDateContext
-    let dailyBrief: String?
+    var dailyBrief: String?
     let aiDebugStatus: String?
 
     static let sample = preview()
