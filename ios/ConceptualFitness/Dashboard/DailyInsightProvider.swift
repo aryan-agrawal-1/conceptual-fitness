@@ -17,6 +17,11 @@ struct DailyInsightProvider {
             return cached
         }
 
+        if let missing = missingScoreBrief(for: bundle.snapshot) {
+            cache(missing, for: bundle.snapshot, slot: slot, kind: .dailyBrief, fingerprint: fingerprint)
+            return missing
+        }
+
         if #available(iOS 26.0, *) {
             if let generated = await generatedSummary(for: bundle, slot: slot, mode: slot == .evening ? .eveningBrief : .dayBrief) {
                 cache(generated, for: bundle.snapshot, slot: slot, kind: .dailyBrief, fingerprint: fingerprint)
@@ -29,6 +34,20 @@ struct DailyInsightProvider {
 
         debugLog("dailyBrief unavailable: no cache and no generated text")
         return nil
+    }
+
+    // Missing scores have no recovery band; don't ask a language model to infer one.
+    func missingScoreBrief(for snapshot: DashboardSnapshot) -> String? {
+        switch (snapshot.scores.sleep?.value, snapshot.scores.readiness?.value) {
+        case (nil, nil):
+            return "Your sleep and readiness scores aren’t available yet, so today’s brief can’t assess your sleep quality or recovery."
+        case (nil, _):
+            return "Your sleep score isn’t available yet, so today’s brief can’t assess your sleep quality."
+        case (_, nil):
+            return "Your readiness score isn’t available yet, so today’s brief can’t assess your recovery."
+        default:
+            return nil
+        }
     }
 
     func previewDailyBrief(now: Date = Date()) -> String {
@@ -54,6 +73,7 @@ struct DailyInsightProvider {
         \(mode.task)
 
         Output rules:
+        - Missing, unknown, or unavailable scores are not zero or low; never infer a recovery or sleep-quality assessment from an unavailable score.
         - Write exactly one sentence.
         - Do not use bullet points.
         - Do not quote numeric scores, metric values, component scores, percentages, load points, or thresholds.
@@ -88,7 +108,7 @@ struct DailyInsightProvider {
             )
             let cleanedText = cleaned(response.content, for: mode)
             debugLog("\(mode.logName) generation completed rawCharacters=\(response.content.count) cleanedCharacters=\(cleanedText?.count ?? 0)")
-            return cleanedText
+            return missingScoreBrief(for: bundle.snapshot) ?? cleanedText
         } catch {
             debugLog("\(mode.logName) generation failed: \(describe(error))")
             return await fallbackSummary(for: bundle, slot: slot, mode: mode, model: model)
@@ -115,6 +135,7 @@ struct DailyInsightProvider {
         HRV: \(formatForPrompt(metrics?.heartRateVariability))
         Recent workouts: \(bundle.recentWorkouts.prefix(3).map { $0.workoutType ?? "workout" }.joined(separator: ", "))
 
+        Missing or unknown scores are unavailable, never zero or low; do not assess recovery or sleep quality from unavailable scores.
         Do not use bullet points or quote the numbers. Write directly to the user. Write exactly one sentence.
         """
         debugLog("\(mode.logName) fallbackPromptCharacters=\(prompt.count)")
@@ -129,7 +150,7 @@ struct DailyInsightProvider {
             )
             let cleanedText = cleaned(response.content, for: mode)
             debugLog("\(mode.logName) fallback completed rawCharacters=\(response.content.count) cleanedCharacters=\(cleanedText?.count ?? 0)")
-            return cleanedText
+            return missingScoreBrief(for: bundle.snapshot) ?? cleanedText
         } catch {
             debugLog("\(mode.logName) fallback failed: \(describe(error))")
             return nil
@@ -242,7 +263,7 @@ struct DailyInsightProvider {
     }
 
     private func cacheKey(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v9.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v10.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func cachedLastText(for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
@@ -262,7 +283,7 @@ struct DailyInsightProvider {
     }
 
     private func lastCacheKey(for slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v9.last.\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v10.last.\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func allowedSnapshotDates(for slot: BriefSlot, now: Date, calendar: Calendar = .current) -> Set<String> {

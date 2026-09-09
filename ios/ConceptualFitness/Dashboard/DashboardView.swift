@@ -356,7 +356,7 @@ struct DashboardView: View {
             if case .loaded(let previous) = loadState,
                previous.snapshot.userID == bundle.snapshot.userID,
                previous.snapshot.date == bundle.snapshot.date {
-                previousBrief = previous.dailyBrief
+                previousBrief = insightProvider.missingScoreBrief(for: bundle.snapshot) ?? previous.dailyBrief
             } else {
                 previousBrief = nil
             }
