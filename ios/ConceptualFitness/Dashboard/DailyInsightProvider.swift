@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import FoundationModels
 
 struct DailyInsightProvider {
@@ -9,14 +10,16 @@ struct DailyInsightProvider {
     func dailyBrief(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
         let slot = BriefSlot(date: now)
         debugLog("dailyBrief requested user=\(bundle.snapshot.userID) date=\(bundle.snapshot.date) slot=\(slot.rawValue) cacheable=\(bundle.snapshot.isCacheableForDailyInsight)")
-        if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .dailyBrief) {
+        let context = DailyInsightContext(bundle: bundle, slot: slot).promptBlock
+        let fingerprint = SHA256.hash(data: Data(context.utf8)).map { String(format: "%02x", $0) }.joined()
+        if let cached = cachedText(for: bundle.snapshot, slot: slot, kind: .dailyBrief, fingerprint: fingerprint) {
             debugLog("dailyBrief cache hit characters=\(cached.count)")
             return cached
         }
 
         if #available(iOS 26.0, *) {
             if let generated = await generatedSummary(for: bundle, slot: slot, mode: slot == .evening ? .eveningBrief : .dayBrief) {
-                cache(generated, for: bundle.snapshot, slot: slot, kind: .dailyBrief)
+                cache(generated, for: bundle.snapshot, slot: slot, kind: .dailyBrief, fingerprint: fingerprint)
                 debugLog("dailyBrief generated characters=\(generated.count)")
                 return generated
             }
@@ -200,7 +203,7 @@ struct DailyInsightProvider {
         return String(String.UnicodeScalarView(scalars[...priorIndex]))
     }
 
-    private func cachedText(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String? {
+    private func cachedText(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind, fingerprint: String) -> String? {
         guard snapshot.isCacheableForDailyInsight else { return nil }
         guard let data = UserDefaults.standard.data(forKey: cacheKey(for: snapshot, slot: slot, kind: kind)),
               let entry = try? JSONDecoder().decode(CachedInsight.self, from: data)
@@ -209,6 +212,7 @@ struct DailyInsightProvider {
         }
         guard entry.userID == snapshot.userID,
               entry.date == snapshot.date,
+              entry.fingerprint == fingerprint,
               entry.slot == slot.rawValue,
               entry.kind == kind.rawValue,
               !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -219,7 +223,7 @@ struct DailyInsightProvider {
         return entry.text
     }
 
-    private func cache(_ text: String, for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) {
+    private func cache(_ text: String, for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind, fingerprint: String) {
         guard snapshot.isCacheableForDailyInsight else { return }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
@@ -229,6 +233,7 @@ struct DailyInsightProvider {
             slot: slot.rawValue,
             kind: kind.rawValue,
             text: cleaned,
+            fingerprint: fingerprint,
             generatedAt: Date()
         )
         guard let data = try? JSONEncoder().encode(entry) else { return }
@@ -237,7 +242,7 @@ struct DailyInsightProvider {
     }
 
     private func cacheKey(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v8.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v9.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func cachedLastText(for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
@@ -257,7 +262,7 @@ struct DailyInsightProvider {
     }
 
     private func lastCacheKey(for slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v8.last.\(slot.rawValue).\(kind.rawValue)"
+        "dailyInsight.v9.last.\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func allowedSnapshotDates(for slot: BriefSlot, now: Date, calendar: Calendar = .current) -> Set<String> {
@@ -629,14 +634,12 @@ private struct CachedInsight: Codable {
     let slot: String
     let kind: String
     let text: String
+    let fingerprint: String
     let generatedAt: Date
 }
 
 private extension DashboardSnapshot {
     var isCacheableForDailyInsight: Bool {
-        guard userID != "preview", dataQuality != "missing", metrics != nil else { return false }
-        return scores.sleep?.value != nil
-            || scores.readiness?.value != nil
-            || metrics?.sleepMinutes != nil
+        userID != "preview"
     }
 }

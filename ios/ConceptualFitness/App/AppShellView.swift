@@ -155,7 +155,6 @@ final class AppSyncCoordinator: ObservableObject {
                 return
             }
             if current.isFresh && !current.hasFailure {
-                refreshToken += 1
                 return
             }
             let response = try await client.syncCurrent()

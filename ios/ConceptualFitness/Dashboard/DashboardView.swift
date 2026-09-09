@@ -135,7 +135,7 @@ struct DashboardView: View {
             }
         }
         .onChange(of: syncCoordinator.refreshToken) { _, _ in
-            guard loadsLiveData else { return }
+            guard loadsLiveData, !isPullRefreshing else { return }
             Task {
                 await reload()
             }
@@ -352,6 +352,14 @@ struct DashboardView: View {
             let displayBundle = try await client.loadDashboard(now: now)
             let bundle = displayBundle.bundle
             guard revision == reloadRevision, !Task.isCancelled else { return }
+            let previousBrief: String?
+            if case .loaded(let previous) = loadState,
+               previous.snapshot.userID == bundle.snapshot.userID,
+               previous.snapshot.date == bundle.snapshot.date {
+                previousBrief = previous.dailyBrief
+            } else {
+                previousBrief = nil
+            }
             loadState = .loaded(
                 DashboardData(
                     snapshot: bundle.snapshot,
@@ -361,7 +369,7 @@ struct DashboardView: View {
                     connections: bundle.connections,
                     syncStatus: bundle.syncStatus,
                     dateContext: displayBundle.dateContext,
-                    dailyBrief: nil,
+                    dailyBrief: previousBrief,
                     aiDebugStatus: nil
                 )
             )
@@ -372,7 +380,7 @@ struct DashboardView: View {
             let dailyBrief = await insightProvider.dailyBrief(for: bundle, now: now)
             guard revision == reloadRevision, !Task.isCancelled,
                   case .loaded(var data) = loadState else { return }
-            data.dailyBrief = dailyBrief
+            data.dailyBrief = dailyBrief ?? data.dailyBrief
             loadState = .loaded(data)
         } catch {
             guard revision == reloadRevision, !Task.isCancelled else { return }
