@@ -27,6 +27,8 @@ struct WeatherStatusChip: View {
 
 struct DailyBriefCard: View {
     let data: DashboardData
+    var isSyncing = false
+    var isStale = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -51,6 +53,15 @@ struct DailyBriefCard: View {
                 ScoreRingView(item: .strain(from: data.snapshot), size: 86)
             }
 
+            if !isSyncing, let score = [data.snapshot.scores.readiness, data.snapshot.scores.sleep]
+                .compactMap({ $0 }).first(where: { $0.value == nil }),
+               let message = score.reasons?.compactMap(\.message).first {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             #if DEBUG
             if let aiDebugStatus = data.aiDebugStatus?.nonEmptyDashboardText {
                 Text(aiDebugStatus)
@@ -69,7 +80,13 @@ struct DailyBriefCard: View {
         let readiness = data.snapshot.scores.readiness?.value
         let sleep = data.snapshot.scores.sleep?.value
 
-        if readiness == nil && sleep == nil { return "Syncing" }
+        if isSyncing { return "Syncing" }
+        if isStale { return "Out of date" }
+        if data.snapshot.scores.readiness?.reasons?.contains(where: { $0.code == "readiness_calibrating" }) == true {
+            return "Calibrating"
+        }
+        if readiness == nil && sleep == nil { return "No data yet" }
+        if readiness == nil || sleep == nil { return "Partial data" }
         if (readiness ?? 0) >= 85 && (sleep ?? 0) >= 85 { return "Excellent" }
         if (readiness ?? 0) >= 70 && (sleep ?? 0) >= 70 { return "Good" }
         if (readiness ?? 100) < 55 || (sleep ?? 100) < 55 { return "Low" }
@@ -82,7 +99,7 @@ struct DailyBriefCard: View {
             return HealthTheme.color(for: .positive)
         case "Low":
             return HealthTheme.color(for: .caution)
-        case "Syncing":
+        case "Syncing", "No data yet", "Out of date", "Calibrating", "Partial data":
             return HealthTheme.color(for: .missing)
         default:
             return HealthTheme.color(for: .stable)
@@ -128,7 +145,7 @@ struct ScoreRingItem {
         let percentage = (ratio ?? 0) * 100
         return ScoreRingItem(
             title: "Strain",
-            valueText: percentage.isFinite ? "\(Int(percentage.rounded()))%" : "--",
+            valueText: ratio != nil && percentage.isFinite ? "\(Int(percentage.rounded()))%" : "--",
             progress: min(max(ratio ?? 0, 0), 1.35),
             color: HealthTheme.color(for: .strain),
             routeMetric: "strain"

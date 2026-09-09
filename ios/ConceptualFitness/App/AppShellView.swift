@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 
 struct AppShellView: View {
     @ObservedObject var authStore: AuthStore
@@ -105,12 +106,13 @@ final class AppSyncCoordinator: ObservableObject {
     @Published private(set) var isSyncing = false
     @Published private(set) var refreshToken = 0
     @Published private(set) var lastSyncAt: Date?
+    @Published private(set) var failureMessage: String?
 
     private let client: DashboardAPIClient
     private var runTask: Task<Void, Never>?
-    private let freshnessInterval: TimeInterval = 15 * 60
     private let pollIntervalNanoseconds: UInt64 = 5_000_000_000
-    private let maxPollAttempts = 24
+    private let maxPollAttempts = 120
+    private let logger = Logger(subsystem: "ConceptualFitness", category: "Sync")
 
     init(client: DashboardAPIClient, initialLastSyncAt: String? = nil) {
         self.client = client
@@ -118,14 +120,8 @@ final class AppSyncCoordinator: ObservableObject {
     }
 
     func updateFromDashboard(_ data: DashboardData) {
-        let newestLastSync = data.lastSyncAt
-        if let newestLastSync, newestLastSync != lastSyncAt {
-            lastSyncAt = newestLastSync
-        }
-        if data.hasRunningSyncStatus && !isSyncing {
-            Task {
-                await syncIfNeeded()
-            }
+        if let date = data.lastSyncAt, date > (lastSyncAt ?? .distantPast) {
+            lastSyncAt = date
         }
     }
 
@@ -145,50 +141,80 @@ final class AppSyncCoordinator: ObservableObject {
     }
 
     private func performSyncIfNeeded() async {
-        guard !isFresh else { return }
         isSyncing = true
+        failureMessage = nil
         defer { isSyncing = false }
 
         do {
+            let current = try await client.currentSyncStatus()
+            if apply(lastSyncAt: current.lastSyncAt) {
+                refreshToken += 1
+            }
+            if current.isRunning {
+                await pollUntilFinished()
+                return
+            }
+            if current.isFresh && !current.hasFailure {
+                refreshToken += 1
+                return
+            }
             let response = try await client.syncCurrent()
             apply(lastSyncAt: response.lastSyncAt)
             switch response.status {
-            case .synced:
+            case .synced, .skippedFresh:
+                let status = try await client.currentSyncStatus()
+                apply(lastSyncAt: status.lastSyncAt)
                 refreshToken += 1
+                failureMessage = status.hasFailure ? "Health data refresh failed. Try again." : nil
             case .alreadyRunning:
                 await pollUntilFinished()
-            case .skippedFresh:
-                break
             }
+        } catch let error as URLError where error.code == .timedOut {
+            // The server may still be importing after the request times out.
+            await pollUntilFinished()
         } catch {
-            return
+            logger.error("Sync request failed: \(String(describing: type(of: error)), privacy: .public)")
+            failureMessage = "Health data couldn’t refresh. Check your connection and try again."
         }
+    }
+
+    func retry() async {
+        await syncIfNeeded()
     }
 
     private func pollUntilFinished() async {
         for _ in 0..<maxPollAttempts {
             try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+            guard !Task.isCancelled else { return }
             do {
                 let status = try await client.currentSyncStatus()
                 apply(lastSyncAt: status.lastSyncAt)
                 if !status.isRunning {
                     refreshToken += 1
+                    if status.hasFailure {
+                        failureMessage = "Health data refresh failed. Try again."
+                        return
+                    }
+                    failureMessage = nil
                     return
                 }
             } catch {
+                logger.error("Sync polling failed: \(String(describing: type(of: error)), privacy: .public)")
+                failureMessage = "Health data couldn’t refresh. Check your connection and try again."
                 return
             }
         }
+        logger.error("Sync polling timed out")
+        failureMessage = "Health data is still syncing. Try again to check its progress."
     }
 
-    private var isFresh: Bool {
-        guard let lastSyncAt else { return false }
-        return Date().timeIntervalSince(lastSyncAt) < freshnessInterval
-    }
-
-    private func apply(lastSyncAt value: String?) {
-        guard let date = DashboardFormatters.parseBackendDateTime(value) else { return }
+    @discardableResult
+    private func apply(lastSyncAt value: String?) -> Bool {
+        guard let date = DashboardFormatters.parseBackendDateTime(value), date != lastSyncAt else {
+            return false
+        }
         lastSyncAt = date
+        return true
     }
 }
 

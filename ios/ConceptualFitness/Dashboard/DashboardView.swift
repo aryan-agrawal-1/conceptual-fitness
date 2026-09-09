@@ -15,6 +15,9 @@ struct DashboardView: View {
     @State private var weather = WeatherData.fallback
     @State private var weatherStatus = "Weather preview"
     @State private var showsLocation = false
+    @State private var dashboardFailureMessage: String?
+    @State private var isPullRefreshing = false
+    @State private var reloadRevision = 0
     #if DEBUG
     @State private var showsWeatherLab = false
     #endif
@@ -51,6 +54,12 @@ struct DashboardView: View {
             ScrollView {
                 LazyVStack(spacing: 24) {
                     hero
+                    if let failureMessage = syncCoordinator.failureMessage {
+                        syncFailureCard(failureMessage)
+                    }
+                    if let dashboardFailureMessage {
+                        dashboardFailureCard(dashboardFailureMessage)
+                    }
                     content
                 }
                 .padding(.bottom, 32)
@@ -58,6 +67,8 @@ struct DashboardView: View {
             .scrollIndicators(.hidden)
             .refreshable {
                 if loadsLiveData {
+                    isPullRefreshing = true
+                    defer { isPullRefreshing = false }
                     await syncCoordinator.syncIfNeeded()
                     await reload()
                 }
@@ -68,9 +79,10 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
-                    if syncCoordinator.isSyncing {
+                    if syncCoordinator.isSyncing && !isPullRefreshing {
                         ProgressView()
                             .controlSize(.small)
+                            .accessibilityLabel("Syncing health data")
                     }
                     Text(lastSyncedTitle)
                 }
@@ -130,6 +142,40 @@ struct DashboardView: View {
         }
     }
 
+    private func syncFailureCard(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(message)
+                .font(.subheadline)
+            Button("Retry") {
+                Task { await syncCoordinator.retry() }
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityHint("Attempts the health data refresh again")
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassSurface(cornerRadius: 20)
+        .padding(.horizontal, 20)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func dashboardFailureCard(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(message)
+                .font(.subheadline)
+            Button("Reload dashboard") {
+                Task { await reload() }
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityHint("Loads the latest dashboard data again")
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassSurface(cornerRadius: 20)
+        .padding(.horizontal, 20)
+        .accessibilityElement(children: .contain)
+    }
+
     private var hero: some View {
         ZStack(alignment: .top) {
             if usesWeatherBackground {
@@ -175,11 +221,11 @@ struct DashboardView: View {
 
                 switch loadState {
                 case .loaded(let data):
-                    DailyBriefCard(data: data)
+                    DailyBriefCard(data: data, isSyncing: syncCoordinator.isSyncing, isStale: dashboardFailureMessage != nil || syncCoordinator.failureMessage != nil)
                 case .loading:
                     DailyBriefSkeleton()
                 case .failed:
-                    DailyBriefCard(data: previewData)
+                    EmptyView()
                 }
             }
             .padding(.horizontal, 20)
@@ -196,18 +242,22 @@ struct DashboardView: View {
                 .padding(.top, 12)
         case .failed(let message):
             VStack(alignment: .leading, spacing: 12) {
-                Text("Using preview data")
+                Text("Dashboard unavailable")
                     .font(.headline)
                 Text(message)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                Button("Try again") {
+                    Task { await reload() }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityHint("Loads the latest dashboard data again")
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassSurface(cornerRadius: 20)
             .padding(.horizontal, 20)
 
-            dashboardSections(data: previewData)
         case .loaded(let data):
             dashboardSections(data: data)
         }
@@ -226,7 +276,7 @@ struct DashboardView: View {
         case .loading:
             return insightProvider.cachedDailyBriefForCurrentSlot()?.nonEmptyDashboardText
         case .failed:
-            return previewData.dailyBrief?.nonEmptyDashboardText
+            return nil
         }
     }
 
@@ -287,6 +337,8 @@ struct DashboardView: View {
 
     @MainActor
     private func reload() async {
+        reloadRevision += 1
+        let revision = reloadRevision
         let hadLoadedData: Bool
         if case .loaded = loadState {
             hadLoadedData = true
@@ -299,10 +351,7 @@ struct DashboardView: View {
             let now = Date()
             let displayBundle = try await client.loadDashboard(now: now)
             let bundle = displayBundle.bundle
-            let dailyBrief = await insightProvider.dailyBrief(for: bundle, now: now)
-            let aiDebugStatus = dailyBrief == nil
-                ? "AI unavailable: FoundationModels generation failed. Check [DailyInsightProvider] logs."
-                : nil
+            guard revision == reloadRevision, !Task.isCancelled else { return }
             loadState = .loaded(
                 DashboardData(
                     snapshot: bundle.snapshot,
@@ -312,17 +361,26 @@ struct DashboardView: View {
                     connections: bundle.connections,
                     syncStatus: bundle.syncStatus,
                     dateContext: displayBundle.dateContext,
-                    dailyBrief: dailyBrief,
-                    aiDebugStatus: aiDebugStatus
+                    dailyBrief: nil,
+                    aiDebugStatus: nil
                 )
             )
             if case .loaded(let data) = loadState {
                 syncCoordinator.updateFromDashboard(data)
             }
+            dashboardFailureMessage = nil
+            let dailyBrief = await insightProvider.dailyBrief(for: bundle, now: now)
+            guard revision == reloadRevision, !Task.isCancelled,
+                  case .loaded(var data) = loadState else { return }
+            data.dailyBrief = dailyBrief
+            loadState = .loaded(data)
         } catch {
-            print("Dashboard reload failed: \(String(reflecting: error))")
+            guard revision == reloadRevision, !Task.isCancelled else { return }
+            print("Dashboard reload failed: \(String(describing: type(of: error)))")
             if !hadLoadedData {
-                loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString). Start the FastAPI server to load live dashboard data.")
+                loadState = .failed("Your latest health data couldn’t be loaded. Check your connection and try again.")
+            } else {
+                dashboardFailureMessage = "Dashboard refresh failed. Displayed values may be out of date."
             }
         }
     }
@@ -352,7 +410,7 @@ struct DashboardView: View {
         case .loading:
             return syncCoordinator.lastSyncAt
         case .failed:
-            return previewData.lastSyncAt ?? syncCoordinator.lastSyncAt
+            return syncCoordinator.lastSyncAt
         }
     }
 }
