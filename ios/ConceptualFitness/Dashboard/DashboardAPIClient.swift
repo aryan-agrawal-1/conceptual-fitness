@@ -25,6 +25,10 @@ struct DashboardAPIClient {
         try await fetch("/sync/current/status")
     }
 
+    func retryHistoricalBackfill() async throws -> QueuedSyncResponse {
+        try await request("/sync/current/historical-backfill/retry", method: "POST")
+    }
+
     func loadStrainDetail(date: Date = Date(), timeframe: StrainTimeframe) async throws -> StrainDetail {
         let dateString = Self.apiDate.string(from: date)
         return try await fetch("/strain/detail?date=\(dateString)&timeframe=\(timeframe.rawValue)")
@@ -184,6 +188,8 @@ struct CurrentSyncStatus: Decodable {
     let isFresh: Bool
     let lastSyncAt: String?
     let cursors: [DashboardSyncStatus]
+    let historicalBackfill: HistoricalBackfillStatus?
+    let currentHasFailure: Bool?
 
     enum CodingKeys: String, CodingKey {
         case accountID = "account_id"
@@ -191,7 +197,29 @@ struct CurrentSyncStatus: Decodable {
         case isFresh = "is_fresh"
         case lastSyncAt = "last_sync_at"
         case cursors
+        case historicalBackfill = "historical_backfill"
+        case currentHasFailure = "has_failure"
     }
+
+    var hasFailure: Bool {
+        currentHasFailure ?? cursors.contains { $0.status == "failed" }
+    }
+}
+
+struct HistoricalBackfillStatus: Decodable {
+    let status: String
+    let completedSources: Int
+    let totalSources: Int
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case completedSources = "completed_sources"
+        case totalSources = "total_sources"
+    }
+}
+
+struct QueuedSyncResponse: Decodable {
+    let status: String
 }
 
 private extension DashboardBundle {

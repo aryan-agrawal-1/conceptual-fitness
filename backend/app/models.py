@@ -129,6 +129,7 @@ class GoogleAccount(Base):
         DateTime(timezone=True), nullable=True
     )
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -806,6 +807,38 @@ class SyncCursor(Base):
     status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     last_page_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class HistoricalBackfill(Base):
+    __tablename__ = "historical_backfills"
+    __table_args__ = (
+        UniqueConstraint(
+            "google_account_id",
+            "data_type",
+            "range_start",
+            "range_end",
+            name="uq_historical_backfill_range",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    google_account_id: Mapped[str] = mapped_column(
+        ForeignKey("google_accounts.id", ondelete="CASCADE"), index=True
+    )
+    data_type: Mapped[str] = mapped_column(String(80))
+    range_start: Mapped[date] = mapped_column(Date)
+    range_end: Mapped[date] = mapped_column(Date)
+    last_successful_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_successful_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_successful_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_successful_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_page_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )

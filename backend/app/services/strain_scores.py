@@ -43,7 +43,7 @@ from app.services.score_helpers import (
     _workouts_for_day,
     _zone_minutes,
 )
-from app.services.metric_rollups import hourly_rollup_points_for_metric
+from app.services.metric_rollups import rollup_points_for_metric
 
 
 STRAIN_V2_CONFIG = {
@@ -96,11 +96,11 @@ def _upsert_strain_score(
     max_hr, max_hr_source = estimated_max_heart_rate(profile, day)
     max_hr, max_hr_source = _credible_observed_max_hr(samples, workouts, max_hr, max_hr_source)
     rhr, rhr_source = _resting_hr_for_strain(session, user_id, day, samples, summary)
-    movement_hours = _movement_hours(session, user_id, day)
+    movement_minutes = _movement_minutes(session, user_id, day)
     cardio = _cardio_load_from_hr(
         samples,
         workouts,
-        movement_hours=movement_hours,
+        movement_minutes=movement_minutes,
         rhr=rhr,
         max_hr=max_hr,
         sex=profile.sex,
@@ -111,6 +111,7 @@ def _upsert_strain_score(
         day,
         workouts,
         cardio["covered_minute_starts"],
+        movement_minutes=movement_minutes,
         sex=profile.sex,
     )
     if source_zone is None:
@@ -186,7 +187,7 @@ def _upsert_strain_score(
             "resting_hr_source": rhr_source,
             "hr_sample_count": len(samples),
             "workout_count": len(workouts),
-            "movement_evidence_hours": len(movement_hours),
+            "movement_evidence_minutes": len(movement_minutes),
             "cardio_k": _cardio_k(profile.sex),
         },
         reasons=reasons,
@@ -229,7 +230,7 @@ def _cardio_load_from_hr(
     samples: list[MetricSample],
     workouts: list[Workout],
     *,
-    movement_hours: set[datetime],
+    movement_minutes: set[datetime],
     rhr: float | None,
     max_hr: float | None,
     sex: str | None,
@@ -271,6 +272,8 @@ def _cardio_load_from_hr(
         if gap > 75 and workout is None:
             continue
         seconds = min(gap, 60)
+        if workout is not None:
+            seconds = min(seconds, (workout.end_time - current.observed_at).total_seconds())
         if seconds < 30:
             continue
         hr = (
@@ -281,7 +284,7 @@ def _cardio_load_from_hr(
         if hr < 35 or hr > 230:
             continue
         minute_start = current.observed_at.replace(second=0, microsecond=0)
-        has_movement = workout is not None or minute_start.replace(minute=0) in movement_hours
+        has_movement = workout is not None or minute_start in movement_minutes
         if not has_movement:
             continue
         # apply the modified banister dose after the movement gate
@@ -360,11 +363,11 @@ def _cardio_dose(hrr: float, k: float) -> float:
     return 0.64 * hrr * exp(k * hrr) * eligibility
 
 
-def _movement_hours(session: Session, user_id: str, day: date) -> set[datetime]:
+def _movement_minutes(session: Session, user_id: str, day: date) -> set[datetime]:
     points = []
     for metric in ("steps", "distance"):
         points.extend(
-            hourly_rollup_points_for_metric(
+            rollup_points_for_metric(
                 session,
                 user_id=user_id,
                 metric=metric,
@@ -373,7 +376,7 @@ def _movement_hours(session: Session, user_id: str, day: date) -> set[datetime]:
             )
         )
     return {
-        point.observed_at.replace(minute=0, second=0, microsecond=0)
+        point.observed_at.replace(second=0, microsecond=0)
         for point in points
         if point.value > 0
     }
@@ -759,7 +762,7 @@ def _personal_category_rate(
         .where(
             DailyScore.user_id == user_id,
             DailyScore.score_type == "strain",
-            DailyScore.algorithm_version == "strain_load_v2",
+            DailyScore.algorithm_version == STRAIN_LOAD_VERSION,
             DailyScore.score_date >= day - timedelta(days=90),
             DailyScore.score_date < day,
         )
@@ -900,6 +903,7 @@ def _source_zone_load_from_intervals(
     workouts: list[Workout],
     covered_minute_starts: list[datetime],
     *,
+    movement_minutes: set[datetime],
     sex: str | None,
 ) -> dict[str, Any] | None:
     rows = session.execute(
@@ -930,34 +934,32 @@ def _source_zone_load_from_intervals(
         midpoint = hrr_midpoints.get(str(zone_type))
         if midpoint is None:
             continue
-        interval_minutes = interval.value / 60
-        uncovered_minutes = _uncovered_interval_minutes(
-            interval.start_time,
-            interval.end_time,
-            covered,
-        )
-        uncovered_ratio = 0.0 if interval_minutes <= 0 else min(1.0, uncovered_minutes / interval_minutes)
-        interval_load = interval_minutes * _cardio_dose(midpoint, k) * uncovered_ratio
-        if interval_load <= 0:
+        interval_seconds = (interval.end_time - interval.start_time).total_seconds()
+        if interval_seconds <= 0:
             continue
-        total += interval_load
-        attributed_load = 0.0
-        interval_seconds = max(0.0, (interval.end_time - interval.start_time).total_seconds())
-        for workout in workouts:
-            overlap = _overlap_seconds(
-                interval.start_time,
-                interval.end_time,
-                workout.start_time,
-                workout.end_time,
-            )
-            if overlap <= 0 or interval_seconds <= 0:
-                continue
-            # allocate interval load in proportion to workout overlap
-            contribution = interval_load * min(1.0, overlap / interval_seconds)
-            attributed_load += contribution
-            workout_total += contribution
-            workout_contributions[workout.id] = workout_contributions.get(workout.id, 0.0) + contribution
-        general_activity_total += max(0.0, interval_load - attributed_load)
+        # Apply the same minute gate to zone fallbacks and never refill covered HR minutes.
+        density = min(1.0, max(0.0, interval.value / interval_seconds))
+        cursor = interval.start_time.replace(second=0, microsecond=0)
+        contributed = False
+        while cursor < interval.end_time:
+            start = max(cursor, interval.start_time)
+            end = min(cursor + timedelta(minutes=1), interval.end_time)
+            workout = _workout_for_timestamp(start, workouts)
+            if cursor not in covered and (workout is not None or cursor in movement_minutes):
+                if workout is not None:
+                    end = min(end, workout.end_time)
+                contribution = (end - start).total_seconds() / 60 * density * _cardio_dose(midpoint, k)
+                total += contribution
+                contributed = contributed or contribution > 0
+                if workout is not None:
+                    workout_total += contribution
+                    workout_contributions[workout.id] = workout_contributions.get(workout.id, 0.0) + contribution
+                else:
+                    general_activity_total += contribution
+                covered.add(cursor)
+            cursor += timedelta(minutes=1)
+        if not contributed:
+            continue
         zones_seen += 1
     if zones_seen == 0:
         return None
@@ -973,22 +975,6 @@ def _source_zone_load_from_intervals(
             if round(value, 2) > 0
         ],
     }
-
-
-def _uncovered_interval_minutes(
-    start: datetime,
-    end: datetime,
-    covered_minute_starts: set[datetime],
-) -> float:
-    cursor = start.replace(second=0, microsecond=0)
-    uncovered_seconds = 0.0
-    while cursor < end:
-        minute_end = cursor + timedelta(minutes=1)
-        overlap = max(0.0, (min(end, minute_end) - max(start, cursor)).total_seconds())
-        if cursor not in covered_minute_starts:
-            uncovered_seconds += overlap
-        cursor = minute_end
-    return uncovered_seconds / 60
 
 
 def _cardio_rpe_fallback(
@@ -1141,7 +1127,7 @@ def _timestamp_inside_workout(timestamp: datetime, workouts: list[Workout]) -> b
 
 def _workout_for_timestamp(timestamp: datetime, workouts: list[Workout]) -> Workout | None:
     for workout in workouts:
-        if workout.start_time <= timestamp <= workout.end_time:
+        if workout.start_time <= timestamp < workout.end_time:
             return workout
     return None
 

@@ -1,19 +1,25 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+import asyncio
+
+from datetime import UTC, date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
-from app.google_health.data_types import MVP_SYNC_DATA_TYPES
-from app.models import ConnectionStatus, GoogleAccount, SyncCursor
+from app.core.security import utcnow
+from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
+from app.models import ConnectionStatus, GoogleAccount, HistoricalBackfill, SyncCursor
 from app.services.sync import (
+    SYNC_LEASE,
+    SyncAlreadyRunningError,
     account_has_running_sync,
     is_account_sync_fresh,
     sync_google_account_range,
     sync_window_from_cursors,
 )
+from app.tasks.sync import enqueue_historical_backfill
 
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -25,43 +31,62 @@ def current_sync_status(session: DbSession, user: CurrentUser) -> dict[str, obje
     if account is None:
         raise HTTPException(status_code=404, detail="Connected Google Health account not found")
     cursors = _account_cursors(session, account.id)
-    return _current_status_payload(account, cursors)
+    return _current_status_payload(session, account, cursors)
 
 
 @router.post("/current")
-async def current_sync(session: DbSession, user: CurrentUser) -> dict[str, object]:
+def current_sync(session: DbSession, user: CurrentUser) -> dict[str, object]:
     account = _current_connected_account(session, user.id)
     if account is None:
         raise HTTPException(status_code=404, detail="Connected Google Health account not found")
     cursors = _account_cursors(session, account.id)
-    if is_account_sync_fresh(account):
-        return {
-            **_current_status_payload(account, cursors),
-            "status": "skipped_fresh",
-        }
-    if any(cursor.status.value == "running" for cursor in cursors) or account_has_running_sync(
+    failed_types = tuple(
+        cursor.data_type for cursor in cursors
+        if cursor.status.value == "failed"
+        and cursor.data_type in DATA_TYPE_SPECS
+        and DATA_TYPE_SPECS[cursor.data_type].fail_sync_on_error
+    )
+    fresh = is_account_sync_fresh(account, session=session)
+    if account_has_running_sync(
         session,
         account,
     ):
         return {
-            **_current_status_payload(account, cursors),
+            **_current_status_payload(session, account, cursors),
             "status": "already_running",
+        }
+    if fresh and not failed_types:
+        return {
+            **_current_status_payload(session, account, cursors),
+            "status": "skipped_fresh",
         }
 
     today = date.today()
-    window = sync_window_from_cursors(session, account=account, today=today)
+    requested_types = failed_types if fresh and failed_types else MVP_SYNC_DATA_TYPES
+    window = sync_window_from_cursors(
+        session,
+        account=account,
+        data_types=requested_types,
+        today=today,
+    )
     try:
-        result = await sync_google_account_range(
+        result = asyncio.run(sync_google_account_range(
             session,
             account=account,
             start=window.start,
             end=window.end,
-        )
+            data_types=requested_types,
+        ))
+    except SyncAlreadyRunningError:
+        session.refresh(account)
+        return {**_current_status_payload(session, account, cursors), "status": "already_running"}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Health data refresh failed") from exc
     session.refresh(account)
+    if result.data_types and not _historical_backfills(session, account.id):
+        enqueue_historical_backfill(account.id)
     return {
-        **_current_status_payload(account, _account_cursors(session, account.id)),
+        **_current_status_payload(session, account, _account_cursors(session, account.id)),
         "status": "synced",
         "start": result.start,
         "end": result.end,
@@ -69,6 +94,22 @@ async def current_sync(session: DbSession, user: CurrentUser) -> dict[str, objec
         "records_stored": result.records_stored,
         "data_types": result.data_types,
     }
+
+
+@router.post("/current/historical-backfill/retry")
+def retry_current_historical_backfill(
+    session: DbSession,
+    user: CurrentUser,
+) -> dict[str, object]:
+    account = _current_connected_account(session, user.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Connected Google Health account not found")
+    progress = _historical_backfill_payload(_historical_backfills(session, account.id))
+    if progress is not None and progress["status"] in {"running", "complete"}:
+        return {"status": progress["status"], "account_id": account.id}
+    if not enqueue_historical_backfill(account.id):
+        raise HTTPException(status_code=503, detail="Historical backfill could not be queued")
+    return {"status": "queued", "account_id": account.id}
 
 
 # having a manual sync option feels smart
@@ -157,12 +198,25 @@ def _account_cursors(session: DbSession, account_id: str) -> list[SyncCursor]:
     ).all()
 
 
-def _current_status_payload(account: GoogleAccount, cursors: list[SyncCursor]) -> dict[str, object]:
+def _current_status_payload(
+    session: DbSession,
+    account: GoogleAccount,
+    cursors: list[SyncCursor],
+) -> dict[str, object]:
+    backfills = _historical_backfills(session, account.id)
+    historical_backfill = _historical_backfill_payload(backfills)
     return {
         "account_id": account.id,
-        "is_running": any(cursor.status.value == "running" for cursor in cursors),
-        "is_fresh": is_account_sync_fresh(account),
+        "is_running": account_has_running_sync(session, account),
+        "is_fresh": is_account_sync_fresh(account, session=session),
+        "has_failure": account.last_error is not None or any(
+            cursor.status.value == "failed"
+            and cursor.data_type in DATA_TYPE_SPECS
+            and DATA_TYPE_SPECS[cursor.data_type].fail_sync_on_error
+            for cursor in cursors
+        ),
         "last_sync_at": account.last_sync_at,
+        "historical_backfill": historical_backfill,
         "cursors": [
             {
                 "google_account_id": cursor.google_account_id,
@@ -174,5 +228,44 @@ def _current_status_payload(account: GoogleAccount, cursors: list[SyncCursor]) -
                 "updated_at": cursor.updated_at,
             }
             for cursor in cursors
+        ],
+    }
+
+
+def _historical_backfills(session: DbSession, account_id: str) -> list[HistoricalBackfill]:
+    return session.scalars(
+        select(HistoricalBackfill)
+        .where(HistoricalBackfill.google_account_id == account_id)
+        .order_by(HistoricalBackfill.range_end.desc(), HistoricalBackfill.data_type)
+    ).all()
+
+
+def _historical_backfill_payload(rows: list[HistoricalBackfill]) -> dict[str, object] | None:
+    if not rows:
+        return None
+    latest_end = rows[0].range_end
+    latest = [row for row in rows if row.range_end == latest_end]
+    source_statuses = {
+        row.id: "failed" if row.status.value in {"pending", "running"}
+        and row.updated_at.replace(tzinfo=row.updated_at.tzinfo or UTC) < utcnow() - SYNC_LEASE
+        else row.status.value
+        for row in latest
+    }
+    completed = sum(status == "succeeded" for status in source_statuses.values())
+    failed = sum(status == "failed" for status in source_statuses.values())
+    running = any(status in {"pending", "running"} for status in source_statuses.values())
+    return {
+        "range_start": min(row.range_start for row in latest),
+        "range_end": latest_end,
+        "completed_sources": completed,
+        "total_sources": len(latest),
+        "status": "running" if running else "failed" if failed else "complete",
+        "sources": [
+            {
+                "data_type": row.data_type,
+                "status": source_statuses[row.id],
+                "last_error": row.last_error,
+            }
+            for row in latest
         ],
     }

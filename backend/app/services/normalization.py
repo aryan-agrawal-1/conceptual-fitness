@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -20,6 +20,7 @@ from app.models import (
     Workout,
     new_uuid,
 )
+from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.metric_rollups import HighVolumeRecord
 from app.services.workout_records import normalize_provider_workout
 
@@ -70,6 +71,13 @@ def upsert_raw_and_normalized(
     else:
         if raw_record.content_hash == raw_hash and raw_record.source_record_id == source_record_id:
             if _normalized_exists(session, raw_record.id, storage=spec.storage):
+                if spec.storage == "sleep":
+                    sleep = session.scalar(select(SleepSession).where(SleepSession.raw_record_id == raw_record.id))
+                    wake_date = _sleep_wake_date(session, account, payload)
+                    if sleep is not None and wake_date is not None:
+                        raw_record.civil_date = sleep.civil_date = wake_date
+                        metadata = payload.get("metadata") or {}
+                        sleep.is_main_sleep = bool(metadata.get("mainSleep", metadata.get("main", False)))
                 return raw_record
         raw_record.raw_json = data_point
         raw_record.content_hash = raw_hash
@@ -81,6 +89,8 @@ def upsert_raw_and_normalized(
     raw_record.civil_date = _record_civil_date(payload) or (
         raw_record.start_time.date() if raw_record.start_time else None
     )
+    if spec.storage == "sleep":
+        raw_record.civil_date = _sleep_wake_date(session, account, payload)
     session.add(raw_record)
     session.flush()
 
@@ -545,6 +555,23 @@ def _metric_numeric_value(spec: DataTypeSpec, payload: dict[str, Any]) -> float 
     return _extract_numeric_value(payload)
 
 
+def _sleep_wake_date(session: Session, account: GoogleAccount, payload: dict[str, Any]) -> date | None:
+    interval = payload.get("interval") or {}
+    civil_end = _parse_civil_date(interval.get("civilEndTime"))
+    if civil_end is not None:
+        return civil_end
+    _, end_time = _record_times(payload)
+    if end_time is None:
+        return None
+    offset = interval.get("endUtcOffset")
+    if isinstance(offset, str) and offset.endswith("s"):
+        try:
+            return end_time.astimezone(timezone(timedelta(seconds=float(offset[:-1])))).date()
+        except (ValueError, OverflowError):
+            pass
+    return local_date_for_profile(get_or_create_profile(session, account.user_id), end_time)
+
+
 def _normalize_sleep(
     session: Session,
     account: GoogleAccount,
@@ -568,7 +595,7 @@ def _normalize_sleep(
             minutes_in_sleep_period=_to_int(summary.get("minutesInSleepPeriod")),
             stages_summary=summary.get("stagesSummary") or [],
             stages=payload.get("stages") or [],
-            is_main_sleep=bool(metadata.get("main")),
+            is_main_sleep=bool(metadata.get("mainSleep", metadata.get("main", False))),
         )
     )
 

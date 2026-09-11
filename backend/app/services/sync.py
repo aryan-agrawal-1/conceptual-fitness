@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from time import perf_counter
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -15,6 +17,7 @@ from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
 from app.models import (
     ConnectionStatus,
     GoogleAccount,
+    HistoricalBackfill,
     RawHealthRecord,
     SyncCursor,
     SyncStatus,
@@ -38,28 +41,54 @@ from app.services.scores import rebuild_derived_scores
 from app.services.summaries import rebuild_daily_summaries
 
 
+logger = logging.getLogger(__name__)
+
 INITIAL_BACKFILL_DAYS = 14
+HISTORICAL_BACKFILL_DAYS = 90
+# ponytail: one-hour lease; add worker heartbeats if a single source can take longer.
+SYNC_LEASE = timedelta(hours=1)
+
+
+class SyncAlreadyRunningError(RuntimeError):
+    pass
 
 
 def sync_freshness_window() -> timedelta:
     return timedelta(minutes=get_settings().google_health_sync_freshness_minutes)
 
 
-def is_account_sync_fresh(account: GoogleAccount, *, now: datetime | None = None) -> bool:
-    if account.last_sync_at is None:
+def is_account_sync_fresh(
+    account: GoogleAccount, *, now: datetime | None = None, session: Session | None = None
+) -> bool:
+    if account.sync_started_at is not None or account.last_sync_at is None or account.last_error:
         return False
     checked_at = now or utcnow()
+    if session is not None:
+        today = checked_at.astimezone(_account_timezone(session, account)).date()
+        cursors = session.scalars(select(SyncCursor).where(
+            SyncCursor.google_account_id == account.id,
+        )).all()
+        if any(
+            DATA_TYPE_SPECS[cursor.data_type].fail_sync_on_error
+            and cursor.last_successful_end is not None
+            and cursor.last_successful_end < today
+            for cursor in cursors if cursor.data_type in DATA_TYPE_SPECS
+        ):
+            return False
     last_sync_at = _ensure_aware(account.last_sync_at, UTC).astimezone(UTC)
     return checked_at.astimezone(UTC) - last_sync_at < sync_freshness_window()
 
 
 def account_has_running_sync(session: Session, account: GoogleAccount) -> bool:
+    if account.sync_started_at is not None:
+        return _ensure_aware(account.sync_started_at, UTC) > utcnow() - SYNC_LEASE
     return (
         session.scalar(
             select(SyncCursor.id)
             .where(
                 SyncCursor.google_account_id == account.id,
                 SyncCursor.status == SyncStatus.running,
+                SyncCursor.updated_at > utcnow() - SYNC_LEASE,
             )
             .limit(1)
         )
@@ -228,123 +257,150 @@ async def sync_google_account_range(
     client: GoogleHealthClient | None = None,
     profile: SyncProfile | None = None,
     now: datetime | None = None,
+    historical_cursor: HistoricalBackfill | None = None,
 ) -> SyncResult:
-    if account.encrypted_refresh_token is None:
-        raise RuntimeError("Google account does not have a refresh token")
-    if account.status != ConnectionStatus.connected:
-        raise RuntimeError("Google account is not connected")
-
-    google_client = client or GoogleHealthClient()
-    token_payload = await google_client.refresh_access_token(decrypt_secret(account.encrypted_refresh_token))
-    access_token = token_payload["access_token"]
-    account.last_token_refresh_at = utcnow()
-    account.last_error = None
-    session.add(account)
-    session.commit()
-
-    records_seen = 0
-    records_stored = 0
-    successful_types: list[str] = []
-    sync_now = now or utcnow()
-
-    for data_type in data_types:
-        spec = DATA_TYPE_SPECS[data_type]
-        endpoint = (
-            "rollup"
-            if spec.prefer_rollup
-            else "daily_rollup"
-            if spec.prefer_daily_rollup
-            else "reconcile"
-            if spec.prefer_reconcile
-            else "list"
-        )
-        if profile:
-            profile.start_type(data_type, endpoint)
-        type_started = perf_counter()
-        cursor = _get_or_create_cursor(session, account.id, data_type)
-        resume_running = cursor.status == SyncStatus.running
-        bounds = _bounds_for_data_type(
-            session,
-            account=account,
-            cursor=cursor,
-            data_type=data_type,
-            start=start,
-            end=end,
-            now=sync_now,
-        )
-        cursor.status = SyncStatus.running
-        cursor.last_error = None
-        session.add(cursor)
+    if historical_cursor is None:
+        started_at = utcnow()
+        claimed = session.execute(
+            update(GoogleAccount).where(
+                GoogleAccount.id == account.id,
+                or_(GoogleAccount.sync_started_at.is_(None),
+                    GoogleAccount.sync_started_at < started_at - SYNC_LEASE),
+            ).values(sync_started_at=started_at)
+        ).rowcount
         session.commit()
-        try:
-            seen, stored = await _sync_data_type(
+        if not claimed:
+            raise SyncAlreadyRunningError("A current sync is already running")
+        session.refresh(account)
+    try:
+        if account.encrypted_refresh_token is None:
+            raise RuntimeError("Google account does not have a refresh token")
+        if account.status != ConnectionStatus.connected:
+            raise RuntimeError("Google account is not connected")
+
+        google_client = client or GoogleHealthClient()
+        token_payload = await google_client.refresh_access_token(decrypt_secret(account.encrypted_refresh_token))
+        access_token = token_payload["access_token"]
+        account.last_token_refresh_at = utcnow()
+        account.last_error = None
+        session.add(account)
+        session.commit()
+
+        records_seen = 0
+        records_stored = 0
+        successful_types: list[str] = []
+        sync_now = now or utcnow()
+
+        for data_type in data_types:
+            spec = DATA_TYPE_SPECS[data_type]
+            endpoint = (
+                "rollup"
+                if spec.prefer_rollup
+                else "daily_rollup"
+                if spec.prefer_daily_rollup
+                else "reconcile"
+                if spec.prefer_reconcile
+                else "list"
+            )
+            if profile:
+                profile.start_type(data_type, endpoint)
+            type_started = perf_counter()
+            cursor = historical_cursor or _get_or_create_cursor(session, account.id, data_type)
+            resume_running = cursor.status == SyncStatus.running or historical_cursor is not None
+            bounds = _bounds_for_data_type(
                 session,
                 account=account,
-                client=google_client,
-                access_token=access_token,
-                data_type=data_type,
-                bounds=bounds,
                 cursor=cursor,
-                resume_running=resume_running,
-                profile=profile,
+                data_type=data_type,
+                start=start,
+                end=end,
+                now=sync_now,
             )
-            records_seen += seen
-            records_stored += stored
-            if profile:
-                profile.finish_type(
-                    data_type,
-                    seconds=perf_counter() - type_started,
-                    status="succeeded",
-                )
-            cursor.status = SyncStatus.succeeded
-            _set_cursor_success(cursor, bounds)
-            cursor.last_page_token = None
-            successful_types.append(data_type)
+            cursor.status = SyncStatus.running
+            cursor.last_error = None
             session.add(cursor)
             session.commit()
-        except Exception as exc:
-            session.rollback()
-            cursor = _get_or_create_cursor(session, account.id, data_type)
-            if profile:
-                profile.finish_type(
-                    data_type,
-                    seconds=perf_counter() - type_started,
-                    status="failed",
-                    error=str(exc),
+            try:
+                seen, stored = await _sync_data_type(
+                    session,
+                    account=account,
+                    client=google_client,
+                    access_token=access_token,
+                    data_type=data_type,
+                    bounds=bounds,
+                    cursor=cursor,
+                    resume_running=resume_running,
+                    profile=profile,
                 )
-            cursor.status = SyncStatus.failed
-            cursor.last_error = str(exc)
-            if spec.fail_sync_on_error:
-                account.status = ConnectionStatus.errored
-                account.last_error = str(exc)
-                session.add(account)
-            session.add(cursor)
-            session.commit()
-            if spec.fail_sync_on_error:
-                raise
+                records_seen += seen
+                records_stored += stored
+                if profile:
+                    profile.finish_type(
+                        data_type,
+                        seconds=perf_counter() - type_started,
+                        status="succeeded",
+                    )
+                cursor.status = SyncStatus.succeeded
+                _set_cursor_success(cursor, bounds)
+                cursor.last_page_token = None
+                successful_types.append(data_type)
+                session.add(cursor)
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                cursor = historical_cursor or _get_or_create_cursor(session, account.id, data_type)
+                if profile:
+                    profile.finish_type(
+                        data_type,
+                        seconds=perf_counter() - type_started,
+                        status="failed",
+                        error=str(exc),
+                    )
+                cursor.status = SyncStatus.failed
+                cursor.last_error = str(exc)
+                logger.warning("Sync source failed: %s (%s)", data_type, type(exc).__name__)
+                session.add(cursor)
+                session.commit()
 
-    rebuild_started = perf_counter()
-    rebuild_daily_summaries(session, user_id=account.user_id, start=start, end=end)
-    if profile:
-        profile.summary_rebuild_seconds = perf_counter() - rebuild_started
-    affected_end = min(date.today(), end + timedelta(days=7))
-    rebuild_started = perf_counter()
-    rebuild_derived_scores(session, user_id=account.user_id, start=start, end=affected_end)
-    if profile:
-        profile.score_rebuild_seconds = perf_counter() - rebuild_started
-    account.last_sync_at = utcnow()
-    account.status = ConnectionStatus.connected
-    account.last_error = None
-    session.add(account)
-    session.commit()
-    return SyncResult(
-        google_account_id=account.id,
-        start=start,
-        end=end,
-        records_seen=records_seen,
-        records_stored=records_stored,
-        data_types=successful_types,
-    )
+        rebuild_started = perf_counter()
+        rebuild_daily_summaries(session, user_id=account.user_id, start=start, end=end)
+        if profile:
+            profile.summary_rebuild_seconds = perf_counter() - rebuild_started
+        affected_end = min(date.today(), end + timedelta(days=7))
+        rebuild_started = perf_counter()
+        rebuild_derived_scores(session, user_id=account.user_id, start=start, end=affected_end)
+        if profile:
+            profile.score_rebuild_seconds = perf_counter() - rebuild_started
+        if historical_cursor is None and any(
+            DATA_TYPE_SPECS[data_type].fail_sync_on_error for data_type in successful_types
+        ):
+            account.last_sync_at = utcnow()
+        account.status = ConnectionStatus.connected
+        account.last_error = None
+        session.add(account)
+        session.commit()
+        return SyncResult(
+            google_account_id=account.id,
+            start=start,
+            end=end,
+            records_seen=records_seen,
+            records_stored=records_stored,
+            data_types=successful_types,
+        )
+    except Exception as exc:
+        session.rollback()
+        if historical_cursor is None:
+            account.last_error = type(exc).__name__
+            session.add(account)
+            session.commit()
+        logger.warning("Sync failed (%s)", type(exc).__name__)
+        raise
+    finally:
+        if historical_cursor is None:
+            session.rollback()
+            account.sync_started_at = None
+            session.add(account)
+            session.commit()
 
 
 async def run_initial_backfill(
@@ -361,6 +417,97 @@ async def run_initial_backfill(
         end=window.end,
         client=client,
     )
+
+
+def prepare_historical_backfill(
+    session: Session, *, account: GoogleAccount, today: date | None = None,
+) -> list[HistoricalBackfill]:
+    existing = None
+    if today is None:
+        existing = session.scalar(
+            select(HistoricalBackfill)
+            .where(
+                HistoricalBackfill.google_account_id == account.id,
+            )
+            .order_by(HistoricalBackfill.range_end.desc())
+            .limit(1)
+        )
+    end = existing.range_end if existing else today or date.today()
+    start = (
+        existing.range_start
+        if existing
+        else end - timedelta(days=HISTORICAL_BACKFILL_DAYS - 1)
+    )
+    rows: list[HistoricalBackfill] = []
+    for data_type in MVP_SYNC_DATA_TYPES:
+        row = session.scalar(
+            select(HistoricalBackfill).where(
+                HistoricalBackfill.google_account_id == account.id,
+                HistoricalBackfill.data_type == data_type,
+                HistoricalBackfill.range_start == start,
+                HistoricalBackfill.range_end == end,
+            )
+        )
+        if row is None:
+            row = HistoricalBackfill(
+                google_account_id=account.id,
+                data_type=data_type,
+                range_start=start,
+                range_end=end,
+            )
+            session.add(row)
+        rows.append(row)
+    session.commit()
+
+    return rows
+
+
+async def run_historical_backfill(
+    session: Session,
+    *,
+    account: GoogleAccount,
+    client: GoogleHealthClient | None = None,
+    today: date | None = None,
+) -> list[HistoricalBackfill]:
+    rows = prepare_historical_backfill(session, account=account, today=today)
+    for row in rows:
+        data_type = row.data_type
+        if row.status == SyncStatus.succeeded:
+            continue
+        if row.status == SyncStatus.running and _ensure_aware(row.updated_at, UTC) > utcnow() - SYNC_LEASE:
+            continue
+        claimed = session.execute(
+            update(HistoricalBackfill).where(
+                HistoricalBackfill.id == row.id,
+                HistoricalBackfill.updated_at == row.updated_at,
+                HistoricalBackfill.status != SyncStatus.succeeded,
+            ).values(status=SyncStatus.running, last_error=None, updated_at=utcnow())
+        ).rowcount
+        session.commit()
+        if not claimed:
+            continue
+        try:
+            result = await sync_google_account_range(
+                session,
+                account=account,
+                start=row.range_start,
+                end=row.range_end,
+                data_types=(data_type,),
+                client=client,
+                historical_cursor=row,
+            )
+            if data_type not in result.data_types:
+                raise RuntimeError(row.last_error or "Data source did not complete")
+            row.status = SyncStatus.succeeded
+            row.completed_at = utcnow()
+        except Exception as exc:
+            session.rollback()
+            row.status = SyncStatus.failed
+            row.last_error = type(exc).__name__
+            logger.warning("Historical source failed: %s (%s)", data_type, type(exc).__name__)
+        session.add(row)
+        session.commit()
+    return rows
 
 
 async def _sync_data_type(
@@ -384,6 +531,10 @@ async def _sync_data_type(
             _range_start_datetime(session, account, spec.filter_time_path, bounds.start),
             _range_end_datetime(session, account, spec.filter_time_path, bounds.end),
         ):
+            if resume_running and cursor.last_successful_end_at is not None:
+                completed_end = _ensure_aware(cursor.last_successful_end_at, UTC)
+                if chunk_end <= completed_end:
+                    continue
             if profile:
                 profile.record_chunk(data_type)
             page_token: str | None = None
@@ -436,7 +587,8 @@ async def _sync_data_type(
                     stored=stored,
                 )
             cursor.last_successful_start = bounds.start
-            cursor.last_successful_end = bounds.end
+            cursor.last_successful_end = (chunk_end - timedelta(microseconds=1)).date()
+            cursor.last_successful_end_at = chunk_end
             cursor.last_page_token = None
             session.add(cursor)
             session.commit()
@@ -444,6 +596,11 @@ async def _sync_data_type(
 
     if spec.prefer_daily_rollup:
         for chunk_start, chunk_end in _rollup_chunks(bounds.start, bounds.end):
+            if _should_skip_chunk_for_resume(
+                cursor, range_start=bounds.start, chunk_start=chunk_start,
+                chunk_end=chunk_end, resume_running=resume_running, use_timestamp=False,
+            ):
+                continue
             if profile:
                 profile.record_chunk(data_type)
             payload = await client.daily_rollup(
@@ -703,6 +860,8 @@ def _timestamp_start_for_filter(
     end_at: datetime,
     overlap: timedelta,
 ) -> datetime:
+    if cursor.last_successful_start is not None and start < cursor.last_successful_start:
+        return _date_start_for_filter(session, account, filter_time_path, start)
     if cursor.last_successful_end_at is not None:
         base = _normalize_timestamp_for_filter(
             session,

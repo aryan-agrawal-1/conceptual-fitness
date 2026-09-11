@@ -85,6 +85,7 @@ private enum DashboardPreviewLaunchState: String {
     case ai
     case noAI
     case noAINoLocation
+    case failed
 
     static var current: DashboardPreviewLaunchState? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -106,7 +107,7 @@ private enum DashboardPreviewLaunchState: String {
                 insightProvider: DailyInsightProvider(),
                 firstName: "Aryan",
                 weatherEnabled: weatherEnabled,
-                previewLoadState: .loaded(data),
+                previewLoadState: loadState,
                 greetingOverride: "Good evening, Aryan"
             )
         }
@@ -116,13 +117,19 @@ private enum DashboardPreviewLaunchState: String {
         switch self {
         case .ai:
             return .sample
-        case .noAI, .noAINoLocation:
+        case .noAI, .noAINoLocation, .failed:
             return .previewWithoutInsights()
         }
     }
 
+    private var loadState: DashboardLoadState {
+        self == .failed
+            ? .failed("Your latest health data couldn’t be loaded. Check your connection and try again.")
+            : .loaded(data)
+    }
+
     private var weatherEnabled: Bool {
-        self != .noAINoLocation
+        self != .noAINoLocation && self != .failed
     }
 }
 #endif
