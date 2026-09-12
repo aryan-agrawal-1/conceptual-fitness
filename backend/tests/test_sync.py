@@ -13,6 +13,7 @@ from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
 from app.main import app
 from app.models import (
     ConnectionStatus,
+    DailySummary,
     GoogleAccount,
     HistoricalBackfill,
     MetricDailyRollup,
@@ -1299,9 +1300,13 @@ def test_current_sync_status_exposes_stable_historical_backfill_progress(
         "completed_sources": 1,
         "total_sources": 2,
         "status": "running",
+        "calibration_state": "calibrating",
+        "checkpoint_at": None,
         "sources": [
-            {"data_type": "sleep", "status": "pending", "last_error": None},
-            {"data_type": "steps", "status": "succeeded", "last_error": None},
+            {"data_type": "sleep", "status": "pending", "last_error": None,
+             "coverage_start": None, "coverage_end": None, "page_in_progress": False, "completed_at": None},
+            {"data_type": "steps", "status": "succeeded", "last_error": None,
+             "coverage_start": None, "coverage_end": None, "page_in_progress": False, "completed_at": None},
         ],
     }
 
@@ -1578,3 +1583,125 @@ def test_interrupted_historical_job_can_be_retried(session, auth_headers, monkey
     assert payload["historical_backfill"]["status"] == "failed"
     assert client.post("/sync/current/historical-backfill/retry", headers=headers).json()["status"] == "queued"
     assert queued == [account.id]
+
+
+@pytest.mark.asyncio
+async def test_historical_checkpoint_is_atomic_and_retries_without_reimport(session, monkeypatch):
+    account = _connected_account(session)
+    pages = []
+    checkpoints = []
+
+    class EmptyPages(FakeResumeGoogleHealthClient):
+        async def iter_data_point_pages_with_tokens(self, data_type, access_token, **kwargs):
+            for token in ("second", "third", None):
+                pages.append(token)
+                yield [], token
+
+    def checkpoint(session, **kwargs):
+        row = session.scalar(select(HistoricalBackfill))
+        assert row.status == SyncStatus.running
+        assert row.completed_at is None
+        assert kwargs["include_dependents"] is True
+        checkpoints.append(row.data_type)
+        if len(checkpoints) == 1:
+            session.add(DailySummary(user_id=account.user_id, summary_date=row.range_start, steps=999))
+            session.flush()
+            raise RuntimeError("private health payload must not be logged")
+
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", checkpoint)
+    rows = await run_historical_backfill(session, account=account, client=EmptyPages())
+    assert rows[0].status == SyncStatus.failed
+    assert rows[0].completed_at is None
+    assert rows[0].last_error == "RuntimeError"
+    assert session.scalars(select(DailySummary)).all() == []
+    rows = await run_historical_backfill(session, account=account, client=EmptyPages())
+    assert rows[0].status == SyncStatus.succeeded
+    assert rows[0].completed_at is not None
+    assert len(pages) == 3
+    assert checkpoints == ["sleep", "sleep"]
+    await run_historical_backfill(session, account=account, client=EmptyPages())
+    assert len(checkpoints) == 2
+
+
+def test_targeted_historical_retry_validates_source_and_ignores_running_siblings(session, auth_headers, monkeypatch):
+    account = _connected_account(session)
+    rows = sync_service.prepare_historical_backfill(session, account=account)
+    for row in rows:
+        row.status = SyncStatus.failed if row.data_type == "sleep" else SyncStatus.running
+    session.commit()
+    queued = []
+    monkeypatch.setattr(sync_routes, "enqueue_historical_backfill", lambda *args: queued.append(args) or True)
+    client = TestClient(app)
+    headers = auth_headers(session.get(User, account.user_id))
+    url = "/sync/current/historical-backfill/retry"
+    assert client.post(url + "?data_type=unknown", headers=headers).status_code == 422
+    assert client.post(url + "?data_type=sleep", headers=headers).json()["status"] == "queued"
+    assert queued == [(account.id, "sleep")]
+    assert client.post(url + "?data_type=steps", headers=headers).json()["status"] == "running"
+    assert len(queued) == 1
+
+
+@pytest.mark.asyncio
+async def test_targeted_worker_leaves_other_failed_sources_untouched(session, monkeypatch):
+    account = _connected_account(session)
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep", "weight"))
+    rows = sync_service.prepare_historical_backfill(session, account=account)
+    for row in rows:
+        row.status = SyncStatus.failed
+    session.commit()
+    monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sync_service, "rebuild_derived_scores", lambda *args, **kwargs: None)
+    await run_historical_backfill(session, account=account, client=FakeResumeGoogleHealthClient(), data_type="sleep")
+    assert {row.data_type: row.status for row in rows} == {"sleep": SyncStatus.succeeded, "weight": SyncStatus.failed}
+
+
+def test_full_range_sync_receipt_completes_history_without_a_worker(session, monkeypatch):
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC)
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
+    start, end = date.today() - timedelta(days=89), date.today()
+    session.add(SyncCursor(google_account_id=account.id, data_type="sleep",
+                           status=SyncStatus.succeeded, last_successful_start=start,
+                           last_successful_end=end))
+    session.commit()
+    rows = sync_service.prepare_historical_backfill(session, account=account)
+    assert rows[0].status == SyncStatus.succeeded
+    assert rows[0].completed_at == account.last_sync_at
+    assert rows[0].last_successful_start == start
+    # Current sync freshness/worker activity cannot undo a recorded completion.
+    account.last_sync_at = None
+    assert sync_service.prepare_historical_backfill(session, account=account)[0].status == SyncStatus.succeeded
+
+
+def test_existing_records_are_available_not_falsely_reported_as_zero_history(session, auth_headers):
+    account = _connected_account(session)
+    session.add(HistoricalBackfill(
+        google_account_id=account.id, data_type="sleep", status=SyncStatus.pending,
+        range_start=date.today() - timedelta(days=89), range_end=date.today(),
+        updated_at=datetime.now(UTC) - timedelta(days=2),
+    ))
+    for day in (date.today() - timedelta(days=100), date.today()):
+        session.add(MetricSample(user_id=account.user_id, metric="resting_heart_rate",
+                                 civil_date=day, observed_at=datetime.combine(day, datetime.min.time(), UTC),
+                                 value=60, unit="bpm"))
+    session.commit()
+    response = TestClient(app).get("/sync/current/status", headers=auth_headers(session.get(User, account.user_id)))
+    history = response.json()["historical_backfill"]
+    assert history["coverage_state"] == "untracked"
+    assert history["stored_from"] == (date.today() - timedelta(days=100)).isoformat()
+    assert history["stored_through"] == date.today().isoformat()
+    # Records at two dates do not prove every source/page was imported.
+    assert history["status"] != "complete"
+
+
+def test_recent_sync_does_not_prove_full_historical_coverage(session, monkeypatch):
+    account = _connected_account(session)
+    account.last_sync_at = datetime.now(UTC)
+    monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
+    session.add(SyncCursor(google_account_id=account.id, data_type="sleep",
+                           status=SyncStatus.succeeded, last_successful_start=date.today() - timedelta(days=13),
+                           last_successful_end=date.today()))
+    session.commit()
+    assert sync_service.prepare_historical_backfill(session, account=account)[0].status == SyncStatus.pending

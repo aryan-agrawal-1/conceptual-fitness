@@ -33,7 +33,7 @@ def enqueue_initial_backfill(account_id: str) -> bool:
         return False
 
 
-def enqueue_historical_backfill(account_id: str) -> bool:
+def enqueue_historical_backfill(account_id: str, data_type: str | None = None) -> bool:
     with SessionLocal() as session:
         account = session.get(GoogleAccount, account_id)
         if account is None:
@@ -42,6 +42,8 @@ def enqueue_historical_backfill(account_id: str) -> bool:
             HistoricalBackfill.google_account_id == account_id,
         ).limit(1))
         rows = prepare_historical_backfill(session, account=account)
+        if data_type is not None:
+            rows = [row for row in rows if row.data_type == data_type]
         if existing and any(
             row.status in {SyncStatus.pending, SyncStatus.running}
             and row.updated_at.replace(tzinfo=row.updated_at.tzinfo or UTC) > utcnow() - SYNC_LEASE
@@ -52,11 +54,15 @@ def enqueue_historical_backfill(account_id: str) -> bool:
             return True
         try:
             for row in rows:
-                if row.status == SyncStatus.failed:
+                if row.status != SyncStatus.succeeded:
+                    row.updated_at = utcnow()
                     row.status = SyncStatus.pending
                     row.last_error = None
             session.commit()
-            historical_backfill.delay(account_id)
+            if data_type is None:
+                historical_backfill.delay(account_id)
+            else:
+                historical_backfill.delay(account_id, data_type)
             return True
         except Exception as exc:
             for row in rows:
@@ -90,12 +96,12 @@ def initial_backfill(account_id: str) -> dict[str, object]:
 
 
 @celery_app.task(name="app.tasks.sync.historical_backfill")
-def historical_backfill(account_id: str) -> dict[str, object]:
+def historical_backfill(account_id: str, data_type: str | None = None) -> dict[str, object]:
     with SessionLocal() as session:
         account = session.get(GoogleAccount, account_id)
         if account is None:
             return {"status": "missing_account", "account_id": account_id}
-        rows = asyncio.run(run_historical_backfill(session, account=account))
+        rows = asyncio.run(run_historical_backfill(session, account=account, data_type=data_type))
         return {
             "status": "ok",
             "account_id": account_id,

@@ -605,6 +605,8 @@ def _exercise_e1rm(
         .join(Workout, WorkoutExercise.workout_id == Workout.id)
         .where(
             Workout.user_id == workout.user_id,
+            Workout.deleted_at.is_(None),
+            Workout.status == "completed",
             Workout.start_time >= start,
             Workout.start_time < workout.start_time,
             WorkoutSet.status == "completed",

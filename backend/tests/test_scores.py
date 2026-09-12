@@ -935,6 +935,28 @@ def test_strain_calculates_detailed_muscular_set_dose(session) -> None:
     assert muscular["workouts"][0]["session_effort_modifier"] == 1
     assert muscular["workouts"][0]["exercises"][0]["e1rm_source"] == "current_session_provisional"
 
+    # Removing an old workout must also remove it from later strength references.
+    from app.services.strain_scores import _exercise_e1rm
+
+    old = Workout(user_id=user.id, start_time=start - timedelta(days=1),
+                  end_time=start - timedelta(days=1) + timedelta(minutes=30),
+                  civil_date=day - timedelta(days=1), status="completed")
+    session.add(old)
+    session.flush()
+    old_exercise = WorkoutExercise(workout_id=old.id, exercise_id=catalog.id,
+                                   order_index=0, name_snapshot=catalog.name,
+                                   measurement_schema="reps_load")
+    session.add(old_exercise)
+    session.flush()
+    session.add(WorkoutSet(workout_exercise_id=old_exercise.id, order_index=0,
+                           status="completed", reps=5, load_value=120, load_unit="kg"))
+    session.flush()
+    profile = session.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+    assert _exercise_e1rm(session, workout, exercise, [], profile)[1] == "prior_90_day_best"
+    old.deleted_at = datetime.now(UTC)
+    session.flush()
+    assert _exercise_e1rm(session, workout, exercise, [], profile) == (None, "missing")
+
 
 def test_strain_generic_strength_uses_category_prior(session) -> None:
     user = _user_with_profile(session)
@@ -1348,3 +1370,31 @@ def test_strain_requires_same_minute_movement_except_inside_workouts(session) ->
     assert with_gym["workout_load_points"] > 0
     assert with_gym["general_activity_load_points"] == incidental["general_activity_load_points"]
     assert _cardio_load_from_hr(samples, [], **(options | {"movement_minutes": set()}))["load_points"] == 0
+
+
+def test_historical_edit_rebuilds_later_baseline_and_preserves_earlier_scores(session):
+    from app.services.scores import rebuild_after_health_edit
+
+    user = _user_with_profile(session)
+    edited = date(2026, 6, 1)
+    previous_day = edited - timedelta(days=1)
+    dependent_day = edited + timedelta(days=30)
+    for day in (previous_day, edited, dependent_day):
+        rebuild_derived_scores(session, user_id=user.id, start=day, end=day)
+    earlier = session.scalar(select(DailyScore).where(
+        DailyScore.user_id == user.id, DailyScore.score_date == previous_day,
+        DailyScore.score_type == "sleep",
+    ))
+    stamp = earlier.computed_at
+    session.add(MetricSample(
+        user_id=user.id, metric="resting_heart_rate",
+        observed_at=_dt(edited, 8), civil_date=edited, value=55, unit="bpm",
+    ))
+    rebuild_after_health_edit(session, user_id=user.id, days={edited})
+    baseline = session.scalar(select(DailyBaseline).where(
+        DailyBaseline.user_id == user.id, DailyBaseline.baseline_date == dependent_day,
+        DailyBaseline.metric == "resting_heart_rate",
+    ))
+    assert baseline.valid_day_count == 1
+    assert earlier.computed_at == stamp
+    assert session.scalar(select(DailyScore).where(DailyScore.score_date > dependent_day)) is None

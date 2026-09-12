@@ -5,21 +5,26 @@ import asyncio
 from datetime import UTC, date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select, union_all
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.security import utcnow
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
-from app.models import ConnectionStatus, GoogleAccount, HistoricalBackfill, SyncCursor
+from app.models import (
+    DailyScore, ConnectionStatus, GoogleAccount, HistoricalBackfill, SyncCursor,
+    MetricDailyRollup, MetricSample, MetricInterval, SleepSession, Workout,
+)
 from app.services.sync import (
     SYNC_LEASE,
     SyncAlreadyRunningError,
     account_has_running_sync,
     is_account_sync_fresh,
+    prepare_historical_backfill,
     sync_google_account_range,
     sync_window_from_cursors,
 )
 from app.tasks.sync import enqueue_historical_backfill
+from app.services.health_dates import get_or_create_profile, local_date_for_profile
 
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -100,14 +105,21 @@ def current_sync(session: DbSession, user: CurrentUser) -> dict[str, object]:
 def retry_current_historical_backfill(
     session: DbSession,
     user: CurrentUser,
+    data_type: str | None = Query(default=None),
 ) -> dict[str, object]:
     account = _current_connected_account(session, user.id)
     if account is None:
         raise HTTPException(status_code=404, detail="Connected Google Health account not found")
-    progress = _historical_backfill_payload(_historical_backfills(session, account.id))
+    if data_type is not None and data_type not in MVP_SYNC_DATA_TYPES:
+        raise HTTPException(status_code=422, detail="Unknown historical source")
+    rows = _historical_backfills(session, account.id)
+    if data_type is not None:
+        rows = [row for row in rows if row.data_type == data_type]
+    progress = _historical_backfill_payload(rows)
     if progress is not None and progress["status"] in {"running", "complete"}:
         return {"status": progress["status"], "account_id": account.id}
-    if not enqueue_historical_backfill(account.id):
+    queued = enqueue_historical_backfill(account.id) if data_type is None else enqueue_historical_backfill(account.id, data_type)
+    if not queued:
         raise HTTPException(status_code=503, detail="Historical backfill could not be queued")
     return {"status": "queued", "account_id": account.id}
 
@@ -204,7 +216,34 @@ def _current_status_payload(
     cursors: list[SyncCursor],
 ) -> dict[str, object]:
     backfills = _historical_backfills(session, account.id)
+    if backfills and any(
+        cursor.last_successful_start is not None
+        and cursor.last_successful_start <= backfills[0].range_start
+        and cursor.last_successful_end is not None
+        and cursor.last_successful_end >= backfills[0].range_end
+        for cursor in cursors
+    ):
+        backfills = prepare_historical_backfill(session, account=account)
     historical_backfill = _historical_backfill_payload(backfills)
+    today = local_date_for_profile(get_or_create_profile(session, account.user_id))
+    if historical_backfill is not None:
+        dates = union_all(*[
+            select(model.civil_date.label("day")).where(model.user_id == account.user_id)
+            for model in (MetricDailyRollup, MetricSample, MetricInterval, SleepSession, Workout)
+        ]).subquery()
+        first, last = session.execute(select(func.min(dates.c.day), func.max(dates.c.day))).one()
+        # Saved records prove availability, not that every provider page was checked.
+        untracked = first is not None and first < historical_backfill["range_end"] - timedelta(days=13) and all(
+            row.status.value not in {"succeeded", "running"}
+            and row.last_error in {None, "QueueUnavailable"}
+            and row.last_successful_start is None
+            and row.completed_at is None and row.last_page_token is None
+            for row in backfills
+        )
+        if untracked:
+            historical_backfill.update(
+                coverage_state="untracked", stored_from=first, stored_through=last,
+            )
     return {
         "account_id": account.id,
         "is_running": account_has_running_sync(session, account),
@@ -217,6 +256,12 @@ def _current_status_payload(
         ),
         "last_sync_at": account.last_sync_at,
         "historical_backfill": historical_backfill,
+        "current_scores_available": session.scalar(select(DailyScore.id).where(
+            DailyScore.user_id == account.user_id,
+            DailyScore.score_date >= today - timedelta(days=1),
+            DailyScore.score_date <= today,
+            DailyScore.value.is_not(None),
+        ).limit(1)) is not None,
         "cursors": [
             {
                 "google_account_id": cursor.google_account_id,
@@ -260,11 +305,17 @@ def _historical_backfill_payload(rows: list[HistoricalBackfill]) -> dict[str, ob
         "completed_sources": completed,
         "total_sources": len(latest),
         "status": "running" if running else "failed" if failed else "complete",
+        "calibration_state": "complete" if completed == len(latest) else "calibrating",
+        "checkpoint_at": max((row.completed_at for row in latest if row.completed_at), default=None),
         "sources": [
             {
                 "data_type": row.data_type,
                 "status": source_statuses[row.id],
                 "last_error": row.last_error,
+                "coverage_start": row.range_start if row.last_successful_start else None,
+                "coverage_end": row.last_successful_end,
+                "page_in_progress": row.last_page_token is not None,
+                "completed_at": row.completed_at,
             }
             for row in latest
         ],

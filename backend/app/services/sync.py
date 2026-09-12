@@ -340,7 +340,7 @@ async def sync_google_account_range(
                         seconds=perf_counter() - type_started,
                         status="succeeded",
                     )
-                cursor.status = SyncStatus.succeeded
+                cursor.status = SyncStatus.running if historical_cursor is not None else SyncStatus.succeeded
                 _set_cursor_success(cursor, bounds)
                 cursor.last_page_token = None
                 successful_types.append(data_type)
@@ -357,20 +357,26 @@ async def sync_google_account_range(
                         error=str(exc),
                     )
                 cursor.status = SyncStatus.failed
-                cursor.last_error = str(exc)
+                cursor.last_error = type(exc).__name__ if historical_cursor is not None else str(exc)
                 logger.warning("Sync source failed: %s (%s)", data_type, type(exc).__name__)
                 session.add(cursor)
                 session.commit()
 
+        if historical_cursor is not None and not successful_types:
+            raise RuntimeError("Historical source import failed")
+
+        # Coalesce every page into one durable checkpoint per source.
         rebuild_started = perf_counter()
         rebuild_daily_summaries(session, user_id=account.user_id, start=start, end=end)
         if profile:
             profile.summary_rebuild_seconds = perf_counter() - rebuild_started
-        affected_end = min(date.today(), end + timedelta(days=7))
         rebuild_started = perf_counter()
-        rebuild_derived_scores(session, user_id=account.user_id, start=start, end=affected_end)
+        rebuild_derived_scores(session, user_id=account.user_id, start=start, end=end, include_dependents=True)
         if profile:
             profile.score_rebuild_seconds = perf_counter() - rebuild_started
+        if historical_cursor is not None:
+            historical_cursor.status = SyncStatus.succeeded
+            historical_cursor.completed_at = utcnow()
         if historical_cursor is None and any(
             DATA_TYPE_SPECS[data_type].fail_sync_on_error for data_type in successful_types
         ):
@@ -379,6 +385,8 @@ async def sync_google_account_range(
         account.last_error = None
         session.add(account)
         session.commit()
+        if historical_cursor is not None:
+            logger.info("Historical score checkpoint committed: %s", historical_cursor.data_type)
         return SyncResult(
             google_account_id=account.id,
             start=start,
@@ -438,6 +446,9 @@ def prepare_historical_backfill(
         if existing
         else end - timedelta(days=HISTORICAL_BACKFILL_DAYS - 1)
     )
+    cursors = {cursor.data_type: cursor for cursor in session.scalars(
+        select(SyncCursor).where(SyncCursor.google_account_id == account.id)
+    )}
     rows: list[HistoricalBackfill] = []
     for data_type in MVP_SYNC_DATA_TYPES:
         row = session.scalar(
@@ -456,6 +467,22 @@ def prepare_historical_backfill(
                 range_end=end,
             )
             session.add(row)
+        cursor = cursors.get(data_type)
+        # A completed full-range sync is a receipt, even if no history job ran.
+        if (
+            row.status != SyncStatus.succeeded and row.last_successful_start is None
+            and account.sync_started_at is None and account.last_sync_at is not None
+            and cursor is not None and cursor.status == SyncStatus.succeeded
+            and cursor.last_page_token is None
+            and cursor.last_successful_start is not None
+            and cursor.last_successful_start <= start
+            and cursor.last_successful_end is not None and cursor.last_successful_end >= end
+        ):
+            row.status = SyncStatus.succeeded
+            row.last_successful_start = start
+            row.last_successful_end = end
+            row.completed_at = account.last_sync_at
+            row.last_error = None
         rows.append(row)
     session.commit()
 
@@ -468,9 +495,13 @@ async def run_historical_backfill(
     account: GoogleAccount,
     client: GoogleHealthClient | None = None,
     today: date | None = None,
+    data_type: str | None = None,
 ) -> list[HistoricalBackfill]:
     rows = prepare_historical_backfill(session, account=account, today=today)
+    if data_type is not None:
+        rows = [row for row in rows if row.data_type == data_type]
     for row in rows:
+        session.refresh(row)
         data_type = row.data_type
         if row.status == SyncStatus.succeeded:
             continue
@@ -485,6 +516,7 @@ async def run_historical_backfill(
         ).rowcount
         session.commit()
         if not claimed:
+            session.refresh(row)
             continue
         try:
             result = await sync_google_account_range(

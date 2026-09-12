@@ -1,5 +1,6 @@
 import SwiftUI
 import FoundationModels
+import BackgroundTasks
 
 @main
 struct ConceptualFitnessApp: App {
@@ -9,12 +10,19 @@ struct ConceptualFitnessApp: App {
         WindowGroup {
             rootView
         }
+        .backgroundTask(.appRefresh("com.conceptualfitness.history")) {
+            let coordinator = await AppSyncCoordinator(client: DashboardAPIClient(authStore: authStore))
+            await coordinator.checkHistory()
+            await coordinator.scheduleHistoryCheck()
+        }
     }
 
     @ViewBuilder
     private var rootView: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-FoundationModelsSmokeTest") {
+        if let historyPreview = HistoryPreviewState.current {
+            historyPreview.view
+        } else if ProcessInfo.processInfo.arguments.contains("-FoundationModelsSmokeTest") {
             FoundationModelsSmokeTestView()
         } else if ProcessInfo.processInfo.arguments.contains("-VO2MaxDetailPreview") {
             NavigationStack {
