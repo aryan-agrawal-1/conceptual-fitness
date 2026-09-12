@@ -1,5 +1,7 @@
 import SwiftUI
 import OSLog
+import UserNotifications
+import BackgroundTasks
 
 struct AppShellView: View {
     @ObservedObject var authStore: AuthStore
@@ -75,9 +77,12 @@ struct AppShellView: View {
         .task {
             await syncCoordinator.syncIfNeeded()
         }
+        .task { await syncCoordinator.monitorHistory() }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .background { syncCoordinator.scheduleHistoryCheck() }
             guard phase == .active else { return }
             Task {
+                await syncCoordinator.checkHistory()
                 await syncCoordinator.syncIfNeeded()
             }
         }
@@ -107,6 +112,137 @@ final class AppSyncCoordinator: ObservableObject {
     @Published private(set) var refreshToken = 0
     @Published private(set) var lastSyncAt: Date?
     @Published private(set) var failureMessage: String?
+    @Published private(set) var history: HistoricalBackfillStatus?
+    @Published private(set) var historyError: String?
+    @Published private(set) var historyLoaded = false
+    @Published private(set) var currentScoresAvailable = false
+    @Published private(set) var retryingSource: String?
+    @Published private(set) var notifyOnCompletion = false
+    @Published private(set) var notificationMessage: String?
+    private var accountID: String?
+    private var historyRequestRevision = 0
+
+    #if DEBUG
+    static func historyPreview(_ state: HistoryPreviewState) -> AppSyncCoordinator {
+        let coordinator = AppSyncCoordinator(client: DashboardAPIClient())
+        coordinator.historyLoaded = state != .loading
+        coordinator.currentScoresAvailable = state != .empty
+        if state == .offline { coordinator.historyError = "Import progress couldn’t update. Check your connection and try again." }
+        guard state != .loading && state != .waiting else { return coordinator }
+        let complete = state == .complete || state == .empty
+        let sources = ["steps", "sleep", "heart-rate"].enumerated().map { index, name in
+            HistoricalBackfillSource(
+                dataType: name, status: complete || index == 0 ? "succeeded" : state == .failed ? "failed" : "running",
+                coverageStart: "2026-06-14", coverageEnd: complete || index == 0 ? "2026-09-11" : "2026-07-05",
+                pageInProgress: !complete && index != 0, completedAt: nil
+            )
+        }
+        coordinator.history = HistoricalBackfillStatus(
+            status: complete ? "complete" : state == .failed ? "failed" : "running",
+            completedSources: complete ? 3 : 1, totalSources: 3,
+            rangeStart: "2026-06-14", rangeEnd: "2026-09-11",
+            calibrationState: complete ? "complete" : "calibrating", checkpointAt: nil, sources: sources
+        )
+        return coordinator
+    }
+    #endif
+
+    func monitorHistory() async {
+        while !Task.isCancelled {
+            await checkHistory()
+            if history?.status == "complete" { return }
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+        }
+    }
+
+    func checkHistory() async {
+        historyRequestRevision += 1
+        let revision = historyRequestRevision
+        do {
+            let status = try await client.currentSyncStatus()
+            guard !Task.isCancelled, revision == historyRequestRevision else { return }
+            let previousCheckpoint = history?.checkpointAt
+            accountID = status.accountID
+            notifyOnCompletion = UserDefaults.standard.bool(forKey: "historyNotify.\(status.accountID)")
+            currentScoresAvailable = status.currentScoresAvailable ?? false
+            history = status.historicalBackfill
+            historyLoaded = true
+            historyError = nil
+            if let checkpoint = history?.checkpointAt, checkpoint != previousCheckpoint {
+                refreshToken += 1
+            }
+            await notifyIfCompletedWhileInactive()
+            if UIApplication.shared.applicationState == .active {
+                UserDefaults.standard.removeObject(forKey: "historyInactive.\(status.accountID)")
+            }
+        } catch is CancellationError {
+        } catch {
+            guard !Task.isCancelled, revision == historyRequestRevision else { return }
+            historyError = "Import progress couldn’t update. Check your connection and try again."
+            logger.error("Historical progress request failed: \(String(describing: type(of: error)), privacy: .public)")
+        }
+    }
+
+    func retryHistory(source: String) async {
+        guard retryingSource == nil else { return }
+        retryingSource = source
+        defer { retryingSource = nil }
+        do {
+            _ = try await client.retryHistoricalBackfill(source: source)
+            await checkHistory()
+        } catch {
+            historyError = "This source couldn’t restart. Check your connection and try again."
+            logger.error("Historical retry failed: \(String(describing: type(of: error)), privacy: .public)")
+        }
+    }
+
+    func setCompletionNotification(_ enabled: Bool) async {
+        guard let accountID else { return }
+        notificationMessage = nil
+        do {
+            let allowed = enabled ? try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) : false
+            notifyOnCompletion = allowed
+            UserDefaults.standard.set(allowed, forKey: "historyNotify.\(accountID)")
+            if !allowed {
+                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: "com.conceptualfitness.history")
+                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["historyComplete.\(accountID)"])
+            }
+            if enabled && !allowed { notificationMessage = "Notifications are disabled. You can enable them in Settings." }
+        } catch {
+            notificationMessage = "Notification permission couldn’t be checked. Try again."
+        }
+    }
+
+    func scheduleHistoryCheck() {
+        guard let accountID, history?.status != "complete" else { return }
+        UserDefaults.standard.set(Date(), forKey: "historyInactive.\(accountID)")
+        guard notifyOnCompletion else { return }
+        let request = BGAppRefreshTaskRequest(identifier: "com.conceptualfitness.history")
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        do { try BGTaskScheduler.shared.submit(request) }
+        catch { logger.error("Historical background check could not be scheduled") }
+    }
+
+    private func notifyIfCompletedWhileInactive() async {
+        guard let accountID, notifyOnCompletion, let history, history.status == "complete",
+              let inactive = UserDefaults.standard.object(forKey: "historyInactive.\(accountID)") as? Date,
+              let completed = DashboardFormatters.parseBackendDateTime(history.checkpointAt),
+              completed >= inactive,
+              UserDefaults.standard.string(forKey: "historyNotified.\(accountID)") != history.rangeEnd else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Import complete"
+        content.body = "Your history is ready to view."
+        content.sound = .default
+        do {
+            try await UNUserNotificationCenter.current().add(UNNotificationRequest(
+                identifier: "historyComplete.\(accountID)", content: content, trigger: nil
+            ))
+            UserDefaults.standard.set(history.rangeEnd, forKey: "historyNotified.\(accountID)")
+        } catch {
+            logger.error("Historical completion notification could not be scheduled")
+        }
+    }
+
 
     private let client: DashboardAPIClient
     private var runTask: Task<Void, Never>?

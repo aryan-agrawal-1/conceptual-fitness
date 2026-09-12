@@ -25,8 +25,9 @@ struct DashboardAPIClient {
         try await fetch("/sync/current/status")
     }
 
-    func retryHistoricalBackfill() async throws -> QueuedSyncResponse {
-        try await request("/sync/current/historical-backfill/retry", method: "POST")
+    func retryHistoricalBackfill(source: String? = nil) async throws -> QueuedSyncResponse {
+        let query = source.map { "?data_type=\($0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0)" } ?? ""
+        return try await request("/sync/current/historical-backfill/retry\(query)", method: "POST")
     }
 
     func loadStrainDetail(date: Date = Date(), timeframe: StrainTimeframe) async throws -> StrainDetail {
@@ -190,6 +191,7 @@ struct CurrentSyncStatus: Decodable {
     let cursors: [DashboardSyncStatus]
     let historicalBackfill: HistoricalBackfillStatus?
     let currentHasFailure: Bool?
+    let currentScoresAvailable: Bool?
 
     enum CodingKeys: String, CodingKey {
         case accountID = "account_id"
@@ -199,6 +201,7 @@ struct CurrentSyncStatus: Decodable {
         case cursors
         case historicalBackfill = "historical_backfill"
         case currentHasFailure = "has_failure"
+        case currentScoresAvailable = "current_scores_available"
     }
 
     var hasFailure: Bool {
@@ -206,16 +209,54 @@ struct CurrentSyncStatus: Decodable {
     }
 }
 
-struct HistoricalBackfillStatus: Decodable {
+struct HistoricalBackfillStatus: Decodable, Equatable {
     let status: String
     let completedSources: Int
     let totalSources: Int
+    let rangeStart: String
+    let rangeEnd: String
+    let calibrationState: String?
+    let checkpointAt: String?
+    let sources: [HistoricalBackfillSource]
+    var coverageState: String? = nil
+    var storedFrom: String? = nil
+    var storedThrough: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case status
         case completedSources = "completed_sources"
         case totalSources = "total_sources"
+        case rangeStart = "range_start"
+        case rangeEnd = "range_end"
+        case calibrationState = "calibration_state"
+        case coverageState = "coverage_state"
+        case storedFrom = "stored_from"
+        case storedThrough = "stored_through"
+        case checkpointAt = "checkpoint_at"
+        case sources
+
     }
+}
+
+struct HistoricalBackfillSource: Decodable, Equatable, Identifiable {
+    var id: String { dataType }
+    let dataType: String
+    let status: String
+    let coverageStart: String?
+    let coverageEnd: String?
+    let pageInProgress: Bool?
+    let completedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case dataType = "data_type"
+        case status
+        case coverageStart = "coverage_start"
+        case coverageEnd = "coverage_end"
+        case pageInProgress = "page_in_progress"
+        case completedAt = "completed_at"
+    }
+
+    var title: String { dataType.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ").capitalized }
 }
 
 struct QueuedSyncResponse: Decodable {

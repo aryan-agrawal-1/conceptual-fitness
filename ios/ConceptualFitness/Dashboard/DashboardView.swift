@@ -77,6 +77,12 @@ struct DashboardView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                NavigationLink {
+                    ImportProfileView(coordinator: syncCoordinator)
+                } label: { Image(systemName: "person.crop.circle") }
+                .accessibilityLabel("Profile")
+            }
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
                     if syncCoordinator.isSyncing && !isPullRefreshing {
