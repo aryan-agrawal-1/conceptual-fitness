@@ -22,6 +22,7 @@ from app.models import (
     WorkoutSet,
     WorkoutSource,
 )
+from app.services.scores import rebuild_after_health_edit
 from app.services.workout_records import (
     HIGH_MATCH_SCORE,
     attach_source_to_workout,
@@ -627,6 +628,7 @@ def create_workout(
         end_time=end_time,
         workout_type=payload.workout_type,
     )
+    changed_days = {target.civil_date} if target and target.civil_date else set()
     workout = target or Workout(user_id=user.id)
     workout.client_id = payload.client_id
     workout.origin = "mixed" if target else "manual"
@@ -635,6 +637,7 @@ def create_workout(
         session.add(workout)
         session.flush()
     _replace_workout_exercises(session, workout, payload.exercises, user.id)
+    rebuild_after_health_edit(session, user_id=user.id, days=changed_days | {workout.civil_date})
     session.commit()
     session.refresh(workout)
     return _workout_payload(session, workout)
@@ -662,9 +665,11 @@ def update_workout(
             status_code=409,
             detail={"message": "Workout changed on another device", "current_revision": workout.revision},
         )
+    changed_days = {workout.civil_date} if workout.civil_date else set()
     _apply_workout_document(session, workout, payload, user.id)
     workout.revision += 1
     _replace_workout_exercises(session, workout, payload.exercises, user.id)
+    rebuild_after_health_edit(session, user_id=user.id, days=changed_days | {workout.civil_date})
     session.commit()
     session.refresh(workout)
     return _workout_payload(session, workout)
@@ -677,6 +682,7 @@ def delete_workout(workout_id: str, session: DbSession, user: CurrentUser) -> No
     workout.status = "deleted"
     workout.revision += 1
     session.add(workout)
+    rebuild_after_health_edit(session, user_id=user.id, days={workout.civil_date} if workout.civil_date else set())
     session.commit()
 
 
@@ -796,6 +802,7 @@ def merge_workouts(
     other.status = "merged"
     target.revision += 1
     session.add_all([target, other])
+    rebuild_after_health_edit(session, user_id=user.id, days={day for day in (target.civil_date, other.civil_date) if day})
     session.commit()
     return _workout_payload(session, target)
 

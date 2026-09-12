@@ -49,7 +49,7 @@ def rebuild_scores(
     start: date = Query(...),
     end: date = Query(...),
 ) -> dict[str, object]:
-    result = rebuild_derived_scores(session, user_id=user.id, start=start, end=end)
+    result = rebuild_derived_scores(session, user_id=user.id, start=start, end=end, include_dependents=True)
     session.commit()
     return {
         "user_id": result.user_id,

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.models import DailyContext
+from app.services.scores import rebuild_after_health_edit
 
 
 router = APIRouter(prefix="/tags", tags=["tags"])
@@ -87,6 +88,7 @@ def create_tag(payload: TagCreate, session: DbSession, user: CurrentUser) -> Tag
         value=payload.value,
     )
     session.add(tag)
+    rebuild_after_health_edit(session, user_id=user.id, days={tag.context_date})
     session.commit()
     session.refresh(tag)
     return _tag_payload(tag)
@@ -100,6 +102,7 @@ def update_tag(
     user: CurrentUser,
 ) -> TagPayload:
     tag = _get_user_tag(session, user.id, tag_id)
+    changed_days = {tag.context_date}
     updates = payload.model_dump(exclude_unset=True)
     if "date" in updates:
         tag.context_date = updates["date"]
@@ -110,6 +113,7 @@ def update_tag(
     if "value" in updates:
         tag.value = updates["value"] or {}
     session.add(tag)
+    rebuild_after_health_edit(session, user_id=user.id, days=changed_days | {tag.context_date})
     session.commit()
     session.refresh(tag)
     return _tag_payload(tag)
@@ -119,6 +123,7 @@ def update_tag(
 def delete_tag(tag_id: str, session: DbSession, user: CurrentUser) -> None:
     tag = _get_user_tag(session, user.id, tag_id)
     session.delete(tag)
+    rebuild_after_health_edit(session, user_id=user.id, days={tag.context_date})
     session.commit()
 
 

@@ -6,8 +6,8 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession, Workout
-from app.services.health_dates import get_or_create_profile
+from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession, User, Workout
+from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.interval_totals import interval_totals_by_date
 from app.services.metric_rollups import daily_rollup_values
 
@@ -25,6 +25,7 @@ def rebuild_daily_summaries(
     start: date,
     end: date,
 ) -> list[DailySummary]:
+    session.execute(select(User.id).where(User.id == user_id).with_for_update())
     dates = _date_range(start, end)
     summaries = [_get_or_create_summary(session, user_id, day) for day in dates]
     by_date = {summary.summary_date: summary for summary in summaries}
@@ -227,6 +228,8 @@ def _data_quality(summary: DailySummary) -> str:
 
 def _update_profile_body_metrics(session: Session, *, user_id: str, end: date) -> None:
     profile = get_or_create_profile(session, user_id)
+    # Historical rebuilds must not replace current body metrics with older values.
+    end = local_date_for_profile(profile)
     latest_weight = _latest_sample_at_or_before(session, user_id=user_id, metric="weight", end=end)
     latest_height = _latest_sample_at_or_before(session, user_id=user_id, metric="height", end=end)
     if latest_weight is not None and _sample_can_update_current(

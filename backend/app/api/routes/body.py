@@ -11,6 +11,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.core.security import utcnow
 from app.models import MetricSample, UserProfile
 from app.services.health_dates import get_or_create_profile, local_date_for_profile, timezone_for_profile
+from app.services.scores import rebuild_after_health_edit
 
 
 router = APIRouter(prefix="/body-metrics", tags=["body-metrics"])
@@ -105,6 +106,7 @@ def update_body_metrics(
             profile.weight_kg = payload.weight_kg
         profile.weight_source_preference = "manual"
     session.add(profile)
+    rebuild_after_health_edit(session, user_id=user.id, days={civil_date})
     session.commit()
     session.refresh(profile)
     return _body_metrics_payload(session, user_id=user.id, profile=profile, start=None, end=None)
