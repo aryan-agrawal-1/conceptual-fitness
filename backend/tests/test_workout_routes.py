@@ -14,6 +14,8 @@ from app.models import (
     User,
     UserProfile,
     Workout,
+    WorkoutExercise,
+    WorkoutSet,
 )
 
 
@@ -221,3 +223,91 @@ def test_workout_detail_404s_for_other_users_workout(session, auth_headers) -> N
     response = TestClient(app).get(f"/workouts/{workout.id}", headers=auth_headers(other))
 
     assert response.status_code == 404
+
+
+def test_workout_detail_includes_canonical_strength_session_and_states(session, auth_headers) -> None:
+    user = _user(session)
+    day = date(2026, 6, 19)
+    workout = Workout(
+        user_id=user.id,
+        client_id="client-strength-0001",
+        workout_type="strength",
+        title="Push",
+        start_time=_dt(day, 8),
+        end_time=_dt(day, 9),
+        civil_date=day,
+        duration_seconds=3600,
+        status="completed",
+        origin="manual",
+        notes="Steady tempo",
+        session_rpe=8,
+        is_user_edited=True,
+        awaiting_wearable=True,
+    )
+    session.add(workout)
+    session.flush()
+    exercise = WorkoutExercise(
+        workout_id=workout.id,
+        order_index=0,
+        group_id="superset-a",
+        name_snapshot="Bench Press",
+        measurement_schema="reps_load",
+        primary_muscles=["chest"],
+        secondary_muscles=["triceps"],
+        notes="Pause each rep",
+    )
+    session.add(exercise)
+    session.flush()
+    session.add(WorkoutSet(
+        workout_exercise_id=exercise.id,
+        order_index=0,
+        set_type="working",
+        status="completed",
+        reps=8,
+        load_value=60,
+        load_unit="kg",
+        rir=2,
+        notes="Clean",
+    ))
+    pending = Workout(
+        user_id=user.id,
+        client_id="client-pending-0001",
+        workout_type="strength",
+        start_time=_dt(day, 10),
+        end_time=_dt(day, 10),
+        civil_date=day,
+        duration_seconds=0,
+        status="active",
+        origin="manual",
+        awaiting_wearable=True,
+    )
+    session.add(pending)
+    wearable = _workout(session, user, day)
+    session.commit()
+    client = TestClient(app)
+    headers = auth_headers(user)
+
+    structured = client.get(f"/workouts/{workout.id}", headers=headers).json()
+    pending_payload = client.get(f"/workouts/{pending.id}", headers=headers).json()
+    unavailable = client.get(f"/workouts/{wearable.id}", headers=headers).json()
+
+    assert structured["session_structure_status"] == "available"
+    assert structured["awaiting_wearable"] is True
+    assert structured["strength_session"]["summary"] == {
+        "exercise_count": 1,
+        "completed_set_count": 1,
+        "volume_kg": 480.0,
+    }
+    assert structured["strength_session"]["exercises"][0]["group_id"] == "superset-a"
+    assert structured["strength_session"]["exercises"][0]["is_unilateral"] is False
+    assert structured["strength_session"]["exercises"][0]["sets"][0]["rir"] == 2.0
+    assert structured["strength_session"]["muscles_trained"][0] == {
+        "muscle": "chest",
+        "set_equivalents": 1.0,
+    }
+    assert structured["provenance"]["original_source"] == "manual"
+    assert structured["provenance"]["last_edited_at"] is not None
+    assert pending_payload["session_structure_status"] == "pending"
+    assert pending_payload["strength_session"] is None
+    assert unavailable["session_structure_status"] == "unavailable"
+    assert unavailable["strength_session"] is None

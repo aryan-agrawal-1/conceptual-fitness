@@ -188,13 +188,19 @@ struct FitnessMuscleLoad: Codable, Hashable {
 struct FitnessWorkoutSource: Codable, Hashable {
     let id: String
     let provider: String
+    let sourceRecordID: String
     let sourcePlatform: String?
     let sourceDevice: String?
+    let startTime: String?
+    let endTime: String?
 
     enum CodingKeys: String, CodingKey {
         case id, provider
+        case sourceRecordID = "source_record_id"
         case sourcePlatform = "source_platform"
         case sourceDevice = "source_device"
+        case startTime = "start_time"
+        case endTime = "end_time"
     }
 }
 
@@ -203,28 +209,38 @@ struct FitnessWorkoutExercise: Codable, Identifiable, Hashable {
     let exerciseID: String?
     let name: String
     let measurementSchema: String
+    let isUnilateral: Bool
+    let orderIndex: Int
     let groupID: String?
     let primaryMuscles: [String]
     let secondaryMuscles: [String]
     let restSeconds: Int?
     let notes: String?
     let sets: [FitnessWorkoutSet]
+    let completedSetCount: Int
+    let plannedSetCount: Int
 
     enum CodingKeys: String, CodingKey {
         case id, name, notes, sets
         case exerciseID = "exercise_id"
         case measurementSchema = "measurement_schema"
+        case isUnilateral = "is_unilateral"
+        case orderIndex = "order_index"
         case groupID = "group_id"
         case primaryMuscles = "primary_muscles"
         case secondaryMuscles = "secondary_muscles"
         case restSeconds = "rest_seconds"
+        case completedSetCount = "completed_set_count"
+        case plannedSetCount = "planned_set_count"
     }
 }
 
 struct FitnessWorkoutSet: Codable, Identifiable, Hashable {
     let id: String
+    let orderIndex: Int
     let setType: String
     let status: String
+    let dropGroupID: String?
     let reps: Int?
     let loadValue: Double?
     let loadUnit: String?
@@ -237,10 +253,13 @@ struct FitnessWorkoutSet: Codable, Identifiable, Hashable {
     let addedLoadKG: Double?
     let rir: Double?
     let notes: String?
+    let completedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id, status, reps, rir, notes
+        case orderIndex = "order_index"
         case setType = "set_type"
+        case dropGroupID = "drop_group_id"
         case loadValue = "load_value"
         case loadUnit = "load_unit"
         case loadPerImplement = "load_per_implement"
@@ -250,6 +269,7 @@ struct FitnessWorkoutSet: Codable, Identifiable, Hashable {
         case distanceMeters = "distance_meters"
         case assistanceKG = "assistance_kg"
         case addedLoadKG = "added_load_kg"
+        case completedAt = "completed_at"
     }
 }
 

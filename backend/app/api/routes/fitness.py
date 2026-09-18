@@ -999,6 +999,7 @@ def _workout_payload(
                 "exercise_id": exercise.exercise_id,
                 "name": exercise.name_snapshot,
                 "measurement_schema": exercise.measurement_schema,
+                "is_unilateral": _exercise_is_unilateral(session, exercise.exercise_id),
                 "order_index": exercise.order_index,
                 "group_id": exercise.group_id,
                 "primary_muscles": exercise.primary_muscles,

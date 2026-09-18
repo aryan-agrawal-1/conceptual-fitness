@@ -832,6 +832,14 @@ private extension WorkoutDetail {
             WorkoutHeartRateSample(observedAt: "2026-06-19T08:30:00Z", value: 161, unit: "bpm", sourcePlatform: "Google Health", sourceDevice: "Pixel Watch"),
             WorkoutHeartRateSample(observedAt: "2026-06-19T08:35:00Z", value: 148, unit: "bpm", sourcePlatform: "Google Health", sourceDevice: "Pixel Watch"),
             WorkoutHeartRateSample(observedAt: "2026-06-19T08:40:00Z", value: 132, unit: "bpm", sourcePlatform: "Google Health", sourceDevice: "Pixel Watch")
-        ]
+        ],
+        sessionStructureStatus: "unavailable",
+        strengthSession: nil,
+        provenance: WorkoutProvenance(
+            originalSource: "google_health",
+            currentOrigin: "wearable",
+            isUserEdited: false,
+            lastEditedAt: nil
+        )
     )
 }

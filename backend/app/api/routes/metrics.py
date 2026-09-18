@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.routes.fitness import _user_workout, _workout_payload
 from app.models import (
     DailyBaseline,
     DailyScore,
@@ -2341,9 +2342,7 @@ def workout_detail(
     user: CurrentUser,
     workout_id: str,
 ) -> dict[str, object]:
-    workout = session.get(Workout, workout_id)
-    if workout is None or workout.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Workout not found")
+    workout = _user_workout(session, user.id, workout_id)
 
     profile = get_or_create_profile(session, user.id)
     samples = _workout_heart_rate_samples(session, user.id, workout)
@@ -2359,6 +2358,21 @@ def workout_detail(
         for sample in samples
     ]
     payload["raw_summary"] = workout.raw_summary
+    session_payload = _workout_payload(session, workout)
+    has_structure = bool(session_payload["exercises"])
+    payload["session_structure_status"] = (
+        "available" if has_structure else "pending" if workout.awaiting_wearable else "unavailable"
+    )
+    payload["strength_session"] = session_payload if has_structure else None
+    sources = session_payload["sources"]
+    payload["provenance"] = {
+        "original_source": (
+            sources[0]["provider"] if sources else workout.origin
+        ),
+        "current_origin": workout.origin,
+        "is_user_edited": workout.is_user_edited,
+        "last_edited_at": workout.updated_at if workout.is_user_edited else None,
+    }
     return payload
 
 
