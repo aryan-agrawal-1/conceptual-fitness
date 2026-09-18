@@ -109,7 +109,7 @@ private struct HeartRateChartPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var chartTitle: String {
@@ -431,7 +431,7 @@ private struct HeartRateZonesExplanationPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 }
 
@@ -475,7 +475,7 @@ private struct HeartRateZonesPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var zoneSourceText: String {
@@ -530,7 +530,7 @@ private struct HeartRateDriversPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 }
 

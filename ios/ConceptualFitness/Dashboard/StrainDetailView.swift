@@ -241,7 +241,7 @@ private struct StrainChartPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var chartTitle: String {
@@ -705,7 +705,7 @@ private struct StrainExplanationPanel: View {
             .lineSpacing(3)
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 16)
+            .panelSurface(cornerRadius: 16)
     }
 }
 
@@ -943,7 +943,7 @@ private struct StrainDetailSection<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 18)
+        .panelSurface(cornerRadius: 18)
     }
 }
 

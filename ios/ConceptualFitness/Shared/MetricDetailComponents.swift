@@ -18,7 +18,7 @@ struct DetailErrorPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 18)
+        .panelSurface(cornerRadius: 18)
     }
 }
 
@@ -42,7 +42,7 @@ struct DetailSection<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: cornerRadius)
+        .panelSurface(cornerRadius: cornerRadius)
     }
 }
 

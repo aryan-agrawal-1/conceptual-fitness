@@ -76,7 +76,7 @@ private struct RHRExplanationPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 }
 
@@ -135,7 +135,7 @@ private struct RHRChartPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var chartTitle: String {
@@ -336,7 +336,7 @@ private struct RHRPatternPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var patternTitle: String {
@@ -521,7 +521,7 @@ private struct RHRSection<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 18)
+        .panelSurface(cornerRadius: 18)
     }
 }
 

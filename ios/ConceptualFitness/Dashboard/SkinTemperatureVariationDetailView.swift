@@ -76,7 +76,7 @@ private struct SkinTempExplanationPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 }
 
@@ -135,7 +135,7 @@ private struct SkinTempChartPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var chartTitle: String {
@@ -335,7 +335,7 @@ private struct SkinTempPatternPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var patternTitle: String {

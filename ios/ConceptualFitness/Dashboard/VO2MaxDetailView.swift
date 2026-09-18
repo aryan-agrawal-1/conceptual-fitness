@@ -206,7 +206,7 @@ private struct VO2ChartPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var chartTitle: String {

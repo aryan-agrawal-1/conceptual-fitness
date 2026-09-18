@@ -167,7 +167,7 @@ struct WorkoutEditorView: View {
             .foregroundStyle(.secondary)
         }
         .padding(17)
-        .glassSurface(cornerRadius: 22)
+        .panelSurface(cornerRadius: 22)
     }
 
     private var addExerciseButton: some View {
@@ -299,7 +299,7 @@ private struct ExerciseLogCard: View {
             .font(.subheadline.weight(.semibold))
         }
         .padding(16)
-        .glassSurface(cornerRadius: 22)
+        .panelSurface(cornerRadius: 22)
         .sheet(isPresented: $showDetails) {
             ExerciseDetailsView(exercise: exercise)
         }
@@ -611,7 +611,7 @@ private struct MuscleMapView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(16)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 
     private var accessibilitySummary: String {
