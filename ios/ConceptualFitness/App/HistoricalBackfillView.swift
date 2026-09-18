@@ -59,7 +59,7 @@ struct HistoricalBackfillView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
         .accessibilityElement(children: .contain)
     }
 

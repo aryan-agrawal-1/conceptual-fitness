@@ -346,6 +346,9 @@ struct WorkoutDetail: Decodable, Identifiable {
     let intensity: String?
     let strainLoadPoints: Double?
     let heartRateSamples: [WorkoutHeartRateSample]
+    let sessionStructureStatus: String?
+    let strengthSession: FitnessWorkout?
+    let provenance: WorkoutProvenance?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -362,6 +365,23 @@ struct WorkoutDetail: Decodable, Identifiable {
         case intensity
         case strainLoadPoints = "strain_load_points"
         case heartRateSamples = "heart_rate_samples"
+        case sessionStructureStatus = "session_structure_status"
+        case strengthSession = "strength_session"
+        case provenance
+    }
+}
+
+struct WorkoutProvenance: Decodable {
+    let originalSource: String
+    let currentOrigin: String
+    let isUserEdited: Bool
+    let lastEditedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case originalSource = "original_source"
+        case currentOrigin = "current_origin"
+        case isUserEdited = "is_user_edited"
+        case lastEditedAt = "last_edited_at"
     }
 }
 

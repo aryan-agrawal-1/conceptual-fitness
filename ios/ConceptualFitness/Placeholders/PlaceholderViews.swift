@@ -14,7 +14,7 @@ struct PlaceholderTabView: View {
                     .font(.system(size: 42, weight: .semibold))
                     .foregroundStyle(.blue)
                     .frame(width: 78, height: 78)
-                    .glassSurface(cornerRadius: 24)
+                    .panelSurface(cornerRadius: 24)
 
                 Text(title)
                     .font(.largeTitle.bold())
@@ -45,7 +45,7 @@ struct PlaceholderDetailView: View {
                     .font(.system(size: 38, weight: .semibold))
                     .foregroundStyle(.blue)
                     .frame(width: 72, height: 72)
-                    .glassSurface(cornerRadius: 22)
+                    .panelSurface(cornerRadius: 22)
 
                 Text(title.displayTitle)
                     .font(.title.bold())

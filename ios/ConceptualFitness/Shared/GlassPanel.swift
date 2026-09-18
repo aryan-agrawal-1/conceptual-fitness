@@ -16,21 +16,22 @@ struct AppBackground: View {
 }
 
 extension View {
+    func panelSurface(cornerRadius: CGFloat = 22) -> some View {
+        self
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(0.55), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+    }
+
     @ViewBuilder
-    func glassSurface(cornerRadius: CGFloat = 22, interactive: Bool = false) -> some View {
+    func glassControlSurface(cornerRadius: CGFloat = 22) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(
-                interactive ? .regular.interactive() : .regular,
-                in: .rect(cornerRadius: cornerRadius)
-            )
+            self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
         } else {
-            self
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(.white.opacity(0.55), lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+            self.panelSurface(cornerRadius: cornerRadius)
         }
     }
 }

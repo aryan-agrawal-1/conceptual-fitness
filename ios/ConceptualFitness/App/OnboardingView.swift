@@ -199,7 +199,7 @@ struct OnboardingView: View {
                 }
             }
             .padding(16)
-            .glassSurface(cornerRadius: 18)
+            .panelSurface(cornerRadius: 18)
         }
     }
 

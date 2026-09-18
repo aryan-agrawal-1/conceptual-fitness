@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.main import app
 from app.models import (
+    DailyScore,
+    DailySummary,
     ExerciseCatalogItem,
     User,
     UserProfile,
@@ -383,6 +386,63 @@ def test_manual_workout_enriches_high_confidence_wearable_match(session, auth_he
     assert response.json()["origin"] == "mixed"
     assert response.json()["sources"][0]["source_record_id"] == "provider-workout-1"
     assert response.json()["summary"]["completed_set_count"] == 1
+
+    session.expire_all()
+    source = session.scalar(select(WorkoutSource).where(WorkoutSource.workout_id == provider.id))
+    original_source_times = (source.start_time, source.end_time)
+    before = session.scalar(select(DailyScore).where(
+        DailyScore.user_id == user.id,
+        DailyScore.score_date == start.date(),
+        DailyScore.score_type == "strain",
+    ))
+    before_muscular_load = before.components["muscular_load"]["load_points"]
+
+    update = _workout_payload(item)
+    update.pop("client_id")
+    update["revision"] = response.json()["revision"]
+    update["start_time"] = (start + timedelta(minutes=5)).isoformat()
+    update["end_time"] = (start + timedelta(hours=1, minutes=5)).isoformat()
+    update["notes"] = "Corrected session"
+    update["exercises"][0]["notes"] = "Corrected exercise"
+    update["exercises"][0]["sets"][1]["status"] = "completed"
+    update["exercises"][0]["sets"][1]["notes"] = "Corrected set"
+
+    updated = TestClient(app).put(
+        f"/fitness/workouts/{provider.id}",
+        headers=auth_headers(user),
+        json=update,
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["summary"] == {
+        "exercise_count": 1,
+        "completed_set_count": 2,
+        "volume_kg": 960.0,
+    }
+    assert updated.json()["exercises"][0]["notes"] == "Corrected exercise"
+    assert updated.json()["exercises"][0]["sets"][1]["notes"] == "Corrected set"
+    session.expire_all()
+    after = session.scalar(select(DailyScore).where(
+        DailyScore.user_id == user.id,
+        DailyScore.score_date == start.date(),
+        DailyScore.score_type == "strain",
+    ))
+    assert after.components["muscular_load"]["load_points"] > before_muscular_load
+    assert session.scalar(select(DailySummary).where(
+        DailySummary.user_id == user.id,
+        DailySummary.summary_date == start.date(),
+    )).workout_count == 1
+    source = session.scalar(select(WorkoutSource).where(WorkoutSource.workout_id == provider.id))
+    assert (source.start_time, source.end_time) == original_source_times
+
+    detail = TestClient(app).get(
+        f"/workouts/{provider.id}",
+        headers=auth_headers(user),
+    ).json()
+    assert detail["strength_session"]["summary"]["completed_set_count"] == 2
+    assert detail["provenance"]["original_source"] == "google_health"
+    assert detail["provenance"]["current_origin"] == "mixed"
+    assert detail["provenance"]["last_edited_at"] is not None
 
 
 def test_deleted_workout_is_hidden_but_retains_source_tombstone(session, auth_headers) -> None:

@@ -13,7 +13,7 @@ struct WeatherStatusChip: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.primary.opacity(0.76))
                 .frame(width: 38, height: 38)
-                .glassSurface(cornerRadius: 19, interactive: true)
+                .glassControlSurface(cornerRadius: 19)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Show current location")
@@ -73,7 +73,7 @@ struct DailyBriefCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 26)
+        .panelSurface(cornerRadius: 26)
     }
 
     private var statusPillTitle: String {
@@ -124,7 +124,7 @@ struct DailyBriefSkeleton: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 26)
+        .panelSurface(cornerRadius: 26)
         .redacted(reason: .placeholder)
     }
 }
@@ -239,7 +239,7 @@ struct WorkoutCard: View {
         WorkoutSummaryRow(workout: workout, presentation: .card)
         .padding(14)
         .frame(maxWidth: .infinity)
-        .glassSurface(cornerRadius: 20, interactive: true)
+        .panelSurface(cornerRadius: 20)
     }
 }
 
@@ -412,7 +412,7 @@ struct MetricCard: View {
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
-        .glassSurface(cornerRadius: 20, interactive: true)
+        .panelSurface(cornerRadius: 20)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.title), \(item.valueText), \(item.status)")
@@ -433,7 +433,7 @@ struct EmptyDashboardCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 20)
     }
 }
 

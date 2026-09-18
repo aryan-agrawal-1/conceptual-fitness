@@ -73,7 +73,7 @@ struct ScoreRangeNavigator: View {
             .accessibilityLabel("Next \(timeframe.rawValue)")
         }
         .padding(10)
-        .glassSurface(cornerRadius: 18)
+        .panelSurface(cornerRadius: 18)
     }
 
     private var rangeTitle: String {

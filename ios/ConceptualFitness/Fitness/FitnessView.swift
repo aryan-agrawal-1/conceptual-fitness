@@ -106,7 +106,7 @@ struct FitnessView: View {
             .tint(HealthTheme.color(for: .activity))
         }
         .padding(18)
-        .glassSurface(cornerRadius: 24, interactive: true)
+        .panelSurface(cornerRadius: 24)
         .accessibilityElement(children: .contain)
     }
 
@@ -177,7 +177,7 @@ struct FitnessView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(15)
-        .glassSurface(cornerRadius: 19, interactive: true)
+        .panelSurface(cornerRadius: 19)
     }
 
     @ViewBuilder
@@ -207,7 +207,7 @@ struct FitnessView: View {
                         }
                     }
                     .padding(16)
-                    .glassSurface(cornerRadius: 20)
+                    .panelSurface(cornerRadius: 20)
                 }
             }
         }
@@ -292,7 +292,7 @@ struct FitnessView: View {
             }
             .frame(width: 220, alignment: .leading)
             .padding(16)
-            .glassSurface(cornerRadius: 20, interactive: true)
+            .panelSurface(cornerRadius: 20)
         }
         .buttonStyle(.plain)
         .disabled(store.draft != nil)
@@ -352,7 +352,7 @@ struct FitnessView: View {
                         .accessibilityLabel("Workout actions")
                     }
                     .padding(15)
-                    .glassSurface(cornerRadius: 19, interactive: true)
+                    .panelSurface(cornerRadius: 19)
                 }
             }
         }
