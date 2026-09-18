@@ -278,7 +278,7 @@ private struct WorkoutStrengthSetRow: View {
     let isUnilateral: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(set.badge(number: number))
                 .font(.caption.weight(.bold))
                 .frame(width: 32, height: 32)
@@ -1057,14 +1057,13 @@ private extension FitnessWorkoutSet {
 
     func recordedValues(isUnilateral: Bool) -> String {
         var values: [String] = []
-        if let reps {
+        let displayedLoad = loadPerImplement ?? loadValue
+        if let reps, let displayedLoad {
+            values.append("\(displayedLoad.clean) \(loadUnit ?? "kg") × \(reps)")
+        } else if let reps {
             values.append("\(reps) reps\(isUnilateral ? "/side" : "")")
-        }
-        if let loadPerImplement {
-            let count = implementCount.map { " × \($0)" } ?? ""
-            values.append("\(loadPerImplement.clean) kg each\(count)")
-        } else if let loadValue {
-            values.append("\(loadValue.clean) \(loadUnit ?? "kg")")
+        } else if let displayedLoad {
+            values.append("\(displayedLoad.clean) \(loadUnit ?? "kg")")
         }
         if let durationSeconds {
             values.append(durationText(seconds: durationSeconds))
