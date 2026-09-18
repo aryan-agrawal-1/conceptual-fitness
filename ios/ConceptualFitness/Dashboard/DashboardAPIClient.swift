@@ -4,6 +4,7 @@ struct DashboardAPIClient {
     var baseURL: URL = URL(string: "http://127.0.0.1:8000")!
     var session: URLSession = .shared
     var authStore: AuthStore?
+    var userID: String?
 
     func loadDashboard(now: Date = Date(), calendar: Calendar = .current) async throws -> DashboardDisplayBundle {
         let today = try await loadDashboard(for: now)

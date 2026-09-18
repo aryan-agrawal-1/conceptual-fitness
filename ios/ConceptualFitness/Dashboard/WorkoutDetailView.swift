@@ -1,10 +1,24 @@
 import SwiftUI
+import OSLog
 
 struct WorkoutDetailView: View {
     let workoutID: String
     let client: DashboardAPIClient
 
+    @StateObject private var fitnessStore: FitnessStore
     @State private var loadState: AsyncLoadState<WorkoutDetail> = .loading
+    @State private var showEditor = false
+    @State private var isPreparingAction = false
+    @State private var actionMessage: String?
+
+    private let logger = Logger(subsystem: "ConceptualFitness", category: "WorkoutDetail")
+
+    init(workoutID: String, client: DashboardAPIClient) {
+        self.workoutID = workoutID
+        self.client = client
+        let authStore = client.authStore ?? AuthStore(baseURL: client.baseURL, session: client.session)
+        _fitnessStore = StateObject(wrappedValue: FitnessStore(authStore: authStore, userID: client.userID ?? "preview"))
+    }
 
     var body: some View {
         ZStack {
@@ -26,6 +40,16 @@ struct WorkoutDetailView: View {
         .refreshable {
             await load()
         }
+        .fullScreenCover(isPresented: $showEditor, onDismiss: {
+            Task { await load() }
+        }) {
+            WorkoutEditorView(store: fitnessStore)
+        }
+        .alert("Workout unavailable", isPresented: actionAlertPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionMessage ?? "Try again.")
+        }
     }
 
     @ViewBuilder
@@ -45,8 +69,24 @@ struct WorkoutDetailView: View {
                 WorkoutSummaryMetricsPanel(detail: detail)
                 WorkoutHeartRatePanel(detail: detail)
                 WorkoutZonesPanel(detail: detail)
+                if detail.showsStrengthSection {
+                    WorkoutStrengthDetailSection(
+                        detail: detail,
+                        isPreparingAction: isPreparingAction,
+                        onRetry: { Task { await load() } },
+                        onEdit: { prepareEditor(for: detail, repeating: false) },
+                        onRepeat: { prepareEditor(for: detail, repeating: true) }
+                    )
+                }
             }
         }
+    }
+
+    private var actionAlertPresented: Binding<Bool> {
+        Binding(
+            get: { actionMessage != nil },
+            set: { if !$0 { actionMessage = nil } }
+        )
     }
 
     @MainActor
@@ -57,8 +97,214 @@ struct WorkoutDetailView: View {
         } catch is CancellationError {
             return
         } catch {
+            logger.error("Workout detail request failed: \(String(describing: type(of: error)), privacy: .public)")
             loadState = .failed("The backend was unavailable at \(client.baseURL.absoluteString).")
         }
+    }
+
+    private func prepareEditor(for detail: WorkoutDetail, repeating: Bool) {
+        guard let workout = detail.strengthSession else {
+            actionMessage = "Structured workout details are unavailable. Try refreshing this workout."
+            return
+        }
+        guard fitnessStore.draft == nil else {
+            actionMessage = "Finish or discard your current workout before \(repeating ? "repeating" : "editing") this one."
+            return
+        }
+
+        isPreparingAction = true
+        Task {
+            if repeating {
+                await fitnessStore.repeatWorkout(workout)
+            } else {
+                await fitnessStore.editWorkout(workout)
+            }
+            isPreparingAction = false
+            if fitnessStore.draft != nil {
+                showEditor = true
+            } else {
+                logger.error("Workout \(repeating ? "repeat" : "edit") request failed")
+                actionMessage = fitnessStore.syncMessage ?? "This workout could not be opened. Try again."
+            }
+        }
+    }
+}
+
+private struct WorkoutStrengthDetailSection: View {
+    let detail: WorkoutDetail
+    let isPreparingAction: Bool
+    let onRetry: () -> Void
+    let onEdit: () -> Void
+    let onRepeat: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch detail.sessionStructureStatus {
+            case "available":
+                if let session = detail.strengthSession {
+                    availableContent(session)
+                } else {
+                    unavailableContent(
+                        title: "Strength details unavailable",
+                        message: "The recorded exercises could not be loaded.",
+                        symbol: "exclamationmark.triangle"
+                    )
+                }
+            case "pending":
+                unavailableContent(
+                    title: "Strength details are still syncing",
+                    message: "The workout is here. Its exercises and sets will appear after syncing finishes.",
+                    symbol: "arrow.triangle.2.circlepath"
+                )
+            default:
+                unavailableContent(
+                    title: "No strength details recorded",
+                    message: "This workout does not include structured exercises or sets.",
+                    symbol: "dumbbell"
+                )
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 20)
+    }
+
+    private func availableContent(_ session: FitnessWorkout) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Strength Session")
+                    .font(.headline)
+                Spacer()
+                Text(session.strengthSummary)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let sessionRPE = session.sessionRPE {
+                Label("Effort \(sessionRPE.clean) out of 10", systemImage: "gauge.with.dots.needle.33percent")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let notes = session.notes, !notes.isEmpty {
+                Text(notes)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 12) {
+                ForEach(session.exercises) { exercise in
+                    WorkoutStrengthExerciseCard(exercise: exercise)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(action: onEdit) {
+                    Label("Edit", systemImage: "pencil")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                Button(action: onRepeat) {
+                    Label("Repeat", systemImage: "arrow.counterclockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(HealthTheme.color(for: .activity))
+            }
+            .disabled(isPreparingAction)
+            .overlay {
+                if isPreparingAction { ProgressView() }
+            }
+        }
+    }
+
+    private func unavailableContent(title: String, message: String, symbol: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(HealthTheme.color(for: .activity))
+            Text(title)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Check again", action: onRetry)
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct WorkoutStrengthExerciseCard: View {
+    let exercise: FitnessWorkoutExercise
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(exercise.name)
+                    .font(.subheadline.weight(.bold))
+                Spacer()
+                Text("\(exercise.completedSetCount)/\(exercise.plannedSetCount) sets")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let notes = exercise.notes, !notes.isEmpty {
+                Text(notes)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 8) {
+                ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
+                    WorkoutStrengthSetRow(number: index + 1, set: set, isUnilateral: exercise.isUnilateral)
+                }
+            }
+        }
+        .padding(14)
+        .background(.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct WorkoutStrengthSetRow: View {
+    let number: Int
+    let set: FitnessWorkoutSet
+    let isUnilateral: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(set.badge(number: number))
+                .font(.caption.weight(.bold))
+                .frame(width: 32, height: 32)
+                .background(.secondary.opacity(0.10), in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(set.recordedValues(isUnilateral: isUnilateral))
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                if let notes = set.notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            if set.status != "completed" {
+                Text(set.status.displayTitle)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Set \(number), \(set.recordedValues(isUnilateral: isUnilateral)), \(set.status.displayTitle)")
     }
 }
 
@@ -610,7 +856,7 @@ private extension WorkoutDetail {
     }
 
     var summaryDisplayName: String {
-        presentation.displayName
+        strengthSession?.title ?? presentation.displayName
     }
 
     var workoutDateLine: String {
@@ -775,6 +1021,68 @@ private func distanceText(meters: Double) -> String {
         return String(format: "%.1f km", meters / 1000)
     }
     return "\(meters.clean) m"
+}
+
+private extension WorkoutDetail {
+    var showsStrengthSection: Bool {
+        if strengthSession != nil { return true }
+        switch presentation.family {
+        case .strength: return true
+        default: return false
+        }
+    }
+}
+
+private extension FitnessWorkout {
+    var strengthSummary: String {
+        var values = [
+            "\(summary.exerciseCount) \(summary.exerciseCount == 1 ? "exercise" : "exercises")",
+            "\(summary.completedSetCount) \(summary.completedSetCount == 1 ? "set" : "sets")",
+        ]
+        if summary.volumeKG > 0 {
+            values.append("\(summary.volumeKG.clean) kg")
+        }
+        return values.joined(separator: " · ")
+    }
+}
+
+private extension FitnessWorkoutSet {
+    func badge(number: Int) -> String {
+        switch setType {
+        case "warmup": return "W"
+        case "drop": return "D"
+        default: return "\(number)"
+        }
+    }
+
+    func recordedValues(isUnilateral: Bool) -> String {
+        var values: [String] = []
+        if let reps {
+            values.append("\(reps) reps\(isUnilateral ? "/side" : "")")
+        }
+        if let loadPerImplement {
+            let count = implementCount.map { " × \($0)" } ?? ""
+            values.append("\(loadPerImplement.clean) kg each\(count)")
+        } else if let loadValue {
+            values.append("\(loadValue.clean) \(loadUnit ?? "kg")")
+        }
+        if let durationSeconds {
+            values.append(durationText(seconds: durationSeconds))
+        }
+        if let distanceMeters {
+            values.append(distanceText(meters: distanceMeters))
+        }
+        if let assistanceKG {
+            values.append("\(assistanceKG.clean) kg assistance")
+        }
+        if let addedLoadKG {
+            values.append("+\(addedLoadKG.clean) kg")
+        }
+        if let rir {
+            values.append("RIR \(rir.clean)")
+        }
+        return values.isEmpty ? "No values recorded" : values.joined(separator: " · ")
+    }
 }
 
 #Preview("Workout detail") {

@@ -37,7 +37,7 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        let appClient = DashboardAPIClient(authStore: authStore)
+        let appClient = DashboardAPIClient(authStore: authStore, userID: session.user.id)
 
         TabView(selection: $selectedTab) {
             NavigationStack(path: $dashboardPath) {
