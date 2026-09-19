@@ -156,6 +156,7 @@ class OAuthState(Base):
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     device_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     redirect_after: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sensitive_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -230,6 +231,20 @@ class AppAuthCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SensitiveActionGrant(Base):
+    __tablename__ = "sensitive_action_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    purpose: Mapped[str] = mapped_column(String(32), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
 
 # Original imported data from google health api
 class RawHealthRecord(Base):
