@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        010000000000000000000041 /* AccountExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000041 /* AccountExportView.swift */; };
         010000000000000000000040 /* HistoricalBackfillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000040 /* HistoricalBackfillView.swift */; };
 		010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000001 /* ConceptualFitnessApp.swift */; };
 		010000000000000000000002 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000002 /* AppRoute.swift */; };
@@ -65,6 +66,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        020000000000000000000041 /* AccountExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountExportView.swift; sourceTree = "<group>"; };
         020000000000000000000040 /* HistoricalBackfillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoricalBackfillView.swift; sourceTree = "<group>"; };
 		020000000000000000000001 /* ConceptualFitnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConceptualFitnessApp.swift; sourceTree = "<group>"; };
 		020000000000000000000002 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
@@ -170,6 +172,7 @@
 			children = (
 				020000000000000000000002 /* AppRoute.swift */,
 				020000000000000000000003 /* AppShellView.swift */,
+                020000000000000000000041 /* AccountExportView.swift */,
                 020000000000000000000040 /* HistoricalBackfillView.swift */,
 				020000000000000000000016 /* Auth.swift */,
 				020000000000000000000017 /* OnboardingView.swift */,
@@ -348,6 +351,7 @@
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,
+                010000000000000000000041 /* AccountExportView.swift in Sources */,
                 010000000000000000000040 /* HistoricalBackfillView.swift in Sources */,
 				010000000000000000000004 /* PlaceholderViews.swift in Sources */,
 				010000000000000000000005 /* GlassPanel.swift in Sources */,

@@ -98,12 +98,43 @@ struct HistoricalBackfillView: View {
 
 struct ImportProfileView: View {
     @ObservedObject var coordinator: AppSyncCoordinator
+    var authStore: AuthStore? = nil
+    var userID: String? = nil
 
     var body: some View {
         ZStack {
             AppBackground()
             ScrollView {
-                HistoricalBackfillView(coordinator: coordinator, expanded: true).padding(20)
+                VStack(spacing: 16) {
+                    HistoricalBackfillView(coordinator: coordinator, expanded: true)
+                    if let authStore, let userID {
+                        NavigationLink {
+                            AccountExportView(authStore: authStore, userID: userID)
+                        } label: {
+                            HStack(spacing: 14) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.title3)
+                                    .foregroundStyle(HealthTheme.color(for: .activity))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Export your data").font(.headline)
+                                    Text("Choose categories and create a portable JSON archive")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(18)
+                            .contentShape(Rectangle())
+                            .panelSurface(cornerRadius: 20)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens account data export options")
+                    }
+                }
+                .padding(20)
             }
         }
         .navigationTitle("Profile")

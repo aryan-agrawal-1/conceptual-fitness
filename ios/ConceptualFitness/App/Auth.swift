@@ -115,11 +115,18 @@ enum AuthError: Error {
     case unauthenticated
 }
 
+enum SensitiveActionPurpose: String {
+    case export
+    case deleteAccount = "delete_account"
+    case recoverDeletion = "recover_deletion"
+}
+
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var state: AuthState = .checking
 
     let baseURL: URL
+    var sensitiveActionDeviceID: String { keychain.deviceID }
     private let session: URLSession
     private let keychain: KeychainStore
     private let callbackScheme = "healthapp"
@@ -225,6 +232,21 @@ final class AuthStore: ObservableObject {
         return retryData
     }
 
+    func authenticatedDownload(for request: URLRequest) async throws -> (URL, URLResponse) {
+        var request = request
+        request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
+        let (url, response) = try await session.download(for: request)
+        if !Self.isUnauthorized(response) {
+            try Self.validate(response)
+            return (url, response)
+        }
+
+        request.setValue("Bearer \(try await refreshAccessToken().accessToken)", forHTTPHeaderField: "Authorization")
+        let (retryURL, retryResponse) = try await session.download(for: request)
+        try Self.validate(retryResponse)
+        return (retryURL, retryResponse)
+    }
+
     func authenticatedRequest<T: Decodable>(path: String) async throws -> T {
         var request = try makeRequest(path: path, method: "GET")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -257,6 +279,21 @@ final class AuthStore: ObservableObject {
             body: NameUpdateRequest(firstName: firstName, lastName: lastName)
         )
         state = .authenticated(response.session)
+    }
+
+    func sensitiveActionGrant(for purpose: SensitiveActionPurpose) async throws -> String {
+        let path = "/auth/google/sensitive-start-url?device_id=\(Self.percentEncode(keychain.deviceID))&purpose=\(purpose.rawValue)"
+        let start: StartURLResponse
+        if purpose == .recoverDeletion {
+            start = try await request(path: path)
+        } else {
+            start = try await authenticatedRequest(path: path)
+        }
+        guard let authURL = URL(string: start.authorizationURL) else {
+            throw AuthError.badURL
+        }
+        let callbackURL = try await authenticate(with: authURL)
+        return try sensitiveActionGrant(from: callbackURL, purpose: purpose)
     }
 
     private func validAccessToken() async throws -> String {
@@ -371,6 +408,24 @@ final class AuthStore: ObservableObject {
             throw AuthError.badCallback
         }
         return code
+    }
+
+    private func sensitiveActionGrant(
+        from callbackURL: URL,
+        purpose: SensitiveActionPurpose
+    ) throws -> String {
+        guard callbackURL.scheme == callbackScheme,
+              callbackURL.host == "auth",
+              callbackURL.path == "/callback",
+              let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              components.queryItems?.first(where: { $0.name == "status" })?.value == "authorized",
+              components.queryItems?.first(where: { $0.name == "purpose" })?.value == purpose.rawValue,
+              let grant = components.queryItems?.first(where: { $0.name == "grant" })?.value,
+              !grant.isEmpty
+        else {
+            throw AuthError.badCallback
+        }
+        return grant
     }
 
     private static func validate(_ response: URLResponse) throws {
