@@ -58,6 +58,9 @@ def exchange_auth_code(
         or not verify_token_digest(device_id, app_code.device_id_hash)
     ):
         raise AppAuthError("Invalid or expired authorization code")
+    user = session.get(User, app_code.user_id)
+    if user is None or user.deletion_scheduled_for is not None:
+        raise AppAuthError("Invalid or expired authorization code")
 
     app_code.consumed_at = now
     app_session = AppSession(
@@ -86,11 +89,14 @@ def refresh_tokens(
         raise AppAuthError("Invalid or expired token")
 
     app_session = session.get(AppSession, token.session_id)
+    user = session.get(User, token.user_id)
     now = utcnow()
     compromised = (
         token.used_at is not None
         or token.revoked_at is not None
         or app_session is None
+        or user is None
+        or user.deletion_scheduled_for is not None
         or app_session.revoked_at is not None
         or _aware(token.expires_at) < now
         or (app_session is not None and _aware(app_session.expires_at) < now)
@@ -123,7 +129,7 @@ def authenticate_access_token(session: Session, raw_token: str) -> User:
     if app_session is None or app_session.revoked_at is not None or _aware(app_session.expires_at) < now:
         raise AppAuthError("Invalid or expired token")
     user = session.get(User, token.user_id)
-    if user is None:
+    if user is None or user.deletion_scheduled_for is not None:
         raise AppAuthError("Invalid or expired token")
     app_session.last_used_at = now
     session.add(app_session)
