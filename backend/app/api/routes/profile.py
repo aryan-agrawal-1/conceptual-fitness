@@ -123,9 +123,15 @@ class ProfileUpdate(BaseModel):
         if {"fitness_goal", "primary_goal"}.issubset(self.model_fields_set):
             if self.fitness_goal != self.primary_goal:
                 raise ValueError("fitness_goal and primary_goal must match")
-        if "unit_system" in self.model_fields_set and self.unit_system is None:
-            raise ValueError("unit_system cannot be null")
+        for field in ("height_source_preference", "weight_source_preference", "unit_system"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
         return self
+
+    @field_validator("fitness_goal", "primary_goal")
+    @classmethod
+    def clean_goals(cls, value: str | None) -> str | None:
+        return _clean_string(value) if value is not None else None
 
     @field_validator("secondary_goals")
     @classmethod

@@ -122,6 +122,7 @@ def test_profile_primary_goal_alias_partial_constraints_and_explicit_clears(
         "/profile",
         headers=auth_headers(user),
         json={
+            "fitness_goal": " Run a marathon ",
             "primary_goal": "Run a marathon",
             "secondary_goals": ["Sleep better"],
             "constraints": {"equipment": ["Treadmill"]},
@@ -162,9 +163,15 @@ def test_profile_rejects_conflicting_goal_aliases_and_unknown_constraints(
         headers=auth_headers(user),
         json={"constraints": {"unsupported": ["value"]}},
     )
+    null_preference = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"weight_source_preference": None},
+    )
 
     assert conflicting.status_code == 422
     assert unknown.status_code == 422
+    assert null_preference.status_code == 422
 
 
 def test_profile_reports_preferred_body_metric_provenance(session, auth_headers) -> None:
