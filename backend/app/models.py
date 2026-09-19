@@ -98,6 +98,9 @@ class UserProfile(Base):
     height_source_preference: Mapped[str] = mapped_column(String(32), default="google")
     weight_source_preference: Mapped[str] = mapped_column(String(32), default="google")
     fitness_goal: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    secondary_goals: Mapped[list[str]] = mapped_column(JSON, default=list)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    unit_system: Mapped[str] = mapped_column(String(16), default="metric")
     sleep_target_minutes: Mapped[int] = mapped_column(Integer, default=480)
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
