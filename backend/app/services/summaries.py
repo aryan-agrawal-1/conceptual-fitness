@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession, User, Workout
+from app.services.body_metrics import preferred_body_sample
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.interval_totals import interval_totals_by_date
 from app.services.metric_rollups import daily_rollup_values
@@ -230,40 +231,23 @@ def _update_profile_body_metrics(session: Session, *, user_id: str, end: date) -
     profile = get_or_create_profile(session, user_id)
     # Historical rebuilds must not replace current body metrics with older values.
     end = local_date_for_profile(profile)
-    latest_weight = _latest_sample_at_or_before(session, user_id=user_id, metric="weight", end=end)
-    latest_height = _latest_sample_at_or_before(session, user_id=user_id, metric="height", end=end)
-    if latest_weight is not None and _sample_can_update_current(
-        latest_weight,
+    latest_weight = preferred_body_sample(
+        session,
+        user_id=user_id,
+        metric="weight",
         preference=profile.weight_source_preference,
-    ):
-        profile.weight_kg = latest_weight.value
-    if latest_height is not None and _sample_can_update_current(
-        latest_height,
+        end=end,
+    )
+    latest_height = preferred_body_sample(
+        session,
+        user_id=user_id,
+        metric="height",
         preference=profile.height_source_preference,
-    ):
+        end=end,
+    )
+    if latest_weight is not None:
+        profile.weight_kg = latest_weight.value
+    if latest_height is not None:
         profile.height_cm = latest_height.value * 100
     if latest_weight is not None or latest_height is not None:
         session.add(profile)
-
-
-def _latest_sample_at_or_before(
-    session: Session,
-    *,
-    user_id: str,
-    metric: str,
-    end: date,
-) -> MetricSample | None:
-    return session.scalar(
-        select(MetricSample)
-        .where(
-            MetricSample.user_id == user_id,
-            MetricSample.metric == metric,
-            MetricSample.civil_date <= end,
-        )
-        .order_by(MetricSample.observed_at.desc())
-        .limit(1)
-    )
-
-
-def _sample_can_update_current(sample: MetricSample, *, preference: str) -> bool:
-    return preference != "manual" or sample.source_platform == "manual"
