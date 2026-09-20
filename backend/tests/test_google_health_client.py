@@ -1,11 +1,38 @@
 from __future__ import annotations
 
+import base64
 from datetime import date
+import json
 from typing import Any
 
 import pytest
 
-from app.google_health.client import GoogleHealthClient
+from app.google_health.client import (
+    GoogleHealthAPIError,
+    GoogleHealthClient,
+    merge_verified_id_token_claims,
+)
+
+
+def test_verified_id_token_keeps_requested_auth_time_from_signed_payload() -> None:
+    verified = {
+        "iss": "https://accounts.google.com",
+        "aud": "client-id",
+        "sub": "subject",
+        "exp": 1_800_000_000,
+    }
+    payload = {**verified, "auth_time": 1_799_999_900}
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+    tokeninfo_claims = {**verified, "exp": str(verified["exp"])}
+    assert merge_verified_id_token_claims(
+        f"header.{encoded}.signature", tokeninfo_claims
+    )["auth_time"] == 1_799_999_900
+
+    with pytest.raises(GoogleHealthAPIError):
+        merge_verified_id_token_claims(
+            f"header.{encoded}.signature", {**tokeninfo_claims, "sub": "different-subject"}
+        )
 
 
 @pytest.mark.asyncio

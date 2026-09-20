@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
+from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
@@ -17,6 +19,7 @@ from app.services.health_dates import get_or_create_profile
 from app.services.app_auth import (
     AppAuthError,
     TokenPair,
+    authenticate_access_token,
     create_app_auth_code,
     exchange_auth_code,
     refresh_tokens,
@@ -38,10 +41,27 @@ from app.services.rate_limit import (
     client_ip,
     enforce_rate_limit,
 )
+from app.services.sensitive_actions import create_sensitive_action_grant
 from app.tasks.sync import enqueue_initial_backfill
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
+
+
+def sensitive_oauth_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, GoogleHealthAPIError):
+        return f"provider_http_{exc.status_code}" if exc.status_code else "provider_request_failed"
+    return {
+        "Google did not return authentication evidence": "missing_id_token",
+        "Google did not confirm recent authentication": "missing_auth_time",
+        "Google authentication evidence is invalid": "invalid_id_token_claims",
+        "Google authentication evidence is stale": "stale_auth_time",
+        "Google identity evidence does not match": "identity_mismatch",
+        "Sensitive action requires an existing account": "account_not_found",
+        "Authenticated Google account does not match the app session": "account_mismatch",
+        "Pending-deletion accounts cannot authenticate": "account_pending_deletion",
+    }.get(str(exc), "oauth_state_or_configuration")
 
 
 class OAuthDiagnostics(BaseModel):
@@ -171,6 +191,33 @@ def start_google_oauth_url(
         raise HTTPException(status_code=500, detail="OAuth configuration is incomplete") from exc
 
 
+@router.get("/google/sensitive-start-url")
+def start_sensitive_google_oauth_url(
+    request: Request,
+    session: DbSession,
+    device_id: str = Query(..., min_length=16),
+    purpose: Literal["export", "delete_account", "recover_deletion"] = Query(...),
+) -> dict[str, str]:
+    enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
+    user_id = None
+    if purpose != "recover_deletion":
+        try:
+            user_id = authenticate_access_token(session, bearer_token_from_request(request)).id
+        except AppAuthError as exc:
+            raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    try:
+        return {
+            "authorization_url": create_authorization_url(
+                session,
+                device_id=device_id,
+                user_id=user_id,
+                sensitive_action=purpose,
+            )
+        }
+    except OAuthConfigurationError as exc:
+        raise HTTPException(status_code=500, detail="OAuth configuration is incomplete") from exc
+
+
 @router.get("/google/callback")
 async def google_oauth_callback(
     session: DbSession,
@@ -178,19 +225,32 @@ async def google_oauth_callback(
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
 ) -> RedirectResponse:
-    settings = get_settings()
     if error:
         return _deep_link_redirect(status="error", reason="oauth_error")
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing OAuth code or state")
     try:
         completion = await complete_google_health_oauth(session, code=code, state=state)
+        if completion.sensitive_action:
+            grant = create_sensitive_action_grant(
+                session,
+                user_id=completion.account.user_id,
+                device_id_hash=completion.device_id_hash,
+                purpose=completion.sensitive_action,
+            )
+            return _deep_link_redirect(
+                status="authorized",
+                grant=grant,
+                purpose=completion.sensitive_action,
+            )
         app_code = create_app_auth_code(
             session,
             user_id=completion.account.user_id,
             device_id_hash=completion.device_id_hash,
         )
-    except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError):
+    except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError) as exc:
+        reason = sensitive_oauth_failure_reason(exc)
+        logger.warning("Sensitive OAuth failed reason=%s", reason)
         return _deep_link_redirect(status="error", reason="oauth_failed")
 
     queued = enqueue_initial_backfill(completion.account.id)

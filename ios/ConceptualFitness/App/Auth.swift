@@ -3,12 +3,14 @@ import Foundation
 import Security
 import SwiftUI
 import UIKit
+import UserNotifications
 
 enum AuthState: Equatable {
     case checking
     case signedOut
     case signingIn
     case authenticated(AuthSession)
+    case deletionScheduled(Date, String?)
     case failed(String)
 }
 
@@ -115,17 +117,25 @@ enum AuthError: Error {
     case unauthenticated
 }
 
+enum SensitiveActionPurpose: String {
+    case export
+    case deleteAccount = "delete_account"
+    case recoverDeletion = "recover_deletion"
+}
+
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var state: AuthState = .checking
 
     let baseURL: URL
+    var sensitiveActionDeviceID: String { keychain.deviceID }
     private let session: URLSession
     private let keychain: KeychainStore
     private let callbackScheme = "healthapp"
     private var webSession: ASWebAuthenticationSession?
     private var accessToken: String?
     private var refreshTask: Task<TokenResponse, Error>?
+    private static let deletionDeadlineKey = "accountDeletion.scheduledFor"
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
@@ -143,6 +153,10 @@ final class AuthStore: ObservableObject {
     }
 
     func bootstrap() async {
+        if let deadline = UserDefaults.standard.object(forKey: Self.deletionDeadlineKey) as? Date {
+            state = .deletionScheduled(deadline, nil)
+            return
+        }
         guard keychain.refreshToken != nil else {
             state = .signedOut
             return
@@ -225,6 +239,21 @@ final class AuthStore: ObservableObject {
         return retryData
     }
 
+    func authenticatedDownload(for request: URLRequest) async throws -> (URL, URLResponse) {
+        var request = request
+        request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
+        let (url, response) = try await session.download(for: request)
+        if !Self.isUnauthorized(response) {
+            try Self.validate(response)
+            return (url, response)
+        }
+
+        request.setValue("Bearer \(try await refreshAccessToken().accessToken)", forHTTPHeaderField: "Authorization")
+        let (retryURL, retryResponse) = try await session.download(for: request)
+        try Self.validate(retryResponse)
+        return (retryURL, retryResponse)
+    }
+
     func authenticatedRequest<T: Decodable>(path: String) async throws -> T {
         var request = try makeRequest(path: path, method: "GET")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -257,6 +286,85 @@ final class AuthStore: ObservableObject {
             body: NameUpdateRequest(firstName: firstName, lastName: lastName)
         )
         state = .authenticated(response.session)
+    }
+
+    func sensitiveActionGrant(for purpose: SensitiveActionPurpose) async throws -> String {
+        let path = "/auth/google/sensitive-start-url?device_id=\(Self.percentEncode(keychain.deviceID))&purpose=\(purpose.rawValue)"
+        let start: StartURLResponse
+        if purpose == .recoverDeletion {
+            start = try await request(path: path)
+        } else {
+            start = try await authenticatedRequest(path: path)
+        }
+        guard let authURL = URL(string: start.authorizationURL) else {
+            throw AuthError.badURL
+        }
+        let callbackURL = try await authenticate(with: authURL)
+        return try sensitiveActionGrant(from: callbackURL, purpose: purpose)
+    }
+
+    func completeDeletionScheduling(userID: String, scheduledFor: Date) {
+        clearLocalData(userID: userID)
+        keychain.clearTokens()
+        accessToken = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        UserDefaults.standard.set(scheduledFor, forKey: Self.deletionDeadlineKey)
+        state = .deletionScheduled(scheduledFor, nil)
+    }
+
+    func restoreDeletedAccount() async {
+        let savedDeadline = UserDefaults.standard.object(forKey: Self.deletionDeadlineKey) as? Date
+        state = .signingIn
+        do {
+            let grant = try await sensitiveActionGrant(for: .recoverDeletion)
+            let response: TokenResponse = try await post(
+                path: "/account/deletion/recover",
+                body: [
+                    "sensitive_action_grant": grant,
+                    "device_id": keychain.deviceID,
+                ]
+            )
+            apply(response)
+            UserDefaults.standard.removeObject(forKey: Self.deletionDeadlineKey)
+            try await loadMe()
+        } catch {
+            if let savedDeadline {
+                state = .deletionScheduled(savedDeadline, "Account restoration is unavailable. Confirm the same Google account was used, or the recovery period may have ended.")
+            } else {
+                state = .failed("No recoverable account was found for that Google account.")
+            }
+        }
+    }
+
+    private func clearLocalData(userID: String) {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys
+            where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history") {
+            defaults.removeObject(forKey: key)
+        }
+        if let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let draft = applicationSupport
+                .appendingPathComponent("FitnessDrafts", isDirectory: true)
+                .appendingPathComponent("\(userID).json")
+            try? FileManager.default.removeItem(at: draft)
+        }
+        if let temporaryItems = try? FileManager.default.contentsOfDirectory(
+            at: FileManager.default.temporaryDirectory,
+            includingPropertiesForKeys: nil
+        ) {
+            for item in temporaryItems
+                where item.lastPathComponent.hasPrefix("conceptual-fitness-export-")
+                    && item.pathExtension == "zip" {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+    }
+
+    func continueAfterRecoveryPeriod() {
+        UserDefaults.standard.removeObject(forKey: Self.deletionDeadlineKey)
+        state = .signedOut
     }
 
     private func validAccessToken() async throws -> String {
@@ -373,6 +481,24 @@ final class AuthStore: ObservableObject {
         return code
     }
 
+    private func sensitiveActionGrant(
+        from callbackURL: URL,
+        purpose: SensitiveActionPurpose
+    ) throws -> String {
+        guard callbackURL.scheme == callbackScheme,
+              callbackURL.host == "auth",
+              callbackURL.path == "/callback",
+              let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              components.queryItems?.first(where: { $0.name == "status" })?.value == "authorized",
+              components.queryItems?.first(where: { $0.name == "purpose" })?.value == purpose.rawValue,
+              let grant = components.queryItems?.first(where: { $0.name == "grant" })?.value,
+              !grant.isEmpty
+        else {
+            throw AuthError.badCallback
+        }
+        return grant
+    }
+
     private static func validate(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
@@ -386,6 +512,12 @@ final class AuthStore: ObservableObject {
     private static func percentEncode(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
     }
+
+    #if DEBUG
+    func setDeletionPreview(deadline: Date) {
+        state = .deletionScheduled(deadline, nil)
+    }
+    #endif
 }
 
 struct StartURLResponse: Decodable {
@@ -420,10 +552,14 @@ struct AuthGateView: View {
         case .checking:
             ProgressView()
                 .task { await authStore.bootstrap() }
-        case .signedOut, .failed:
-            signInView
+        case .signedOut:
+            signInView(errorMessage: nil)
+        case .failed(let message):
+            signInView(errorMessage: message)
         case .signingIn:
             ProgressView("Signing in")
+        case .deletionScheduled(let deadline, let message):
+            deletionScheduledView(deadline: deadline, message: message)
         case .authenticated(let session) where session.googleHealth.status == .connected:
             if session.profile.onboardingCompletedAt == nil {
                 OnboardingView(authStore: authStore, session: session)
@@ -435,7 +571,7 @@ struct AuthGateView: View {
         }
     }
 
-    private var signInView: some View {
+    private func signInView(errorMessage: String?) -> some View {
         ZStack {
             AppBackground()
 
@@ -460,6 +596,14 @@ struct AuthGateView: View {
                 }
 
                 VStack(spacing: 12) {
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                            .accessibilityLabel("Sign-in error: \(errorMessage)")
+                    }
+
                     Button {
                         Task { await authStore.signIn() }
                     } label: {
@@ -470,10 +614,68 @@ struct AuthGateView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
 
+                    Button("Restore an account scheduled for deletion") {
+                        Task { await authStore.restoreDeletedAccount() }
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Signs in with Google and restores the account if it is still within the 14-day recovery period")
+
                     Text("Your health data stays tied to your authenticated app session.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                }
+
+                Spacer()
+            }
+            .padding(28)
+        }
+    }
+
+    private func deletionScheduledView(deadline: Date, message: String?) -> some View {
+        ZStack {
+            AppBackground()
+
+            VStack(alignment: .leading, spacing: 20) {
+                Spacer()
+                Image(systemName: deadline > Date() ? "clock.badge.exclamationmark" : "trash.slash")
+                    .font(.system(size: 52, weight: .semibold))
+                    .foregroundStyle(deadline > Date() ? .orange : .secondary)
+                    .symbolRenderingMode(.hierarchical)
+
+                Text("Account deletion scheduled")
+                    .font(.title.bold())
+
+                Text(deadline > Date()
+                     ? "Your account is suspended and its app data is scheduled for permanent deletion on \(deadline.formatted(date: .long, time: .shortened))."
+                     : "The scheduled deletion time has arrived. Ask the server to confirm whether restoration is still available.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let message {
+                    Text(message)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("Restoration error: \(message)")
+                }
+
+                Button {
+                    Task { await authStore.restoreDeletedAccount() }
+                } label: {
+                    Label("Restore account", systemImage: "arrow.uturn.backward.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityHint("Authenticate with the same Google account and ask the server to cancel deletion")
+
+                if deadline <= Date() {
+                    Button("Return to sign in") {
+                        authStore.continueAfterRecoveryPeriod()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityHint("Returns to the sign-in screen to start a new account")
                 }
 
                 Spacer()

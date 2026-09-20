@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DbSession
 from app.core.security import utcnow
 from app.models import MetricSample, UserProfile
+from app.services.body_metrics import preferred_body_sample
 from app.services.health_dates import get_or_create_profile, local_date_for_profile, timezone_for_profile
 from app.services.scores import rebuild_after_health_edit
 
@@ -89,9 +90,12 @@ def update_body_metrics(
             value=payload.height_cm / 100,
             unit="meters",
         )
-        if _latest_sample(session, user_id=user.id, metric="height") == sample:
+        if (
+            preferred_body_sample(session, user_id=user.id, metric="height", preference=None)
+            == sample
+        ):
             profile.height_cm = payload.height_cm
-        profile.height_source_preference = "manual"
+            profile.height_source_preference = "manual"
     if payload.weight_kg is not None:
         sample = _upsert_manual_sample(
             session,
@@ -102,9 +106,12 @@ def update_body_metrics(
             value=payload.weight_kg,
             unit="kg",
         )
-        if _latest_sample(session, user_id=user.id, metric="weight") == sample:
+        if (
+            preferred_body_sample(session, user_id=user.id, metric="weight", preference=None)
+            == sample
+        ):
             profile.weight_kg = payload.weight_kg
-        profile.weight_source_preference = "manual"
+            profile.weight_source_preference = "manual"
     session.add(profile)
     rebuild_after_health_edit(session, user_id=user.id, days={civil_date})
     session.commit()
@@ -121,19 +128,23 @@ def _body_metrics_payload(
     end: date_type | None,
 ) -> BodyMetricsPayload:
     samples = _body_samples(session, user_id=user_id, start=start, end=end)
-    latest_height = _latest_sample(session, user_id=user_id, metric="height")
-    latest_weight = _latest_sample(session, user_id=user_id, metric="weight")
+    latest_height = preferred_body_sample(
+        session,
+        user_id=user_id,
+        metric="height",
+        preference=profile.height_source_preference,
+    )
+    latest_weight = preferred_body_sample(
+        session,
+        user_id=user_id,
+        metric="weight",
+        preference=profile.weight_source_preference,
+    )
     height_cm = profile.height_cm
     weight_kg = profile.weight_kg
-    if latest_height is not None and _sample_can_update_current(
-        latest_height,
-        preference=profile.height_source_preference,
-    ):
+    if latest_height is not None:
         height_cm = latest_height.value * 100
-    if latest_weight is not None and _sample_can_update_current(
-        latest_weight,
-        preference=profile.weight_source_preference,
-    ):
+    if latest_weight is not None:
         weight_kg = latest_weight.value
     return BodyMetricsPayload(
         height_cm=height_cm,
@@ -162,19 +173,6 @@ def _body_samples(
     if end is not None:
         statement = statement.where(MetricSample.civil_date <= end)
     return session.scalars(statement.order_by(MetricSample.observed_at)).all()
-
-
-def _latest_sample(session: DbSession, *, user_id: str, metric: str) -> MetricSample | None:
-    return session.scalar(
-        select(MetricSample)
-        .where(MetricSample.user_id == user_id, MetricSample.metric == metric)
-        .order_by(MetricSample.observed_at.desc())
-        .limit(1)
-    )
-
-
-def _sample_can_update_current(sample: MetricSample, *, preference: str) -> bool:
-    return preference != "manual" or sample.source_platform == "manual"
 
 
 def _upsert_manual_sample(

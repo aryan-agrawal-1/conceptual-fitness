@@ -12,7 +12,7 @@ celery_app = Celery(
     "personal_health",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.sync"],
+    include=["app.tasks.account_deletion", "app.tasks.sync"],
 )
 
 celery_app.conf.timezone = settings.celery_timezone
@@ -20,5 +20,9 @@ celery_app.conf.beat_schedule = {
     "sync-google-health-hourly": {
         "task": "app.tasks.sync.sync_all_connected_accounts",
         "schedule": crontab(minute=settings.celery_sync_minute, hour=settings.celery_sync_hour),
-    }
+    },
+    "purge-deleted-accounts-daily": {
+        "task": "app.tasks.account_deletion.purge_due_accounts",
+        "schedule": crontab(minute="30", hour="3"),
+    },
 }
