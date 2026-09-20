@@ -178,6 +178,28 @@ def revoke_session(session: Session, app_session: AppSession) -> None:
     )
 
 
+def create_session_for_device(
+    session: Session,
+    *,
+    user_id: str,
+    device_id: str,
+    user_agent: str | None = None,
+) -> TokenPair:
+    now = utcnow()
+    app_session = AppSession(
+        user_id=user_id,
+        device_id_hash=device_id_digest(device_id),
+        expires_at=now + timedelta(days=get_settings().refresh_token_ttl_days),
+        last_used_at=now,
+        user_agent=(user_agent or "")[:256] or None,
+    )
+    session.add(app_session)
+    session.flush()
+    token_pair = _issue_token_pair(session, app_session)
+    session.commit()
+    return token_pair
+
+
 def _issue_token_pair(session: Session, app_session: AppSession) -> TokenPair:
     settings = get_settings()
     access_token = generate_app_token()

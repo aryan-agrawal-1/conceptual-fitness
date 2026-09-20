@@ -24,6 +24,7 @@ def schedule_account_deletion(
     now: datetime | None = None,
 ) -> User:
     requested_at = now or utcnow()
+    user = session.scalar(select(User).where(User.id == user.id).with_for_update()) or user
     if user.deletion_scheduled_for is None:
         user.deletion_requested_at = requested_at
         user.deletion_scheduled_for = requested_at + DELETION_GRACE_PERIOD
@@ -54,8 +55,8 @@ async def purge_due_accounts(
     google_client: GoogleHealthClient | None = None,
 ) -> dict[str, int]:
     cutoff = now or utcnow()
-    users = session.scalars(
-        select(User).where(
+    user_ids = session.scalars(
+        select(User.id).where(
             User.deletion_scheduled_for.is_not(None),
             User.deletion_scheduled_for <= cutoff,
         )
@@ -65,8 +66,16 @@ async def purge_due_accounts(
     failed = 0
     revocation_failed = 0
 
-    for user in users:
+    for user_id in user_ids:
         try:
+            user = session.scalar(select(User).where(User.id == user_id).with_for_update())
+            if (
+                user is None
+                or user.deletion_scheduled_for is None
+                or aware(user.deletion_scheduled_for) > cutoff
+            ):
+                session.rollback()
+                continue
             accounts = session.scalars(
                 select(GoogleAccount).where(GoogleAccount.user_id == user.id)
             ).all()
@@ -89,8 +98,14 @@ async def purge_due_accounts(
             failed += 1
             logger.error(
                 "Scheduled account purge failed for user %s (%s)",
-                token_digest(user.id)[:12],
+                token_digest(user_id)[:12],
                 type(exc).__name__,
             )
 
     return {"purged": purged, "failed": failed, "revocation_failed": revocation_failed}
+
+
+def aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=utcnow().tzinfo)
+    return value
