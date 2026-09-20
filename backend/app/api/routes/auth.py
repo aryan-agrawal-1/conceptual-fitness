@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Literal
 from urllib.parse import urlencode
 
@@ -45,6 +46,22 @@ from app.tasks.sync import enqueue_initial_backfill
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
+
+
+def sensitive_oauth_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, GoogleHealthAPIError):
+        return f"provider_http_{exc.status_code}" if exc.status_code else "provider_request_failed"
+    return {
+        "Google did not return authentication evidence": "missing_id_token",
+        "Google did not confirm recent authentication": "missing_auth_time",
+        "Google authentication evidence is invalid": "invalid_id_token_claims",
+        "Google authentication evidence is stale": "stale_auth_time",
+        "Google identity evidence does not match": "identity_mismatch",
+        "Sensitive action requires an existing account": "account_not_found",
+        "Authenticated Google account does not match the app session": "account_mismatch",
+        "Pending-deletion accounts cannot authenticate": "account_pending_deletion",
+    }.get(str(exc), "oauth_state_or_configuration")
 
 
 class OAuthDiagnostics(BaseModel):
@@ -231,7 +248,9 @@ async def google_oauth_callback(
             user_id=completion.account.user_id,
             device_id_hash=completion.device_id_hash,
         )
-    except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError):
+    except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError) as exc:
+        reason = sensitive_oauth_failure_reason(exc)
+        logger.warning("Sensitive OAuth failed reason=%s", reason)
         return _deep_link_redirect(status="error", reason="oauth_failed")
 
     queued = enqueue_initial_backfill(completion.account.id)

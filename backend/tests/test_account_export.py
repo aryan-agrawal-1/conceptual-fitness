@@ -290,6 +290,7 @@ class SensitiveOAuthClient:
 @pytest.mark.parametrize("claim_change,userinfo_sub", [
     ({"auth_time": None}, "google-sub"),
     ({"auth_time": int((utcnow() - timedelta(minutes=10)).timestamp())}, "google-sub"),
+    ({"auth_time": int((utcnow() + timedelta(minutes=2)).timestamp())}, "google-sub"),
     ({}, "different-sub"),
 ])
 async def test_sensitive_oauth_rejects_missing_stale_or_mismatched_authentication_evidence(

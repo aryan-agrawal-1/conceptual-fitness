@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncIterator
 from datetime import date, timedelta
+import json
 from typing import Any
 
 import httpx
@@ -23,6 +25,28 @@ class GoogleHealthAPIError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+
+
+def merge_verified_id_token_claims(
+    id_token: str, verified_claims: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        encoded_payload = id_token.split(".")[1]
+        padding = "=" * (-len(encoded_payload) % 4)
+        token_claims = json.loads(base64.urlsafe_b64decode(encoded_payload + padding))
+    except (IndexError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise GoogleHealthAPIError("Google ID token payload is invalid") from exc
+    try:
+        exp_matches = int(token_claims["exp"]) == int(verified_claims["exp"])
+    except (KeyError, TypeError, ValueError):
+        exp_matches = False
+    if not isinstance(token_claims, dict) or not exp_matches or any(
+        token_claims.get(name) != verified_claims.get(name) for name in ("iss", "aud", "sub")
+    ):
+        raise GoogleHealthAPIError("Google ID token claims do not match verification")
+    if "auth_time" not in verified_claims and "auth_time" in token_claims:
+        return {**verified_claims, "auth_time": token_claims["auth_time"]}
+    return verified_claims
 
 # All the google health calls i need to make
 class GoogleHealthClient:
@@ -94,7 +118,7 @@ class GoogleHealthClient:
             raise GoogleHealthAPIError("Google ID token verification timed out") from exc
         except httpx.HTTPError as exc:
             raise GoogleHealthAPIError("Google ID token verification failed") from exc
-        return self._handle_response(response)
+        return merge_verified_id_token_claims(id_token, self._handle_response(response))
 
     async def list_data_points(
         self,

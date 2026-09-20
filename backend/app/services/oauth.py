@@ -145,10 +145,11 @@ async def complete_google_health_oauth(
             claims.get("aud") != settings.google_health_client_id
             or claims.get("iss") not in {"https://accounts.google.com", "accounts.google.com"}
             or not claims.get("sub")
-            or expires_at < now
-            or not (now - 300 <= auth_time <= now + 60)
+            or expires_at <= now
         ):
-            raise OAuthConfigurationError("Google authentication evidence is invalid or stale")
+            raise OAuthConfigurationError("Google authentication evidence is invalid")
+        if not (now - 300 <= auth_time <= now + 60):
+            raise OAuthConfigurationError("Google authentication evidence is stale")
 
     identity = await google_client.get_identity(access_token)
     health_user_id = identity.get("healthUserId")
