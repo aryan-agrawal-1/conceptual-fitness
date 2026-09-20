@@ -28,6 +28,6 @@ Google can satisfy the fresh authentication request through its available accoun
 
 ## Current product scope
 
-No coach conversation, memory, plan, evidence vault, encrypted vault, or E2EE record type exists in the current repository. Those categories were not added speculatively. Before adding any such storage, its export format and on-device decryption/assembly boundary need a product decision and durable coverage.
+No coach conversation, memory, plan, evidence vault, encrypted vault, or E2EE record type exists in the current repository, so this batch exports every category currently stored. Later coach and E2EE milestones must add their records to the export, define the on-device decryption and assembly boundary, and add durable coverage when those stores are introduced.
 
 No frontend tests or production dependencies were added.
