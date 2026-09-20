@@ -132,6 +132,31 @@ struct ImportProfileView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("Opens account data export options")
+
+                        NavigationLink {
+                            AccountDeletionView(authStore: authStore, userID: userID)
+                        } label: {
+                            HStack(spacing: 14) {
+                                Image(systemName: "trash")
+                                    .font(.title3)
+                                    .foregroundStyle(.red)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Delete account").font(.headline)
+                                    Text("Schedule permanent deletion with a 14-day recovery period")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(18)
+                            .contentShape(Rectangle())
+                            .panelSurface(cornerRadius: 20)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens account deletion and recovery information")
                     }
                 }
                 .padding(20)
