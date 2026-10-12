@@ -168,7 +168,7 @@ def _upsert_strain_score(
     components["workout_contributions"] = _workout_contributions(components, workouts)
     confidence = _strain_confidence_phase(session, user_id, day)
     status = ScoreStatus.in_progress if day == today else ScoreStatus.scored
-    has_load_evidence = cardio["covered_minutes"] > 0 or source_zone is not None or workouts
+    has_load_evidence = cardio["hr_covered_minutes"] > 0 or source_zone is not None or workouts
     if not has_load_evidence and day != today:
         status = ScoreStatus.missing_data
     reasons = _strain_reasons(total, components)
@@ -239,6 +239,7 @@ def _cardio_load_from_hr(
         return {
             "load_points": 0.0,
             "covered_minutes": 0.0,
+            "hr_covered_minutes": 0.0,
             "long_gap_count": 0,
             "workout_coverage_ratio": 0.0,
             "confidence": "weak",
@@ -254,6 +255,7 @@ def _cardio_load_from_hr(
     general_activity_load = 0.0
     workout_contributions: dict[str, float] = {}
     eligible_seconds = 0.0
+    observed_seconds = 0.0
     long_gap_count = 0
     workout_seconds = sum(
         max(0.0, (workout.end_time - workout.start_time).total_seconds()) for workout in workouts
@@ -283,6 +285,7 @@ def _cardio_load_from_hr(
         )
         if hr < 35 or hr > 230:
             continue
+        observed_seconds += seconds
         minute_start = current.observed_at.replace(second=0, microsecond=0)
         has_movement = workout is not None or minute_start in movement_minutes
         if not has_movement:
@@ -304,6 +307,7 @@ def _cardio_load_from_hr(
         else:
             general_activity_load += contribution
     covered_minutes = eligible_seconds / 60
+    hr_covered_minutes = observed_seconds / 60
     total_workout_covered = sum(workout_covered_seconds.values())
     workout_coverage = {
         workout.id: round(
@@ -319,9 +323,9 @@ def _cardio_load_from_hr(
     workout_ratio = (
         0.0 if workout_seconds <= 0 else min(1.0, total_workout_covered / workout_seconds)
     )
-    if covered_minutes >= 720 or workout_ratio >= 0.70:
+    if hr_covered_minutes >= 720 or workout_ratio >= 0.70:
         confidence = "strong"
-    elif covered_minutes >= 240 or workout_ratio >= 0.30:
+    elif hr_covered_minutes >= 240 or workout_ratio >= 0.30:
         confidence = "moderate"
     else:
         confidence = "weak"
@@ -330,6 +334,7 @@ def _cardio_load_from_hr(
         "workout_load_points": round(workout_load, 2),
         "general_activity_load_points": round(general_activity_load, 2),
         "covered_minutes": round(covered_minutes, 1),
+        "hr_covered_minutes": round(hr_covered_minutes, 1),
         "long_gap_count": long_gap_count,
         "workout_coverage_ratio": round(workout_ratio, 3),
         "confidence": confidence,

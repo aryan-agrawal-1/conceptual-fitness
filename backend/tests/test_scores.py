@@ -1372,6 +1372,39 @@ def test_strain_requires_same_minute_movement_except_inside_workouts(session) ->
     assert _cardio_load_from_hr(samples, [], **(options | {"movement_minutes": set()}))["load_points"] == 0
 
 
+def test_rest_day_confidence_uses_hr_coverage_and_keeps_zero_load(session) -> None:
+    from app.services.strain_scores import _cardio_load_from_hr, _upsert_strain_score
+
+    user = _user_with_profile(session)
+    day = date(2026, 9, 7)
+    start = _dt(day, 0)
+    samples = [
+        MetricSample(user_id=user.id, metric="heart_rate", civil_date=day,
+                     observed_at=start + timedelta(minutes=i), value=140, unit="bpm")
+        for i in range(721)
+    ]
+    options = dict(movement_minutes=set(), rhr=60, max_hr=200, sex=None)
+    rest = _cardio_load_from_hr(samples, [], **options)
+    assert rest["confidence"] == "strong"
+    assert rest["hr_covered_minutes"] == 720
+    assert rest["covered_minutes"] == 0
+    assert rest["load_points"] == 0
+    assert _cardio_load_from_hr(samples[:61], [], **options)["confidence"] == "weak"
+    active = _cardio_load_from_hr(
+        samples, [], **(options | {"movement_minutes": {item.observed_at for item in samples}})
+    )
+    assert active["confidence"] == rest["confidence"]
+    assert active["load_points"] > 0
+
+    session.add_all(samples)
+    session.add(DailySummary(user_id=user.id, summary_date=day, resting_heart_rate=60))
+    session.flush()
+    strain = _upsert_strain_score(session, user_id=user.id, profile=user.profile, day=day)
+    assert strain.status == ScoreStatus.scored
+    assert strain.value == 0
+    assert strain.data_quality == "strong"
+
+
 def test_historical_edit_rebuilds_later_baseline_and_preserves_earlier_scores(session):
     from app.services.scores import rebuild_after_health_edit
 
