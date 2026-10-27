@@ -4,17 +4,17 @@ Issue: #13 — recoverable account deletion with permanent erasure
 
 ## Implemented lifecycle
 
-- `POST /account/deletion` requires the exact `DELETE` confirmation, an authenticated session, and a five-minute, one-use Google step-up grant bound to the requesting device and deletion purpose.
+- `POST /account/deletion` requires the exact `DELETE` confirmation, an authenticated session, and a five-minute, one-use device-key grant bound to the requesting session, device, and deletion purpose.
 - Scheduling is idempotent and locks the account transition. It immediately revokes every app session and access token, disconnects Google Health, stops sync, clears app-owned local caches and temporary export ZIPs, and moves the iOS app to a persistent suspended state.
-- During the 14-day grace period, the explicit **Restore account** action authenticates the same Google identity on any device. The server locks and re-checks the account, cancels deletion, reconnects the refreshed Google credential, and issues one fresh device session. Revoked sessions remain revoked.
+- During the 14-day grace period, the explicit **Restore account** action authenticates the same Google identity on any device. The server locks and re-checks the account, cancels deletion, reconnects the refreshed Google credential, verifies the new device key’s signature, and issues one fresh key-bound device session. Revoked sessions remain revoked.
 - The daily Celery purge locks and re-checks each due account at the exact UTC deadline. It best-effort revokes Google credentials, then permanently deletes the user and every current user-owned row through database cascades even if provider revocation fails.
 - The iOS deletion flow covers idle, confirmation, loading, error/retry, suspended, recovery, and locally elapsed deadline states. Device time is display-only; the server decides whether recovery is still allowed.
 - Logs use a short keyed user digest and exception type. They contain no email, provider identity, credential, or health value.
 
 ## Verification evidence
 
-- 60 focused deletion, authentication, OAuth, and sync tests pass. Durable route and service coverage includes exact confirmation; wrong-purpose, wrong-device, consumed, and expired grants; immediate rejection of old access and refresh tokens; ordinary sign-in rejection while deletion is pending; fresh recovery-session issuance; same-Google recovery; idempotence; exact deadline handling; provider-revocation failure; full current-schema cascade erasure; and sync/OAuth transition guards.
-- The final integrated backend suite passes 162 tests with one existing Starlette/httpx deprecation warning.
+- Earlier lifecycle verification passed 60 focused deletion, authentication, OAuth, and sync tests. Durable route and service coverage includes exact confirmation; wrong-purpose, wrong-device, consumed, and expired grants; immediate rejection of old access and refresh tokens; ordinary sign-in rejection while deletion is pending; fresh recovery-session issuance; same-Google recovery; idempotence; exact deadline handling; provider-revocation failure; full current-schema cascade erasure; and sync/OAuth transition guards.
+- The final device-key integrated backend suite passes 166 tests with one existing Starlette/httpx deprecation warning.
 - Migration `0022_account_deletion` passed upgrade from a schema stamped at `0021_sensitive_action_grants`, downgrade to 0021, and re-upgrade to 0022 on an isolated database. A fresh SQLite migration from zero remains blocked by pre-existing migration 0008's PostgreSQL-only `md5()` expression.
 - The Debug iOS app builds successfully for iPhone 17 Pro and iPhone 17e simulators. Runtime accessibility snapshots on an iPhone 17 Pro expose the deletion confirmation field, destructive scheduling action, retry action, and Restore account action with meaningful labels and hints. The screen communicates state in text and symbols as well as color.
 - Light-appearance visual checks at 368×800 cover the complete deletion form, enabled confirmation/error state, and suspended Restore screen without clipping. The second-device build was verified, but its screenshot surface returned black and does not count as visual evidence. No real account was scheduled or deleted; lifecycle tests use isolated fixtures and iOS checks use debug preview states.
@@ -29,3 +29,7 @@ Issue: #13 — recoverable account deletion with permanent erasure
 ## Operational requirement
 
 The repository already defines Celery worker and beat services, and the purge task is registered in the beat schedule. Production must run both services and monitor purge failures. Repository verification does not prove those production processes are deployed or healthy.
+
+## Native device authentication follow-up
+
+The final device-key focused suite passed 25 tests; Ruff, migration 0023 roundtrip, and the iOS simulator build passed. Export/deletion now require session-bound device proof with no Google-grant fallback. Face ID/passcode and Secure Enclave behavior on a physical iPhone are deferred at the user’s request. Check the deletion confirmation and authentication cancellation safely on the real account; complete deletion and recovery only with a disposable account. See `device-key-step-up.md` for the protocol and `account-export-verification.md` for physical-device checks.
