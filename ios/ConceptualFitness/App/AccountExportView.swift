@@ -54,18 +54,22 @@ struct AccountExportView: View {
                 ? URL(fileURLWithPath: "/tmp/conceptual-fitness-export-preview.zip")
                 : nil
         )
-        _errorMessage = State(
-            initialValue: previewState == .error
-                ? "Your export couldn’t be created. Check your connection and try again."
-                : nil
-        )
+        let previewError: String? = switch previewState {
+            case .error: "Your export couldn’t be created. Check your connection and try again."
+            case .hardwareUnavailable: "Face ID or device passcode confirmation requires a physical device with Secure Enclave support."
+            default: nil
+        }
+        _errorMessage = State(initialValue: previewError)
     }
     #endif
 
     var body: some View {
         Form {
             Section {
-                Text("Choose the data to include. You’ll confirm your Google account before the archive is created.")
+                Text("Choose the data to include. You’ll confirm with Face ID or your device passcode before the archive is created.")
+                Text("If this is an older app session, you may be asked to sign in with Google once to link this device.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Text("The ZIP contains documented JSON files. Authentication credentials are never included.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -151,17 +155,20 @@ struct AccountExportView: View {
                 grant: grant,
                 localInsights: insights
             )
-        } catch is CancellationError {
         } catch {
+            guard let message = AuthStore.sensitiveActionMessage(
+                for: error,
+                fallback: "Your export couldn’t be created. Check your connection and try again."
+            ) else { return }
             logger.error("Account export failed: \(String(describing: type(of: error)), privacy: .public)")
-            errorMessage = "Your export couldn’t be created. Check your connection and try again."
+            errorMessage = message
         }
     }
 }
 
 #if DEBUG
 enum AccountExportPreviewState: String {
-    case idle, loading, error, success
+    case idle, loading, error, hardwareUnavailable, success
 
     static var current: Self? {
         let arguments = ProcessInfo.processInfo.arguments

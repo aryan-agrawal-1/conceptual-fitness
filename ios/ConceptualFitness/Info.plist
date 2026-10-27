@@ -35,6 +35,8 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Conceptual Fitness uses your location to match the dashboard weather, sunrise/sunset timing, and keeps the app timezone-aware to ensure the timings on the app are accurate.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Conceptual Fitness uses Face ID to confirm sensitive account actions such as exporting data or scheduling account deletion.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

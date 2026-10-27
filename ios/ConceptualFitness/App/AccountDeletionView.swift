@@ -23,11 +23,12 @@ struct AccountDeletionView: View {
         self.userID = userID
         _confirmation = State(initialValue: previewState == .idle ? "" : "DELETE")
         _isScheduling = State(initialValue: previewState == .loading)
-        _errorMessage = State(
-            initialValue: previewState == .error
-                ? "Account deletion couldn’t be scheduled. Check your connection and try again."
-                : nil
-        )
+        let previewError: String? = switch previewState {
+            case .error: "Account deletion couldn’t be scheduled. Check your connection and try again."
+            case .hardwareUnavailable: "Face ID or device passcode confirmation requires a physical device with Secure Enclave support."
+            default: nil
+        }
+        _errorMessage = State(initialValue: previewError)
     }
     #endif
 
@@ -59,7 +60,7 @@ struct AccountDeletionView: View {
                 if isScheduling {
                     HStack {
                         ProgressView()
-                        Text("Confirming your Google account…")
+                        Text("Confirming with Face ID or device passcode…")
                     }
                     .accessibilityElement(children: .combine)
                 } else {
@@ -93,7 +94,7 @@ struct AccountDeletionView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You will be signed out immediately. You can restore the account for 14 days by authenticating with the same Google account.")
+            Text("Confirm with Face ID or your device passcode. You will be signed out immediately, and can restore the account for 14 days with the same Google account.")
         }
     }
 
@@ -119,10 +120,13 @@ struct AccountDeletionView: View {
                 throw URLError(.cannotParseResponse)
             }
             authStore.completeDeletionScheduling(userID: userID, scheduledFor: scheduledFor)
-        } catch is CancellationError {
         } catch {
+            guard let message = AuthStore.sensitiveActionMessage(
+                for: error,
+                fallback: "Account deletion couldn’t be scheduled. Check your connection and try again."
+            ) else { return }
             logger.error("Account deletion scheduling failed: \(String(describing: type(of: error)), privacy: .public)")
-            errorMessage = "Account deletion couldn’t be scheduled. Check your connection and try again."
+            errorMessage = message
         }
     }
 }
@@ -159,7 +163,7 @@ private struct DeletionStatusResponse: Decodable {
 
 #if DEBUG
 enum AccountDeletionPreviewState: String {
-    case idle, loading, error, scheduled, expired
+    case idle, loading, error, hardwareUnavailable, scheduled, expired
 
     static var current: Self? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -172,7 +176,7 @@ enum AccountDeletionPreviewState: String {
     @MainActor var view: AnyView {
         let authStore = AuthStore()
         switch self {
-        case .idle, .loading, .error:
+        case .idle, .loading, .error, .hardwareUnavailable:
             return AnyView(
                 NavigationStack {
                     AccountDeletionView(authStore: authStore, userID: "preview", previewState: self)
