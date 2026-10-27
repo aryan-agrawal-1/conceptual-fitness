@@ -33,8 +33,12 @@ class FakeGoogleHealthClient:
         return {"email": "person@example.com", "email_verified": True}
 
 
-def test_create_authorization_url_persists_state(session) -> None:
-    url = create_authorization_url(session, device_id="test-device-id-000000000000")
+def test_create_authorization_url_persists_state(session, device_key) -> None:
+    url = create_authorization_url(
+        session,
+        device_id="test-device-id-000000000000",
+        device_public_key=device_key.public_key,
+    )
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
 
@@ -52,8 +56,12 @@ def test_create_authorization_url_persists_state(session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_oauth_creates_user_and_google_account(session) -> None:
-    url = create_authorization_url(session, device_id="test-device-id-000000000000")
+async def test_complete_oauth_creates_user_and_google_account(session, device_key) -> None:
+    url = create_authorization_url(
+        session,
+        device_id="test-device-id-000000000000",
+        device_public_key=device_key.public_key,
+    )
     state = parse_qs(urlparse(url).query)["state"][0]
 
     completion = await complete_google_health_oauth(

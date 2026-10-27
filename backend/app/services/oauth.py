@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 from dataclasses import dataclass
-import json
 from urllib.parse import urlencode
 
 from sqlalchemy import select
@@ -21,6 +20,7 @@ from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import GOOGLE_OAUTH_AUTHORIZE_URL
 from app.models import ConnectionStatus, GoogleAccount, OAuthState, User
 from app.services.app_auth import device_id_digest
+from app.services.device_keys import DeviceKeyError, normalize_public_key
 
 
 class OAuthConfigurationError(RuntimeError):
@@ -36,6 +36,8 @@ class GoogleOAuthCompletion:
     account: GoogleAccount
     device_id_hash: str
     sensitive_action: str | None
+    device_public_key: str | None
+    source_session_id: str | None
 
 
 # authorisation for google
@@ -46,6 +48,8 @@ def create_authorization_url(
     redirect_after: str | None = None,
     user_id: str | None = None,
     sensitive_action: str | None = None,
+    device_public_key: str | None = None,
+    source_session_id: str | None = None,
 ) -> str:
     settings = get_settings()
     missing = missing_or_placeholder_keys(settings)
@@ -60,15 +64,20 @@ def create_authorization_url(
             "profile",
             "https://www.googleapis.com/auth/googlehealth.profile.readonly",
         )
-        if sensitive_action in {"export", "delete_account"}
+        if sensitive_action in {"enroll_device", "recover_deletion"}
         else settings.google_health_scopes
     )
+    normalized_public_key = normalize_public_key(device_public_key) if device_public_key else None
+    if sensitive_action and not normalized_public_key:
+        raise DeviceKeyError("Device public key is required")
     oauth_state = OAuthState(
         state_hash=state_digest(state),
         user_id=user_id,
         device_id_hash=device_id_digest(device_id),
         redirect_after=redirect_after,
         sensitive_action=sensitive_action,
+        device_public_key=normalized_public_key,
+        source_session_id=source_session_id,
         scopes=list(scopes),
         expires_at=expires_in(15),
     )
@@ -80,15 +89,12 @@ def create_authorization_url(
         "redirect_uri": settings.google_health_redirect_uri,
         "response_type": "code",
         "scope": " ".join(scopes),
-        "prompt": "select_account" if sensitive_action in {"export", "delete_account"} else "consent",
+        "prompt": "select_account" if sensitive_action else "consent",
         "state": state,
     }
-    if sensitive_action not in {"export", "delete_account"}:
+    if not sensitive_action:
         params["access_type"] = "offline"
         params["include_granted_scopes"] = "true"
-    if sensitive_action:
-        params["max_age"] = "0"
-        params["claims"] = json.dumps({"id_token": {"auth_time": {"essential": True}}})
     return f"{GOOGLE_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
 
 
@@ -130,27 +136,6 @@ async def complete_google_health_oauth(
     expires_in_seconds = int(token_payload.get("expires_in", 3600))
     granted_scopes = token_payload.get("scope", " ".join(oauth_state.scopes)).split()
 
-    if oauth_state.sensitive_action:
-        id_token = token_payload.get("id_token")
-        if not id_token:
-            raise OAuthConfigurationError("Google did not return authentication evidence")
-        claims = await google_client.verify_id_token(str(id_token))
-        try:
-            auth_time = int(claims["auth_time"])
-            expires_at = int(claims["exp"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise OAuthConfigurationError("Google did not confirm recent authentication") from exc
-        now = int(utcnow().timestamp())
-        if (
-            claims.get("aud") != settings.google_health_client_id
-            or claims.get("iss") not in {"https://accounts.google.com", "accounts.google.com"}
-            or not claims.get("sub")
-            or expires_at <= now
-        ):
-            raise OAuthConfigurationError("Google authentication evidence is invalid")
-        if not (now - 300 <= auth_time <= now + 60):
-            raise OAuthConfigurationError("Google authentication evidence is stale")
-
     identity = await google_client.get_identity(access_token)
     health_user_id = identity.get("healthUserId")
     legacy_user_id = identity.get("legacyUserId")
@@ -158,8 +143,6 @@ async def complete_google_health_oauth(
         userinfo = await google_client.get_userinfo(access_token)
     except Exception:
         userinfo = {}
-    if oauth_state.sensitive_action and userinfo.get("sub") != claims.get("sub"):
-        raise OAuthConfigurationError("Google identity evidence does not match")
     email = userinfo.get("email") if userinfo.get("email_verified", True) else None
 
     account = _find_existing_google_account(session, health_user_id, legacy_user_id)
@@ -183,12 +166,16 @@ async def complete_google_health_oauth(
             account=account,
             device_id_hash=device_hash_for_state(oauth_state),
             sensitive_action=oauth_state.sensitive_action,
+            device_public_key=public_key_for_state(oauth_state),
+            source_session_id=oauth_state.source_session_id,
         )
     if oauth_state.sensitive_action:
         return GoogleOAuthCompletion(
             account=account,
             device_id_hash=device_hash_for_state(oauth_state),
             sensitive_action=oauth_state.sensitive_action,
+            device_public_key=public_key_for_state(oauth_state),
+            source_session_id=oauth_state.source_session_id,
         )
     if account is None:
         user = _get_or_create_user(session)
@@ -223,6 +210,8 @@ async def complete_google_health_oauth(
         account=account,
         device_id_hash=device_hash_for_state(oauth_state),
         sensitive_action=oauth_state.sensitive_action,
+        device_public_key=public_key_for_state(oauth_state),
+        source_session_id=oauth_state.source_session_id,
     )
 
 
@@ -230,6 +219,10 @@ def device_hash_for_state(oauth_state: OAuthState) -> str:
     if not oauth_state.device_id_hash:
         raise OAuthStateError("OAuth state is missing device binding")
     return oauth_state.device_id_hash
+
+
+def public_key_for_state(oauth_state: OAuthState) -> str | None:
+    return oauth_state.device_public_key
 
 
 def _find_existing_google_account(

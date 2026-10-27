@@ -8,14 +8,19 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, bearer_token_from_request
 from app.core.security import token_digest
 from app.models import User
 from app.services.account_deletion import schedule_account_deletion
 from app.services.account_recovery import AccountRecoveryError, recover_account
-from app.services.app_auth import TokenPair, create_session_for_device
+from app.services.app_auth import (
+    AppAuthError,
+    TokenPair,
+    authenticate_access_token_with_session,
+    create_session_for_device,
+)
 from app.services.rate_limit import CONNECTION_MUTATION_LIMIT, client_ip, enforce_rate_limit
-from app.services.sensitive_actions import SensitiveActionError, consume_sensitive_action_grant
+from app.services.sensitive_actions import SensitiveActionError, consume_recovery_challenge, consume_sensitive_action_grant
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +42,7 @@ class ScheduleDeletionRequest(BaseModel):
 class RecoverDeletionRequest(BaseModel):
     sensitive_action_grant: str = Field(min_length=1)
     device_id: str = Field(min_length=16)
+    signature: str = Field(min_length=1)
 
 
 class RecoveryResponse(BaseModel):
@@ -61,14 +67,20 @@ def schedule_deletion(
 ) -> DeletionStatus:
     enforce_rate_limit(request, CONNECTION_MUTATION_LIMIT, user.id)
     try:
+        authenticated_user, app_session = authenticate_access_token_with_session(
+            session, bearer_token_from_request(request)
+        )
+        if authenticated_user.id != user.id:
+            raise AppAuthError("Invalid or expired token")
         consume_sensitive_action_grant(
             session,
             token=payload.sensitive_action_grant,
             purpose="delete_account",
             user_id=user.id,
             device_id=payload.device_id,
+            session_id=app_session.id,
         )
-    except SensitiveActionError as exc:
+    except (AppAuthError, SensitiveActionError) as exc:
         raise HTTPException(status_code=403, detail="Reauthentication is required") from exc
 
     schedule_account_deletion(session, user)
@@ -84,10 +96,10 @@ def recover_deletion(
 ) -> RecoveryResponse:
     enforce_rate_limit(request, CONNECTION_MUTATION_LIMIT, client_ip(request), payload.device_id)
     try:
-        grant = consume_sensitive_action_grant(
+        grant = consume_recovery_challenge(
             session,
-            token=payload.sensitive_action_grant,
-            purpose="recover_deletion",
+            challenge=payload.sensitive_action_grant,
+            signature=payload.signature,
             device_id=payload.device_id,
         )
         user = session.scalar(select(User).where(User.id == grant.user_id).with_for_update())
@@ -98,6 +110,7 @@ def recover_deletion(
             session,
             user_id=user.id,
             device_id=payload.device_id,
+            device_public_key=grant.device_public_key,
             user_agent=request.headers.get("user-agent"),
         )
     except (AccountRecoveryError, SensitiveActionError) as exc:

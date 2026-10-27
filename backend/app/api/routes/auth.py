@@ -19,13 +19,14 @@ from app.services.health_dates import get_or_create_profile
 from app.services.app_auth import (
     AppAuthError,
     TokenPair,
-    authenticate_access_token,
+    authenticate_access_token_with_session,
     create_app_auth_code,
     exchange_auth_code,
     refresh_tokens,
     revoke_with_access_token,
     revoke_with_refresh_token,
 )
+from app.services.device_keys import DeviceKeyError
 from app.services.oauth import (
     OAuthConfigurationError,
     OAuthStateError,
@@ -41,7 +42,11 @@ from app.services.rate_limit import (
     client_ip,
     enforce_rate_limit,
 )
-from app.services.sensitive_actions import create_sensitive_action_grant
+from app.services.sensitive_actions import (
+    SensitiveActionError,
+    authorize_sensitive_action_challenge,
+    create_sensitive_action_challenge,
+)
 from app.tasks.sync import enqueue_initial_backfill
 
 
@@ -77,6 +82,7 @@ class OAuthDiagnostics(BaseModel):
 class TokenExchangeRequest(BaseModel):
     code: str
     device_id: str
+    signature: str | None = Field(default=None, max_length=256)
 
 
 class TokenRefreshRequest(BaseModel):
@@ -94,6 +100,25 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str
     expires_in: int
+
+
+class DeviceChallengeRequest(BaseModel):
+    purpose: Literal["export", "delete_account"]
+
+
+class DeviceChallengeResponse(BaseModel):
+    challenge: str
+    expires_in: int
+    session_id: str
+
+
+class DeviceAuthorizeRequest(DeviceChallengeRequest):
+    challenge: str = Field(min_length=1, max_length=128)
+    signature: str = Field(min_length=1, max_length=256)
+
+
+class DeviceAuthorizeResponse(BaseModel):
+    sensitive_action_grant: str
 
 
 class UserPayload(BaseModel):
@@ -158,6 +183,7 @@ def start_google_oauth(
     session: DbSession,
     device_id: str = Query(..., min_length=16),
     redirect_after: str | None = Query(default=None),
+    device_public_key: str | None = Query(default=None, max_length=128),
 ) -> RedirectResponse:
     enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
     try:
@@ -165,8 +191,9 @@ def start_google_oauth(
             session,
             device_id=device_id,
             redirect_after=redirect_after,
+            device_public_key=device_public_key,
         )
-    except OAuthConfigurationError as exc:
+    except (OAuthConfigurationError, DeviceKeyError) as exc:
         raise HTTPException(status_code=500, detail="OAuth configuration is incomplete") from exc
     return RedirectResponse(url)
 
@@ -177,6 +204,7 @@ def start_google_oauth_url(
     session: DbSession,
     device_id: str = Query(..., min_length=16),
     redirect_after: str | None = Query(default=None),
+    device_public_key: str | None = Query(default=None, max_length=128),
 ) -> dict[str, str]:
     enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
     try:
@@ -185,9 +213,10 @@ def start_google_oauth_url(
                 session,
                 device_id=device_id,
                 redirect_after=redirect_after,
+                device_public_key=device_public_key,
             )
         }
-    except OAuthConfigurationError as exc:
+    except (OAuthConfigurationError, DeviceKeyError) as exc:
         raise HTTPException(status_code=500, detail="OAuth configuration is incomplete") from exc
 
 
@@ -196,13 +225,21 @@ def start_sensitive_google_oauth_url(
     request: Request,
     session: DbSession,
     device_id: str = Query(..., min_length=16),
-    purpose: Literal["export", "delete_account", "recover_deletion"] = Query(...),
+    purpose: Literal["enroll_device", "recover_deletion"] = Query(...),
+    device_public_key: str = Query(..., max_length=128),
 ) -> dict[str, str]:
     enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
     user_id = None
-    if purpose != "recover_deletion":
+    source_session_id = None
+    if purpose == "enroll_device":
         try:
-            user_id = authenticate_access_token(session, bearer_token_from_request(request)).id
+            user, app_session = authenticate_access_token_with_session(
+                session, bearer_token_from_request(request)
+            )
+            if app_session.device_public_key is not None:
+                raise HTTPException(status_code=409, detail={"code": "device_key_already_enrolled"})
+            user_id = user.id
+            source_session_id = app_session.id
         except AppAuthError as exc:
             raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
     try:
@@ -212,9 +249,11 @@ def start_sensitive_google_oauth_url(
                 device_id=device_id,
                 user_id=user_id,
                 sensitive_action=purpose,
+                device_public_key=device_public_key,
+                source_session_id=source_session_id,
             )
         }
-    except OAuthConfigurationError as exc:
+    except (OAuthConfigurationError, DeviceKeyError) as exc:
         raise HTTPException(status_code=500, detail="OAuth configuration is incomplete") from exc
 
 
@@ -231,12 +270,15 @@ async def google_oauth_callback(
         raise HTTPException(status_code=400, detail="Missing OAuth code or state")
     try:
         completion = await complete_google_health_oauth(session, code=code, state=state)
-        if completion.sensitive_action:
-            grant = create_sensitive_action_grant(
+        if completion.sensitive_action == "recover_deletion":
+            if not completion.device_public_key:
+                raise OAuthStateError("OAuth state is missing device key binding")
+            grant = create_sensitive_action_challenge(
                 session,
                 user_id=completion.account.user_id,
                 device_id_hash=completion.device_id_hash,
                 purpose=completion.sensitive_action,
+                device_public_key=completion.device_public_key,
             )
             return _deep_link_redirect(
                 status="authorized",
@@ -247,6 +289,8 @@ async def google_oauth_callback(
             session,
             user_id=completion.account.user_id,
             device_id_hash=completion.device_id_hash,
+            device_public_key=completion.device_public_key,
+            source_session_id=completion.source_session_id,
         )
     except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError) as exc:
         reason = sensitive_oauth_failure_reason(exc)
@@ -270,11 +314,68 @@ def exchange_token(
             session,
             code=payload.code,
             device_id=payload.device_id,
+            signature=payload.signature,
             user_agent=request.headers.get("user-agent"),
         )
     except AppAuthError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
     return _token_response(token_pair)
+
+
+@router.post("/device/challenge", response_model=DeviceChallengeResponse)
+def device_challenge(
+    request: Request,
+    payload: DeviceChallengeRequest,
+    session: DbSession,
+) -> DeviceChallengeResponse:
+    try:
+        user, app_session = authenticate_access_token_with_session(
+            session, bearer_token_from_request(request)
+        )
+    except AppAuthError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    enforce_rate_limit(request, CONNECTION_MUTATION_LIMIT, user.id, app_session.id)
+    if not app_session.device_public_key:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "device_key_enrollment_required"},
+        )
+    challenge = create_sensitive_action_challenge(
+        session,
+        user_id=user.id,
+        device_id_hash=app_session.device_id_hash,
+        purpose=payload.purpose,
+        device_public_key=app_session.device_public_key,
+        session_id=app_session.id,
+    )
+    return DeviceChallengeResponse(challenge=challenge, expires_in=300, session_id=app_session.id)
+
+
+@router.post("/device/authorize", response_model=DeviceAuthorizeResponse)
+def authorize_device_challenge(
+    request: Request,
+    payload: DeviceAuthorizeRequest,
+    session: DbSession,
+) -> DeviceAuthorizeResponse:
+    try:
+        user, app_session = authenticate_access_token_with_session(
+            session, bearer_token_from_request(request)
+        )
+    except AppAuthError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    enforce_rate_limit(request, CONNECTION_MUTATION_LIMIT, user.id, app_session.id)
+    try:
+        authorize_sensitive_action_challenge(
+            session,
+            challenge=payload.challenge,
+            signature=payload.signature,
+            purpose=payload.purpose,
+            user_id=user.id,
+            session_id=app_session.id,
+        )
+    except SensitiveActionError as exc:
+        raise HTTPException(status_code=403, detail="Device authorization failed") from exc
+    return DeviceAuthorizeResponse(sensitive_action_grant=payload.challenge)
 
 
 @router.post("/refresh", response_model=TokenResponse)

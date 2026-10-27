@@ -4,15 +4,17 @@ from datetime import timedelta
 from io import BytesIO
 import json
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core.security import token_digest, utcnow
+from app.core.security import generate_app_token, token_digest, utcnow
 from app.main import app
 from app.models import (
+    AppSession,
     ConnectionStatus,
     DailyContext,
     DailyScore,
@@ -27,13 +29,12 @@ from app.models import (
 from app.services.sensitive_actions import (
     SensitiveActionError,
     consume_sensitive_action_grant,
-    create_sensitive_action_grant,
 )
 from app.services.app_auth import device_id_digest
-from app.services.oauth import OAuthConfigurationError, complete_google_health_oauth, create_authorization_url
+from app.services.oauth import complete_google_health_oauth, create_authorization_url
 
 
-DEVICE_ID = "test-device-id-000000000000"
+DEVICE_ID = f"test-device-{uuid4()}"
 
 
 def user(session, email: str) -> User:
@@ -43,13 +44,26 @@ def user(session, email: str) -> User:
     return item
 
 
-def grant(session, account_user: User, purpose: str = "export") -> str:
-    return create_sensitive_action_grant(
-        session,
+def grant(
+    session,
+    account_user: User,
+    purpose: str = "export",
+    session_id: str | None = None,
+) -> str:
+    token = generate_app_token()
+    session.add(
+        SensitiveActionGrant(
         user_id=account_user.id,
         device_id_hash=device_id_digest(DEVICE_ID),
         purpose=purpose,
+            session_id=session_id,
+            token_hash=token_digest(token),
+            expires_at=utcnow() + timedelta(minutes=5),
+            verified_at=utcnow(),
+        )
     )
+    session.commit()
+    return token
 
 
 def test_sensitive_action_grant_is_user_purpose_expiry_and_replay_bound(session) -> None:
@@ -96,35 +110,45 @@ def test_sensitive_action_grant_is_user_purpose_expiry_and_replay_bound(session)
 
 
 def test_sensitive_start_requires_session_and_requests_fresh_authentication(
-    session, auth_headers
+    session, auth_headers, device_key
 ) -> None:
     owner = user(session, "owner@example.com")
     client = TestClient(app)
 
     unauthorized = client.get(
         "/auth/google/sensitive-start-url",
-        params={"device_id": DEVICE_ID, "purpose": "export"},
+        params={
+            "device_id": DEVICE_ID,
+            "purpose": "enroll_device",
+            "device_public_key": device_key.public_key,
+        },
     )
     assert unauthorized.status_code == 401
 
     response = client.get(
         "/auth/google/sensitive-start-url",
-        params={"device_id": DEVICE_ID, "purpose": "export"},
+        params={
+            "device_id": DEVICE_ID,
+            "purpose": "enroll_device",
+            "device_public_key": device_key.public_key,
+        },
         headers=auth_headers(owner),
     )
     assert response.status_code == 200
     query = parse_qs(urlparse(response.json()["authorization_url"]).query)
     assert query["prompt"] == ["select_account"]
-    assert query["max_age"] == ["0"]
-    assert "auth_time" in query["claims"][0]
     assert query["scope"] == [
         "openid email profile https://www.googleapis.com/auth/googlehealth.profile.readonly"
     ]
     assert "access_type" not in query
     assert "include_granted_scopes" not in query
+    assert "max_age" not in query
+    assert "claims" not in query
     state = session.scalar(select(OAuthState))
     assert state.user_id == owner.id
-    assert state.sensitive_action == "export"
+    assert state.sensitive_action == "enroll_device"
+    assert state.device_public_key == device_key.public_key
+    assert state.source_session_id is not None
 
 
 def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_headers) -> None:
@@ -186,9 +210,11 @@ def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_he
     )
     session.commit()
 
+    headers = auth_headers(owner)
+    app_session = session.scalar(select(AppSession).where(AppSession.user_id == owner.id))
     response = TestClient(app).post(
         "/account/export",
-        headers=auth_headers(owner),
+        headers=headers,
         json={
             "categories": [
                 "health_and_workouts",
@@ -196,7 +222,7 @@ def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_he
                 "derived_insights",
                 "personalization",
             ],
-            "sensitive_action_grant": grant(session, owner),
+            "sensitive_action_grant": grant(session, owner, session_id=app_session.id),
             "device_id": DEVICE_ID,
             "local_insights": [
                 {
@@ -244,24 +270,42 @@ def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_he
 def test_export_rejects_wrong_purpose_and_empty_selection(session, auth_headers) -> None:
     owner = user(session, "owner@example.com")
     client = TestClient(app)
+    headers = auth_headers(owner)
+    app_session = session.scalar(select(AppSession).where(AppSession.user_id == owner.id))
 
     wrong_purpose = client.post(
         "/account/export",
-        headers=auth_headers(owner),
+        headers=headers,
         json={
             "categories": ["journal"],
-            "sensitive_action_grant": grant(session, owner, "delete_account"),
+            "sensitive_action_grant": grant(
+                session,
+                owner,
+                "delete_account",
+                session_id=app_session.id,
+            ),
             "device_id": DEVICE_ID,
         },
     )
     assert wrong_purpose.status_code == 403
 
+    legacy_unbound = client.post(
+        "/account/export",
+        headers=headers,
+        json={
+            "categories": ["journal"],
+            "sensitive_action_grant": grant(session, owner),
+            "device_id": DEVICE_ID,
+        },
+    )
+    assert legacy_unbound.status_code == 403
+
     empty = client.post(
         "/account/export",
-        headers=auth_headers(owner),
+        headers=headers,
         json={
             "categories": [],
-            "sensitive_action_grant": grant(session, owner),
+            "sensitive_action_grant": grant(session, owner, session_id=app_session.id),
             "device_id": DEVICE_ID,
         },
     )
@@ -269,34 +313,23 @@ def test_export_rejects_wrong_purpose_and_empty_selection(session, auth_headers)
 
 
 class SensitiveOAuthClient:
-    def __init__(self, claims: dict[str, object], userinfo_sub: str = "google-sub") -> None:
-        self.claims = claims
-        self.userinfo_sub = userinfo_sub
+    def __init__(self, health_user_id: str = "health-id") -> None:
+        self.health_user_id = health_user_id
 
     async def exchange_code_for_tokens(self, code: str) -> dict[str, object]:
-        return {"access_token": "access-token", "id_token": "id-token", "expires_in": 3600}
-
-    async def verify_id_token(self, id_token: str) -> dict[str, object]:
-        return self.claims
+        return {"access_token": "access-token", "expires_in": 3600}
 
     async def get_identity(self, access_token: str) -> dict[str, str]:
-        return {"healthUserId": "health-id", "legacyUserId": "legacy-id"}
+        return {"healthUserId": self.health_user_id, "legacyUserId": "legacy-id"}
 
     async def get_userinfo(self, access_token: str) -> dict[str, object]:
-        return {"sub": self.userinfo_sub, "email": "owner@example.com", "email_verified": True}
+        return {"sub": "google-sub", "email": "owner@example.com", "email_verified": True}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("claim_change,userinfo_sub", [
-    ({"auth_time": None}, "google-sub"),
-    ({"auth_time": int((utcnow() - timedelta(minutes=10)).timestamp())}, "google-sub"),
-    ({"auth_time": int((utcnow() + timedelta(minutes=2)).timestamp())}, "google-sub"),
-    ({}, "different-sub"),
-])
-async def test_sensitive_oauth_rejects_missing_stale_or_mismatched_authentication_evidence(
+async def test_enrollment_oauth_needs_same_google_account_but_not_auth_time(
     session,
-    claim_change,
-    userinfo_sub,
+    device_key,
 ) -> None:
     owner = user(session, "owner@example.com")
     session.add(
@@ -313,23 +346,19 @@ async def test_sensitive_oauth_rejects_missing_stale_or_mismatched_authenticatio
         session,
         device_id=DEVICE_ID,
         user_id=owner.id,
-        sensitive_action="export",
+        sensitive_action="enroll_device",
+        device_public_key=device_key.public_key,
+        source_session_id="legacy-session-id",
     )
     state = parse_qs(urlparse(url).query)["state"][0]
-    now = int(utcnow().timestamp())
-    claims = {
-        "aud": "test-client-id.apps.googleusercontent.com",
-        "iss": "https://accounts.google.com",
-        "sub": "google-sub",
-        "exp": now + 300,
-        "auth_time": now,
-        **claim_change,
-    }
 
-    with pytest.raises(OAuthConfigurationError):
-        await complete_google_health_oauth(
-            session,
-            code="auth-code",
-            state=state,
-            client=SensitiveOAuthClient(claims, userinfo_sub),
-        )
+    completion = await complete_google_health_oauth(
+        session,
+        code="auth-code",
+        state=state,
+        client=SensitiveOAuthClient(),
+    )
+
+    assert completion.account.user_id == owner.id
+    assert completion.device_public_key == device_key.public_key
+    assert completion.source_session_id == "legacy-session-id"

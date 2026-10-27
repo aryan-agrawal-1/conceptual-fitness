@@ -157,6 +157,8 @@ class OAuthState(Base):
     device_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     redirect_after: Mapped[str | None] = mapped_column(Text, nullable=True)
     sensitive_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
+    source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -170,6 +172,7 @@ class AppSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -228,6 +231,8 @@ class AppAuthCode(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
+    source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -239,10 +244,15 @@ class SensitiveActionGrant(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("app_sessions.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
     purpose: Mapped[str] = mapped_column(String(32), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

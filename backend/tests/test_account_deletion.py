@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
-from app.core.security import encrypt_secret, utcnow
+from app.core.security import encrypt_secret, generate_app_token, token_digest, utcnow
 from app.db.session import Base
 from app.main import app
 from app.models import (
@@ -30,11 +31,36 @@ from app.services.account_deletion import (
 )
 from app.services.account_recovery import AccountRecoveryError, recover_account
 from app.services.app_auth import create_app_auth_code, device_id_digest, exchange_auth_code
-from app.services.sensitive_actions import create_sensitive_action_grant
+from app.services.device_keys import recovery_transcript
+from app.services.sensitive_actions import (
+    create_sensitive_action_challenge,
+)
 from app.services.sync import sync_google_account_range
 
 
-DEVICE_ID = "deletion-test-device-000000"
+DEVICE_ID = f"deletion-test-device-{uuid4()}"
+
+
+def verified_grant(
+    session,
+    user: User,
+    purpose: str,
+    session_id: str | None = None,
+) -> str:
+    token = generate_app_token()
+    session.add(
+        SensitiveActionGrant(
+            user_id=user.id,
+            device_id_hash=device_id_digest(DEVICE_ID),
+            session_id=session_id,
+            purpose=purpose,
+            token_hash=token_digest(token),
+            expires_at=utcnow() + timedelta(minutes=5),
+            verified_at=utcnow(),
+        )
+    )
+    session.commit()
+    return token
 
 
 def test_every_user_foreign_key_cascades_on_permanent_erasure() -> None:
@@ -113,6 +139,7 @@ def test_recovery_fails_at_deadline(session) -> None:
 
 def test_deletion_routes_revoke_old_access_and_issue_only_a_fresh_recovery_session(
     session,
+    device_key,
 ) -> None:
     user = User(email="delete@example.com")
     session.add(user)
@@ -131,12 +158,8 @@ def test_deletion_routes_revoke_old_access_and_issue_only_a_fresh_recovery_sessi
     )
     old_tokens = exchange_auth_code(session, code=app_code, device_id=DEVICE_ID)
     old_headers = {"Authorization": f"Bearer {old_tokens.access_token}"}
-    delete_grant = create_sensitive_action_grant(
-        session,
-        user_id=user.id,
-        device_id_hash=device_id_digest(DEVICE_ID),
-        purpose="delete_account",
-    )
+    old_session = session.get(AppSession, old_tokens.session_id)
+    delete_grant = verified_grant(session, user, "delete_account", old_session.id)
     client = TestClient(app)
 
     scheduled = client.post(
@@ -168,15 +191,20 @@ def test_deletion_routes_revoke_old_access_and_issue_only_a_fresh_recovery_sessi
         json={"code": normal_code, "device_id": DEVICE_ID},
     ).status_code == 401
 
-    recover_grant = create_sensitive_action_grant(
+    recover_grant = create_sensitive_action_challenge(
         session,
         user_id=user.id,
         device_id_hash=device_id_digest(DEVICE_ID),
         purpose="recover_deletion",
+        device_public_key=device_key.public_key,
     )
     recovered = client.post(
         "/account/deletion/recover",
-        json={"sensitive_action_grant": recover_grant, "device_id": DEVICE_ID},
+        json={
+            "sensitive_action_grant": recover_grant,
+            "device_id": DEVICE_ID,
+            "signature": device_key.sign(recovery_transcript(recover_grant, DEVICE_ID)),
+        },
     )
 
     assert recovered.status_code == 200
@@ -184,6 +212,14 @@ def test_deletion_routes_revoke_old_access_and_issue_only_a_fresh_recovery_sessi
     fresh_headers = {"Authorization": f"Bearer {recovered.json()['access_token']}"}
     assert client.get("/auth/me", headers=fresh_headers).status_code == 200
     assert client.get("/auth/me", headers=old_headers).status_code == 401
+    fresh_session = session.scalar(
+        select(AppSession).where(AppSession.id == recovered.json().get("session_id"))
+    )
+    if fresh_session is None:
+        fresh_session = session.scalars(
+            select(AppSession).where(AppSession.user_id == user.id).order_by(AppSession.created_at.desc())
+        ).first()
+    assert fresh_session.device_public_key == device_key.public_key
     session.refresh(account)
     assert account.status == ConnectionStatus.connected
 
@@ -206,12 +242,8 @@ def test_schedule_requires_exact_confirmation_and_matching_grant_device(session,
     )
     assert invalid_confirmation.status_code == 422
 
-    export_grant = create_sensitive_action_grant(
-        session,
-        user_id=user.id,
-        device_id_hash=device_id_digest(DEVICE_ID),
-        purpose="export",
-    )
+    app_session = session.scalar(select(AppSession).where(AppSession.user_id == user.id))
+    export_grant = verified_grant(session, user, "export", app_session.id)
     wrong_purpose = client.post(
         "/account/deletion",
         headers=headers,
@@ -223,12 +255,7 @@ def test_schedule_requires_exact_confirmation_and_matching_grant_device(session,
     )
     assert wrong_purpose.status_code == 403
 
-    delete_grant = create_sensitive_action_grant(
-        session,
-        user_id=user.id,
-        device_id_hash=device_id_digest(DEVICE_ID),
-        purpose="delete_account",
-    )
+    delete_grant = verified_grant(session, user, "delete_account", app_session.id)
     wrong_device = client.post(
         "/account/deletion",
         headers=headers,
@@ -241,16 +268,17 @@ def test_schedule_requires_exact_confirmation_and_matching_grant_device(session,
     assert wrong_device.status_code == 403
 
 
-def test_expired_recovery_grant_is_rejected_without_authentication(session) -> None:
+def test_expired_recovery_grant_is_rejected_without_authentication(session, device_key) -> None:
     now = utcnow()
     user = User(deletion_requested_at=now, deletion_scheduled_for=now + DELETION_GRACE_PERIOD)
     session.add(user)
     session.commit()
-    token = create_sensitive_action_grant(
+    token = create_sensitive_action_challenge(
         session,
         user_id=user.id,
         device_id_hash=device_id_digest(DEVICE_ID),
         purpose="recover_deletion",
+        device_public_key=device_key.public_key,
     )
     grant = session.scalar(select(SensitiveActionGrant).where(SensitiveActionGrant.user_id == user.id))
     grant.expires_at = now - timedelta(seconds=1)
@@ -259,7 +287,11 @@ def test_expired_recovery_grant_is_rejected_without_authentication(session) -> N
 
     response = TestClient(app).post(
         "/account/deletion/recover",
-        json={"sensitive_action_grant": token, "device_id": DEVICE_ID},
+        json={
+            "sensitive_action_grant": token,
+            "device_id": DEVICE_ID,
+            "signature": device_key.sign(recovery_transcript(token, DEVICE_ID)),
+        },
     )
 
     assert response.status_code == 403

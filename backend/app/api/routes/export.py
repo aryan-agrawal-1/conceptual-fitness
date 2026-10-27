@@ -5,12 +5,14 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.deps import bearer_token_from_request
 from app.services.account_export import EXPORT_CATEGORIES, build_account_export
+from app.services.app_auth import AppAuthError, authenticate_access_token_with_session
 from app.services.sensitive_actions import SensitiveActionError, consume_sensitive_action_grant
 
 
@@ -44,16 +46,27 @@ class ExportRequest(BaseModel):
 
 
 @router.post("/export")
-def export_account_data(payload: ExportRequest, session: DbSession, user: CurrentUser):
+def export_account_data(
+    payload: ExportRequest,
+    request: Request,
+    session: DbSession,
+    user: CurrentUser,
+):
     try:
+        authenticated_user, app_session = authenticate_access_token_with_session(
+            session, bearer_token_from_request(request)
+        )
+        if authenticated_user.id != user.id:
+            raise AppAuthError("Invalid or expired token")
         consume_sensitive_action_grant(
             session,
             token=payload.sensitive_action_grant,
             purpose="export",
             user_id=user.id,
             device_id=payload.device_id,
+            session_id=app_session.id,
         )
-    except SensitiveActionError as exc:
+    except (AppAuthError, SensitiveActionError) as exc:
         raise HTTPException(status_code=403, detail="Reauthentication is required") from exc
 
     try:
