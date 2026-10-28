@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.main import app
-from app.models import AppAccessToken, AppSession, ConnectionStatus, GoogleAccount, User
+from app.models import (
+    AppAccessToken,
+    AppAuthCode,
+    AppSession,
+    ConnectionStatus,
+    GoogleAccount,
+    OAuthState,
+    User,
+)
 from app.services.app_auth import create_app_auth_code, device_id_digest
+from app.services.device_keys import auth_code_transcript, sensitive_action_transcript
 from app.services.oauth import create_authorization_url
 
 
-DEVICE_ID = "test-device-id-000000000000"
+DEVICE_ID = f"test-device-{uuid4()}"
 
 
 def _user(session, email: str = "person@example.com") -> User:
@@ -19,15 +30,33 @@ def _user(session, email: str = "person@example.com") -> User:
     return user
 
 
-def test_start_url_requires_device_and_persists_bound_state(session) -> None:
+def test_start_url_requires_device_and_persists_bound_state(session, device_key) -> None:
     client = TestClient(app)
 
-    response = client.get("/auth/google/start-url", params={"device_id": DEVICE_ID})
+    response = client.get(
+        "/auth/google/start-url",
+        params={"device_id": DEVICE_ID, "device_public_key": device_key.public_key},
+    )
 
     assert response.status_code == 200
     assert "accounts.google.com" in response.json()["authorization_url"]
-    url = create_authorization_url(session, device_id=DEVICE_ID)
+    url = create_authorization_url(
+        session,
+        device_id=DEVICE_ID,
+        device_public_key=device_key.public_key,
+    )
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fauth%2Fgoogle%2Fcallback" in url
+
+
+def test_normal_start_allows_unbound_simulator_session(session) -> None:
+    response = TestClient(app).get(
+        "/auth/google/start-url",
+        params={"device_id": DEVICE_ID},
+    )
+
+    assert response.status_code == 200
+    state = session.scalar(select(OAuthState))
+    assert state.device_public_key is None
 
 
 def test_exchange_refresh_me_and_logout_flow(session) -> None:
@@ -101,6 +130,94 @@ def test_exchange_refresh_me_and_logout_flow(session) -> None:
         json={"refresh_token": rotated["refresh_token"], "device_id": DEVICE_ID},
     )
     assert logout.status_code == 204
+
+
+def test_key_bound_exchange_requires_valid_signature_before_consuming_code(
+    session,
+    device_key,
+) -> None:
+    user = _user(session)
+    code = create_app_auth_code(
+        session,
+        user_id=user.id,
+        device_id_hash=device_id_digest(DEVICE_ID),
+        device_public_key=device_key.public_key,
+    )
+    client = TestClient(app)
+
+    invalid = client.post(
+        "/auth/exchange",
+        json={"code": code, "device_id": DEVICE_ID, "signature": device_key.sign(b"wrong")},
+    )
+
+    assert invalid.status_code == 401
+    stored_code = session.scalar(select(AppAuthCode).where(AppAuthCode.user_id == user.id))
+    assert stored_code.consumed_at is None
+
+    valid = client.post(
+        "/auth/exchange",
+        json={
+            "code": code,
+            "device_id": DEVICE_ID,
+            "signature": device_key.sign(auth_code_transcript(code, DEVICE_ID)),
+        },
+    )
+
+    assert valid.status_code == 200
+    app_session = session.scalar(select(AppSession).where(AppSession.user_id == user.id))
+    assert app_session.device_public_key == device_key.public_key
+
+
+def test_device_challenge_requires_enrollment_and_is_one_use(session, auth_headers, device_key) -> None:
+    user = _user(session)
+    client = TestClient(app)
+    legacy = client.post(
+        "/auth/device/challenge",
+        headers=auth_headers(user),
+        json={"purpose": "export"},
+    )
+    assert legacy.status_code == 409
+    assert legacy.json()["detail"]["code"] == "device_key_enrollment_required"
+
+    code = create_app_auth_code(
+        session,
+        user_id=user.id,
+        device_id_hash=device_id_digest(DEVICE_ID),
+        device_public_key=device_key.public_key,
+    )
+    tokens = client.post(
+        "/auth/exchange",
+        json={
+            "code": code,
+            "device_id": DEVICE_ID,
+            "signature": device_key.sign(auth_code_transcript(code, DEVICE_ID)),
+        },
+    ).json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    challenge_response = client.post(
+        "/auth/device/challenge",
+        headers=headers,
+        json={"purpose": "export"},
+    )
+    assert challenge_response.status_code == 200
+    challenge = challenge_response.json()["challenge"]
+    session_id = challenge_response.json()["session_id"]
+    signature = device_key.sign(sensitive_action_transcript("export", session_id, challenge))
+
+    authorized = client.post(
+        "/auth/device/authorize",
+        headers=headers,
+        json={"purpose": "export", "challenge": challenge, "signature": signature},
+    )
+    replay = client.post(
+        "/auth/device/authorize",
+        headers=headers,
+        json={"purpose": "export", "challenge": challenge, "signature": signature},
+    )
+
+    assert authorized.status_code == 200
+    assert authorized.json()["sensitive_action_grant"] == challenge
+    assert replay.status_code == 403
 
 
 def test_protected_routes_require_bearer_token() -> None:

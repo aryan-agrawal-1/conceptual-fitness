@@ -61,6 +61,12 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_scheduled_for: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     google_accounts: Mapped[list[GoogleAccount]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -92,6 +98,9 @@ class UserProfile(Base):
     height_source_preference: Mapped[str] = mapped_column(String(32), default="google")
     weight_source_preference: Mapped[str] = mapped_column(String(32), default="google")
     fitness_goal: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    secondary_goals: Mapped[list[str]] = mapped_column(JSON, default=list)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    unit_system: Mapped[str] = mapped_column(String(16), default="metric")
     sleep_target_minutes: Mapped[int] = mapped_column(Integer, default=480)
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -147,6 +156,9 @@ class OAuthState(Base):
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     device_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     redirect_after: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sensitive_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
+    source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -160,6 +172,7 @@ class AppSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -218,9 +231,30 @@ class AppAuthCode(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
+    source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SensitiveActionGrant(Base):
+    __tablename__ = "sensitive_action_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    device_id_hash: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("app_sessions.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
+    purpose: Mapped[str] = mapped_column(String(32), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
 
 # Original imported data from google health api
 class RawHealthRecord(Base):

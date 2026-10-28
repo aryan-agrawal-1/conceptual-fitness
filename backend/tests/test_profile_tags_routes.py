@@ -28,6 +28,21 @@ def test_profile_get_creates_default_profile(session, auth_headers) -> None:
     assert payload["timezone"] == "UTC"
     assert payload["sleep_target_minutes"] == 480
     assert payload["fitness_goal"] is None
+    assert payload["primary_goal"] is None
+    assert payload["secondary_goals"] == []
+    assert payload["constraints"] == {
+        "schedule": [],
+        "equipment": [],
+        "injuries": [],
+        "dietary_preferences": [],
+        "sleep_schedule": None,
+    }
+    assert payload["unit_system"] == "metric"
+    assert payload["height_provenance"] == {
+        "preference": "google",
+        "active_source": None,
+        "updated_at": None,
+    }
     assert payload["weather_enabled"] is False
     assert payload["height_source_preference"] == "google"
     assert payload["weight_source_preference"] == "google"
@@ -53,6 +68,15 @@ def test_profile_patch_updates_supported_fields(session, auth_headers) -> None:
             "height_source_preference": "manual",
             "weight_source_preference": "manual",
             "fitness_goal": "improve_cardio",
+            "secondary_goals": ["build strength", "improve mobility"],
+            "constraints": {
+                "schedule": ["Weekdays after 18:00"],
+                "equipment": ["Dumbbells"],
+                "injuries": ["Previous left ankle sprain"],
+                "dietary_preferences": ["Vegetarian"],
+                "sleep_schedule": "23:00-07:00",
+            },
+            "unit_system": "imperial",
             "sleep_target_minutes": 510,
             "onboarding_completed": True,
         },
@@ -69,8 +93,134 @@ def test_profile_patch_updates_supported_fields(session, auth_headers) -> None:
     assert payload["height_source_preference"] == "manual"
     assert payload["weight_source_preference"] == "manual"
     assert payload["fitness_goal"] == "improve_cardio"
+    assert payload["primary_goal"] == "improve_cardio"
+    assert payload["secondary_goals"] == ["build strength", "improve mobility"]
+    assert payload["constraints"]["equipment"] == ["Dumbbells"]
+    assert payload["constraints"]["sleep_schedule"] == "23:00-07:00"
+    assert payload["unit_system"] == "imperial"
     assert payload["sleep_target_minutes"] == 510
     assert payload["onboarding_completed_at"] is not None
+
+
+def test_profile_primary_goal_alias_partial_constraints_and_explicit_clears(
+    session,
+    auth_headers,
+) -> None:
+    user = _user(session)
+    client = TestClient(app)
+
+    first = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={
+            "primary_goal": "  Run a marathon  ",
+            "secondary_goals": ["  Sleep better  ", "Sleep better"],
+            "constraints": {"equipment": ["  Treadmill  "]},
+        },
+    )
+    retry = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={
+            "fitness_goal": " Run a marathon ",
+            "primary_goal": "Run a marathon",
+            "secondary_goals": ["Sleep better"],
+            "constraints": {"equipment": ["Treadmill"]},
+        },
+    )
+
+    assert first.status_code == retry.status_code == 200
+    assert retry.json()["fitness_goal"] == "Run a marathon"
+    assert retry.json()["secondary_goals"] == ["Sleep better"]
+    assert retry.json()["constraints"]["equipment"] == ["Treadmill"]
+
+    cleared = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"primary_goal": None, "secondary_goals": [], "constraints": None},
+    )
+
+    assert cleared.status_code == 200
+    assert cleared.json()["fitness_goal"] is None
+    assert cleared.json()["secondary_goals"] == []
+    assert cleared.json()["constraints"]["equipment"] == []
+
+
+def test_profile_rejects_conflicting_goal_aliases_and_unknown_constraints(
+    session,
+    auth_headers,
+) -> None:
+    user = _user(session)
+    client = TestClient(app)
+
+    conflicting = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"fitness_goal": "strength", "primary_goal": "endurance"},
+    )
+    unknown = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"constraints": {"unsupported": ["value"]}},
+    )
+    null_preference = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"weight_source_preference": None},
+    )
+
+    assert conflicting.status_code == 422
+    assert unknown.status_code == 422
+    assert null_preference.status_code == 422
+
+
+def test_profile_reports_preferred_body_metric_provenance(session, auth_headers) -> None:
+    user = _user(session)
+    session.add_all(
+        [
+            MetricSample(
+                user_id=user.id,
+                metric="weight",
+                observed_at=datetime(2026, 6, 20, 9, tzinfo=UTC),
+                civil_date=date(2026, 6, 20),
+                value=80,
+                unit="kg",
+                source_platform="FITBIT",
+            ),
+            MetricSample(
+                user_id=user.id,
+                metric="weight",
+                observed_at=datetime(2026, 6, 21, 9, tzinfo=UTC),
+                civil_date=date(2026, 6, 21),
+                value=79,
+                unit="kg",
+                source_platform="manual",
+            ),
+        ]
+    )
+    session.commit()
+    client = TestClient(app)
+
+    provider = client.get("/profile", headers=auth_headers(user))
+    manual = client.patch(
+        "/profile",
+        headers=auth_headers(user),
+        json={"weight_source_preference": "manual"},
+    )
+
+    assert provider.status_code == manual.status_code == 200
+    assert provider.json()["weight_kg"] == 80
+    assert provider.json()["weight_provenance"] == {
+        "preference": "google",
+        "active_source": "FITBIT",
+        "updated_at": "2026-06-20T09:00:00",
+    }
+    assert manual.json()["weight_provenance"] == {
+        "preference": "manual",
+        "active_source": "manual",
+        "updated_at": "2026-06-21T09:00:00",
+    }
+    assert manual.json()["weight_kg"] == 79
 
 
 def test_profile_rejects_unknown_timezone(session, auth_headers) -> None:

@@ -79,7 +79,11 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink {
-                    ImportProfileView(coordinator: syncCoordinator)
+                    ImportProfileView(
+                        coordinator: syncCoordinator,
+                        authStore: client.authStore,
+                        userID: client.userID
+                    )
                 } label: { Image(systemName: "person.crop.circle") }
                 .accessibilityLabel("Profile")
             }

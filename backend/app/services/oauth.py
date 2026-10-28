@@ -20,6 +20,7 @@ from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import GOOGLE_OAUTH_AUTHORIZE_URL
 from app.models import ConnectionStatus, GoogleAccount, OAuthState, User
 from app.services.app_auth import device_id_digest
+from app.services.device_keys import DeviceKeyError, normalize_public_key
 
 
 class OAuthConfigurationError(RuntimeError):
@@ -34,6 +35,9 @@ class OAuthStateError(RuntimeError):
 class GoogleOAuthCompletion:
     account: GoogleAccount
     device_id_hash: str
+    sensitive_action: str | None
+    device_public_key: str | None
+    source_session_id: str | None
 
 
 # authorisation for google
@@ -42,6 +46,10 @@ def create_authorization_url(
     *,
     device_id: str,
     redirect_after: str | None = None,
+    user_id: str | None = None,
+    sensitive_action: str | None = None,
+    device_public_key: str | None = None,
+    source_session_id: str | None = None,
 ) -> str:
     settings = get_settings()
     missing = missing_or_placeholder_keys(settings)
@@ -49,11 +57,28 @@ def create_authorization_url(
         raise OAuthConfigurationError(f"OAuth configuration is incomplete: {', '.join(missing)}")
 
     state = generate_state_token()
+    scopes = (
+        (
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/googlehealth.profile.readonly",
+        )
+        if sensitive_action in {"enroll_device", "recover_deletion"}
+        else settings.google_health_scopes
+    )
+    normalized_public_key = normalize_public_key(device_public_key) if device_public_key else None
+    if sensitive_action and not normalized_public_key:
+        raise DeviceKeyError("Device public key is required")
     oauth_state = OAuthState(
         state_hash=state_digest(state),
+        user_id=user_id,
         device_id_hash=device_id_digest(device_id),
         redirect_after=redirect_after,
-        scopes=list(settings.google_health_scopes),
+        sensitive_action=sensitive_action,
+        device_public_key=normalized_public_key,
+        source_session_id=source_session_id,
+        scopes=list(scopes),
         expires_at=expires_in(15),
     )
     session.add(oauth_state)
@@ -63,12 +88,13 @@ def create_authorization_url(
         "client_id": settings.google_health_client_id,
         "redirect_uri": settings.google_health_redirect_uri,
         "response_type": "code",
-        "scope": " ".join(settings.google_health_scopes),
-        "access_type": "offline",
-        "include_granted_scopes": "true",
-        "prompt": "consent",
+        "scope": " ".join(scopes),
+        "prompt": "select_account" if sensitive_action else "consent",
         "state": state,
     }
+    if not sensitive_action:
+        params["access_type"] = "offline"
+        params["include_granted_scopes"] = "true"
     return f"{GOOGLE_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
 
 
@@ -120,6 +146,37 @@ async def complete_google_health_oauth(
     email = userinfo.get("email") if userinfo.get("email_verified", True) else None
 
     account = _find_existing_google_account(session, health_user_id, legacy_user_id)
+    if oauth_state.sensitive_action and account is None:
+        raise OAuthConfigurationError("Sensitive action requires an existing account")
+    if oauth_state.user_id and account and account.user_id != oauth_state.user_id:
+        raise OAuthConfigurationError("Authenticated Google account does not match the app session")
+    locked_user = session.get(User, account.user_id, with_for_update=True) if account else None
+    if locked_user and locked_user.deletion_scheduled_for and oauth_state.sensitive_action != "recover_deletion":
+        raise OAuthConfigurationError("Pending-deletion accounts cannot authenticate")
+    if oauth_state.sensitive_action == "recover_deletion":
+        if locked_user is None or locked_user.deletion_scheduled_for is None:
+            raise OAuthConfigurationError("Account is not pending deletion")
+        if refresh_token:
+            account.encrypted_refresh_token = encrypt_secret(refresh_token)
+        account.granted_scopes = granted_scopes
+        account.access_token_expires_at = utcnow() + timedelta(seconds=max(0, expires_in_seconds - 60))
+        session.add(account)
+        session.commit()
+        return GoogleOAuthCompletion(
+            account=account,
+            device_id_hash=device_hash_for_state(oauth_state),
+            sensitive_action=oauth_state.sensitive_action,
+            device_public_key=public_key_for_state(oauth_state),
+            source_session_id=oauth_state.source_session_id,
+        )
+    if oauth_state.sensitive_action:
+        return GoogleOAuthCompletion(
+            account=account,
+            device_id_hash=device_hash_for_state(oauth_state),
+            sensitive_action=oauth_state.sensitive_action,
+            device_public_key=public_key_for_state(oauth_state),
+            source_session_id=oauth_state.source_session_id,
+        )
     if account is None:
         user = _get_or_create_user(session)
         account = GoogleAccount(user_id=user.id)
@@ -149,13 +206,23 @@ async def complete_google_health_oauth(
     session.add(account)
     session.commit()
     session.refresh(account)
-    return GoogleOAuthCompletion(account=account, device_id_hash=device_hash_for_state(oauth_state))
+    return GoogleOAuthCompletion(
+        account=account,
+        device_id_hash=device_hash_for_state(oauth_state),
+        sensitive_action=oauth_state.sensitive_action,
+        device_public_key=public_key_for_state(oauth_state),
+        source_session_id=oauth_state.source_session_id,
+    )
 
 
 def device_hash_for_state(oauth_state: OAuthState) -> str:
     if not oauth_state.device_id_hash:
         raise OAuthStateError("OAuth state is missing device binding")
     return oauth_state.device_id_hash
+
+
+def public_key_for_state(oauth_state: OAuthState) -> str | None:
+    return oauth_state.device_public_key
 
 
 def _find_existing_google_account(

@@ -21,6 +21,7 @@ from app.models import (
     RawHealthRecord,
     SyncCursor,
     SyncStatus,
+    User,
     UserProfile,
 )
 from app.services.health_dates import timezone_for_profile
@@ -94,6 +95,15 @@ def account_has_running_sync(session: Session, account: GoogleAccount) -> bool:
         )
         is not None
     )
+
+
+def account_is_available_for_sync(session: Session, account: GoogleAccount) -> bool:
+    return session.scalar(
+        select(User.id).where(
+            User.id == account.user_id,
+            User.deletion_scheduled_for.is_(None),
+        )
+    ) is not None
 
 
 @dataclass
@@ -275,7 +285,7 @@ async def sync_google_account_range(
     try:
         if account.encrypted_refresh_token is None:
             raise RuntimeError("Google account does not have a refresh token")
-        if account.status != ConnectionStatus.connected:
+        if account.status != ConnectionStatus.connected or not account_is_available_for_sync(session, account):
             raise RuntimeError("Google account is not connected")
 
         google_client = client or GoogleHealthClient()
@@ -292,6 +302,8 @@ async def sync_google_account_range(
         sync_now = now or utcnow()
 
         for data_type in data_types:
+            if not account_is_available_for_sync(session, account):
+                raise RuntimeError("Google account is not connected")
             spec = DATA_TYPE_SPECS[data_type]
             endpoint = (
                 "rollup"
@@ -381,6 +393,8 @@ async def sync_google_account_range(
             DATA_TYPE_SPECS[data_type].fail_sync_on_error for data_type in successful_types
         ):
             account.last_sync_at = utcnow()
+        if not account_is_available_for_sync(session, account):
+            raise RuntimeError("Google account is not connected")
         account.status = ConnectionStatus.connected
         account.last_error = None
         session.add(account)

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
+import base64
 from collections.abc import Generator
+from dataclasses import dataclass
 
 import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 
 os.environ.update(
@@ -43,6 +47,23 @@ from app.db.session import Base, SessionLocal, engine  # noqa: E402
 from app.services.app_auth import create_app_auth_code, device_id_digest, exchange_auth_code  # noqa: E402
 
 
+@dataclass
+class TestDeviceKey:
+    private_key: ec.EllipticCurvePrivateKey
+
+    @property
+    def public_key(self) -> str:
+        raw = self.private_key.public_key().public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
+        return base64.b64encode(raw).decode("ascii")
+
+    def sign(self, transcript: bytes) -> str:
+        signature = self.private_key.sign(transcript, ec.ECDSA(hashes.SHA256()))
+        return base64.b64encode(signature).decode("ascii")
+
+
 @pytest.fixture(autouse=True)
 def database() -> Generator[None, None, None]:
     Base.metadata.drop_all(bind=engine)
@@ -55,6 +76,11 @@ def database() -> Generator[None, None, None]:
 def session() -> Generator:
     with SessionLocal() as db:
         yield db
+
+
+@pytest.fixture
+def device_key() -> TestDeviceKey:
+    return TestDeviceKey(ec.generate_private_key(ec.SECP256R1()))
 
 
 @pytest.fixture

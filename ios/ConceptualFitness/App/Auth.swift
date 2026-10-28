@@ -1,14 +1,18 @@
 import AuthenticationServices
+import CryptoKit
 import Foundation
+import LocalAuthentication
 import Security
 import SwiftUI
 import UIKit
+import UserNotifications
 
 enum AuthState: Equatable {
     case checking
     case signedOut
     case signingIn
     case authenticated(AuthSession)
+    case deletionScheduled(Date, String?)
     case failed(String)
 }
 
@@ -115,26 +119,63 @@ enum AuthError: Error {
     case unauthenticated
 }
 
+enum SensitiveActionError: LocalizedError {
+    case cancelled
+    case secureEnclaveUnavailable
+    case authenticationUnavailable
+    case signingKeyUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            nil
+        case .secureEnclaveUnavailable:
+            "Face ID or device passcode confirmation requires a physical device with Secure Enclave support."
+        case .authenticationUnavailable:
+            "Face ID or device passcode is unavailable. Check your device security settings and try again."
+        case .signingKeyUnavailable:
+            "This device’s protected signing key is unavailable. Sign in again to reconnect this device."
+        }
+    }
+}
+
+private struct HTTPResponseError: Error {
+    let statusCode: Int
+    let code: String?
+}
+
+enum SensitiveActionPurpose: String {
+    case export
+    case deleteAccount = "delete_account"
+    case recoverDeletion = "recover_deletion"
+    case enrollDevice = "enroll_device"
+}
+
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var state: AuthState = .checking
 
     let baseURL: URL
+    var sensitiveActionDeviceID: String { keychain.deviceID }
     private let session: URLSession
     private let keychain: KeychainStore
+    private let signingKeys: DeviceSigningKeyStore
     private let callbackScheme = "healthapp"
     private var webSession: ASWebAuthenticationSession?
     private var accessToken: String?
     private var refreshTask: Task<TokenResponse, Error>?
+    private static let deletionDeadlineKey = "accountDeletion.scheduledFor"
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
         session: URLSession = .shared,
-        keychain: KeychainStore = KeychainStore()
+        keychain: KeychainStore = KeychainStore(),
+        signingKeys: DeviceSigningKeyStore = DeviceSigningKeyStore()
     ) {
         self.baseURL = baseURL
         self.session = session
         self.keychain = keychain
+        self.signingKeys = signingKeys
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-FitnessTestSession") {
             accessToken = ProcessInfo.processInfo.environment["FITNESS_TEST_ACCESS_TOKEN"]
@@ -143,6 +184,10 @@ final class AuthStore: ObservableObject {
     }
 
     func bootstrap() async {
+        if let deadline = UserDefaults.standard.object(forKey: Self.deletionDeadlineKey) as? Date {
+            state = .deletionScheduled(deadline, nil)
+            return
+        }
         guard keychain.refreshToken != nil else {
             state = .signedOut
             return
@@ -158,27 +203,48 @@ final class AuthStore: ObservableObject {
     }
 
     func signIn() async {
+        let previousState = state
+        let hadSession = keychain.refreshToken != nil
         state = .signingIn
         do {
             let deviceID = keychain.deviceID
+            let canEnrollDevice = signingKeys.enrollmentAvailabilityError() == nil
+            var query = ["device_id": deviceID]
+            if canEnrollDevice {
+                query["device_public_key"] = try signingKeys.publicKeyBase64()
+            }
             let startURL: StartURLResponse = try await request(
-                path: "/auth/google/start-url?device_id=\(Self.percentEncode(deviceID))"
+                path: try Self.path(
+                    "/auth/google/start-url",
+                    query: query
+                )
             )
             guard let authURL = URL(string: startURL.authorizationURL) else {
                 throw AuthError.badURL
             }
             let callbackURL = try await authenticate(with: authURL)
             let code = try authCode(from: callbackURL)
+            var body = ["code": code, "device_id": deviceID]
+            if canEnrollDevice {
+                body["signature"] = try await signingKeys.signatureBase64(
+                    for: Self.transcript("auth-code-exchange", code, deviceID),
+                    reason: "Confirm signing in to Conceptual Fitness"
+                )
+            }
             let tokenResponse: TokenResponse = try await post(
                 path: "/auth/exchange",
-                body: ["code": code, "device_id": deviceID]
+                body: body
             )
             apply(tokenResponse)
             try await loadMe()
         } catch {
-            keychain.clearTokens()
-            accessToken = nil
-            state = .failed("Sign in failed. Check the backend is running and try again.")
+            if hadSession {
+                state = previousState
+            } else if Self.isCancellation(error) {
+                state = .signedOut
+            } else {
+                state = .failed(Self.message(for: error, fallback: "Sign in failed. Check the backend is running and try again."))
+            }
         }
     }
 
@@ -215,14 +281,29 @@ final class AuthStore: ObservableObject {
         request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         if !Self.isUnauthorized(response) {
-            try Self.validate(response)
+            try Self.validate(response, data: data)
             return data
         }
 
         request.setValue("Bearer \(try await refreshAccessToken().accessToken)", forHTTPHeaderField: "Authorization")
         let (retryData, retryResponse) = try await session.data(for: request)
-        try Self.validate(retryResponse)
+        try Self.validate(retryResponse, data: retryData)
         return retryData
+    }
+
+    func authenticatedDownload(for request: URLRequest) async throws -> (URL, URLResponse) {
+        var request = request
+        request.setValue("Bearer \(try await validAccessToken())", forHTTPHeaderField: "Authorization")
+        let (url, response) = try await session.download(for: request)
+        if !Self.isUnauthorized(response) {
+            try Self.validate(response)
+            return (url, response)
+        }
+
+        request.setValue("Bearer \(try await refreshAccessToken().accessToken)", forHTTPHeaderField: "Authorization")
+        let (retryURL, retryResponse) = try await session.download(for: request)
+        try Self.validate(retryResponse)
+        return (retryURL, retryResponse)
     }
 
     func authenticatedRequest<T: Decodable>(path: String) async throws -> T {
@@ -257,6 +338,160 @@ final class AuthStore: ObservableObject {
             body: NameUpdateRequest(firstName: firstName, lastName: lastName)
         )
         state = .authenticated(response.session)
+    }
+
+    func sensitiveActionGrant(for purpose: SensitiveActionPurpose) async throws -> String {
+        guard purpose == .export || purpose == .deleteAccount else {
+            throw AuthError.badCallback
+        }
+        do {
+            return try await authorizeSensitiveAction(purpose)
+        } catch let error as HTTPResponseError
+            where error.statusCode == 409 && error.code == "device_key_enrollment_required" {
+            try await enrollCurrentDevice()
+            return try await authorizeSensitiveAction(purpose)
+        } catch {
+            if Self.isCancellation(error) { throw SensitiveActionError.cancelled }
+            throw error
+        }
+    }
+
+    func completeDeletionScheduling(userID: String, scheduledFor: Date) {
+        clearLocalData(userID: userID)
+        keychain.clearTokens()
+        signingKeys.deleteKey()
+        accessToken = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        UserDefaults.standard.set(scheduledFor, forKey: Self.deletionDeadlineKey)
+        state = .deletionScheduled(scheduledFor, nil)
+    }
+
+    func restoreDeletedAccount() async {
+        let savedDeadline = UserDefaults.standard.object(forKey: Self.deletionDeadlineKey) as? Date
+        state = .signingIn
+        do {
+            if let error = signingKeys.enrollmentAvailabilityError() { throw error }
+            let deviceID = keychain.deviceID
+            let publicKey = try signingKeys.replaceKeyAndGetPublicKeyBase64()
+            let path = try Self.path(
+                "/auth/google/sensitive-start-url",
+                query: [
+                    "device_id": deviceID,
+                    "purpose": SensitiveActionPurpose.recoverDeletion.rawValue,
+                    "device_public_key": publicKey,
+                ]
+            )
+            let start: StartURLResponse = try await request(path: path)
+            guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
+            let callbackURL = try await authenticate(with: authURL)
+            let grant = try sensitiveActionGrant(from: callbackURL, purpose: .recoverDeletion)
+            let signature = try await signingKeys.signatureBase64(
+                for: Self.transcript("account-recovery", grant, deviceID),
+                reason: "Confirm restoring your Conceptual Fitness account"
+            )
+            let response: TokenResponse = try await post(
+                path: "/account/deletion/recover",
+                body: [
+                    "sensitive_action_grant": grant,
+                    "device_id": deviceID,
+                    "signature": signature,
+                ]
+            )
+            apply(response)
+            UserDefaults.standard.removeObject(forKey: Self.deletionDeadlineKey)
+            try await loadMe()
+        } catch {
+            let message = Self.isCancellation(error)
+                ? nil
+                : Self.message(for: error, fallback: "Account restoration is unavailable. Confirm the same Google account was used, or the recovery period may have ended.")
+            if let savedDeadline {
+                state = .deletionScheduled(savedDeadline, message)
+            } else {
+                state = .failed(message ?? "No recoverable account was found for that Google account.")
+            }
+        }
+    }
+
+    private func enrollCurrentDevice() async throws {
+        if let error = signingKeys.enrollmentAvailabilityError() { throw error }
+        let deviceID = keychain.deviceID
+        let publicKey = try signingKeys.publicKeyBase64()
+        let path = try Self.path(
+            "/auth/google/sensitive-start-url",
+            query: [
+                "device_id": deviceID,
+                "purpose": SensitiveActionPurpose.enrollDevice.rawValue,
+                "device_public_key": publicKey,
+            ]
+        )
+        let start: StartURLResponse = try await authenticatedRequest(path: path)
+        guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
+        let callbackURL = try await authenticate(with: authURL)
+        let code = try authCode(from: callbackURL)
+        let signature = try await signingKeys.signatureBase64(
+            for: Self.transcript("auth-code-exchange", code, deviceID),
+            reason: "Confirm linking this device to your Conceptual Fitness account"
+        )
+        let response: TokenResponse = try await post(
+            path: "/auth/exchange",
+            body: ["code": code, "device_id": deviceID, "signature": signature]
+        )
+        apply(response)
+    }
+
+    private func authorizeSensitiveAction(_ purpose: SensitiveActionPurpose) async throws -> String {
+        let challenge: DeviceChallengeResponse = try await authenticatedJSON(
+            path: "/auth/device/challenge",
+            method: "POST",
+            body: DeviceChallengeRequest(purpose: purpose.rawValue)
+        )
+        let signature = try await signingKeys.signatureBase64(
+            for: Self.transcript("sensitive-action", purpose.rawValue, challenge.sessionID, challenge.challenge),
+            reason: purpose == .export
+                ? "Confirm exporting your Conceptual Fitness data"
+                : "Confirm scheduling deletion of your Conceptual Fitness account"
+        )
+        let authorization: DeviceAuthorizationResponse = try await authenticatedJSON(
+            path: "/auth/device/authorize",
+            method: "POST",
+            body: DeviceAuthorizationRequest(
+                purpose: purpose.rawValue,
+                challenge: challenge.challenge,
+                signature: signature
+            )
+        )
+        return authorization.sensitiveActionGrant
+    }
+
+    private func clearLocalData(userID: String) {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys
+            where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history") {
+            defaults.removeObject(forKey: key)
+        }
+        if let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let draft = applicationSupport
+                .appendingPathComponent("FitnessDrafts", isDirectory: true)
+                .appendingPathComponent("\(userID).json")
+            try? FileManager.default.removeItem(at: draft)
+        }
+        if let temporaryItems = try? FileManager.default.contentsOfDirectory(
+            at: FileManager.default.temporaryDirectory,
+            includingPropertiesForKeys: nil
+        ) {
+            for item in temporaryItems
+                where item.lastPathComponent.hasPrefix("conceptual-fitness-export-")
+                    && item.pathExtension == "zip" {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+    }
+
+    func continueAfterRecoveryPeriod() {
+        UserDefaults.standard.removeObject(forKey: Self.deletionDeadlineKey)
+        state = .signedOut
     }
 
     private func validAccessToken() async throws -> String {
@@ -306,7 +541,7 @@ final class AuthStore: ObservableObject {
             throw AuthError.badURL
         }
         let (data, response) = try await session.data(from: url)
-        try Self.validate(response)
+        try Self.validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
@@ -328,7 +563,7 @@ final class AuthStore: ObservableObject {
         request.httpBody = try JSONEncoder().encode(body)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let (data, response) = try await session.data(for: request)
-        try validate(response)
+        try validate(response, data: data)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
@@ -373,9 +608,36 @@ final class AuthStore: ObservableObject {
         return code
     }
 
-    private static func validate(_ response: URLResponse) throws {
+    private func sensitiveActionGrant(
+        from callbackURL: URL,
+        purpose: SensitiveActionPurpose
+    ) throws -> String {
+        guard callbackURL.scheme == callbackScheme,
+              callbackURL.host == "auth",
+              callbackURL.path == "/callback",
+              let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              components.queryItems?.first(where: { $0.name == "status" })?.value == "authorized",
+              components.queryItems?.first(where: { $0.name == "purpose" })?.value == purpose.rawValue,
+              let grant = components.queryItems?.first(where: { $0.name == "grant" })?.value,
+              !grant.isEmpty
+        else {
+            throw AuthError.badCallback
+        }
+        return grant
+    }
+
+    private static func validate(_ response: URLResponse, data: Data? = nil) throws {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
+            let code = data.flatMap { body -> String? in
+                guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                      let detail = json["detail"] as? [String: Any]
+                else { return nil }
+                return detail["code"] as? String
+            }
+            throw HTTPResponseError(
+                statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0,
+                code: code
+            )
         }
     }
 
@@ -383,9 +645,52 @@ final class AuthStore: ObservableObject {
         (response as? HTTPURLResponse)?.statusCode == 401
     }
 
-    private static func percentEncode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+    private static func path(_ path: String, query: [String: String]) throws -> String {
+        var components = URLComponents()
+        components.path = path
+        components.queryItems = query.sorted { $0.key < $1.key }.map(URLQueryItem.init)
+        guard let result = components.string else { throw AuthError.badURL }
+        return result
     }
+
+    private static func transcript(_ fields: String...) -> Data {
+        let allFields = ["conceptual-fitness/device-proof/v1"] + fields
+        return allFields.reduce(into: Data()) { result, field in
+            let data = Data(field.utf8)
+            var length = UInt32(data.count).bigEndian
+            withUnsafeBytes(of: &length) { result.append(contentsOf: $0) }
+            result.append(data)
+        }
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if case SensitiveActionError.cancelled = error { return true }
+        let error = error as NSError
+        if error.domain == ASWebAuthenticationSessionError.errorDomain,
+           error.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+            return true
+        }
+        return error.domain == LAError.errorDomain && [
+            LAError.userCancel.rawValue,
+            LAError.appCancel.rawValue,
+            LAError.systemCancel.rawValue,
+        ].contains(error.code)
+    }
+
+    static func sensitiveActionMessage(for error: Error, fallback: String) -> String? {
+        if isCancellation(error) { return nil }
+        return message(for: error, fallback: fallback)
+    }
+
+    private static func message(for error: Error, fallback: String) -> String {
+        (error as? SensitiveActionError)?.errorDescription ?? fallback
+    }
+
+    #if DEBUG
+    func setDeletionPreview(deadline: Date) {
+        state = .deletionScheduled(deadline, nil)
+    }
+    #endif
 }
 
 struct StartURLResponse: Decodable {
@@ -393,6 +698,34 @@ struct StartURLResponse: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case authorizationURL = "authorization_url"
+    }
+}
+
+private struct DeviceChallengeRequest: Encodable {
+    let purpose: String
+}
+
+private struct DeviceChallengeResponse: Decodable {
+    let challenge: String
+    let sessionID: String
+
+    enum CodingKeys: String, CodingKey {
+        case challenge
+        case sessionID = "session_id"
+    }
+}
+
+private struct DeviceAuthorizationRequest: Encodable {
+    let purpose: String
+    let challenge: String
+    let signature: String
+}
+
+private struct DeviceAuthorizationResponse: Decodable {
+    let sensitiveActionGrant: String
+
+    enum CodingKeys: String, CodingKey {
+        case sensitiveActionGrant = "sensitive_action_grant"
     }
 }
 
@@ -420,10 +753,14 @@ struct AuthGateView: View {
         case .checking:
             ProgressView()
                 .task { await authStore.bootstrap() }
-        case .signedOut, .failed:
-            signInView
+        case .signedOut:
+            signInView(errorMessage: nil)
+        case .failed(let message):
+            signInView(errorMessage: message)
         case .signingIn:
             ProgressView("Signing in")
+        case .deletionScheduled(let deadline, let message):
+            deletionScheduledView(deadline: deadline, message: message)
         case .authenticated(let session) where session.googleHealth.status == .connected:
             if session.profile.onboardingCompletedAt == nil {
                 OnboardingView(authStore: authStore, session: session)
@@ -435,7 +772,7 @@ struct AuthGateView: View {
         }
     }
 
-    private var signInView: some View {
+    private func signInView(errorMessage: String?) -> some View {
         ZStack {
             AppBackground()
 
@@ -460,6 +797,14 @@ struct AuthGateView: View {
                 }
 
                 VStack(spacing: 12) {
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                            .accessibilityLabel("Sign-in error: \(errorMessage)")
+                    }
+
                     Button {
                         Task { await authStore.signIn() }
                     } label: {
@@ -470,10 +815,68 @@ struct AuthGateView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
 
+                    Button("Restore an account scheduled for deletion") {
+                        Task { await authStore.restoreDeletedAccount() }
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Signs in with Google and restores the account if it is still within the 14-day recovery period")
+
                     Text("Your health data stays tied to your authenticated app session.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                }
+
+                Spacer()
+            }
+            .padding(28)
+        }
+    }
+
+    private func deletionScheduledView(deadline: Date, message: String?) -> some View {
+        ZStack {
+            AppBackground()
+
+            VStack(alignment: .leading, spacing: 20) {
+                Spacer()
+                Image(systemName: deadline > Date() ? "clock.badge.exclamationmark" : "trash.slash")
+                    .font(.system(size: 52, weight: .semibold))
+                    .foregroundStyle(deadline > Date() ? .orange : .secondary)
+                    .symbolRenderingMode(.hierarchical)
+
+                Text("Account deletion scheduled")
+                    .font(.title.bold())
+
+                Text(deadline > Date()
+                     ? "Your account is suspended and its app data is scheduled for permanent deletion on \(deadline.formatted(date: .long, time: .shortened))."
+                     : "The scheduled deletion time has arrived. Ask the server to confirm whether restoration is still available.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let message {
+                    Text(message)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("Restoration error: \(message)")
+                }
+
+                Button {
+                    Task { await authStore.restoreDeletedAccount() }
+                } label: {
+                    Label("Restore account", systemImage: "arrow.uturn.backward.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityHint("Authenticate with the same Google account and ask the server to cancel deletion")
+
+                if deadline <= Date() {
+                    Button("Return to sign in") {
+                        authStore.continueAfterRecoveryPeriod()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityHint("Returns to the sign-in screen to start a new account")
                 }
 
                 Spacer()
@@ -545,6 +948,137 @@ final class WebAuthPresentationContextProvider: NSObject, ASWebAuthenticationPre
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+    }
+}
+
+final class DeviceSigningKeyStore {
+    private let tag = Data("com.conceptualfitness.device-signing-key.v1".utf8)
+
+    func enrollmentAvailabilityError() -> SensitiveActionError? {
+        guard Self.secureEnclaveAvailable else {
+            return .secureEnclaveUnavailable
+        }
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            return .authenticationUnavailable
+        }
+        return nil
+    }
+
+    func publicKeyBase64() throws -> String {
+        let key = try privateKey()
+        guard let publicKey = SecKeyCopyPublicKey(key),
+              let representation = SecKeyCopyExternalRepresentation(publicKey, nil) as Data?,
+              representation.count == 65,
+              representation.first == 0x04
+        else {
+            throw SensitiveActionError.signingKeyUnavailable
+        }
+        return representation.base64EncodedString()
+    }
+
+    func replaceKeyAndGetPublicKeyBase64() throws -> String {
+        deleteKey()
+        return try publicKeyBase64()
+    }
+
+    func signatureBase64(for message: Data, reason: String) async throws -> String {
+        guard Self.secureEnclaveAvailable else {
+            throw SensitiveActionError.secureEnclaveUnavailable
+        }
+        let context = LAContext()
+        var policyError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
+            throw policyError ?? SensitiveActionError.authenticationUnavailable
+        }
+        do {
+            try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+        } catch {
+            throw error
+        }
+        let key = try existingPrivateKey(authenticationContext: context)
+        var error: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(
+            key,
+            .ecdsaSignatureMessageX962SHA256,
+            message as CFData,
+            &error
+        ) as Data? else {
+            if let error { throw error.takeRetainedValue() }
+            throw SensitiveActionError.signingKeyUnavailable
+        }
+        return signature.base64EncodedString()
+    }
+
+    func deleteKey() {
+        SecItemDelete(keyQuery() as CFDictionary)
+    }
+
+    private func privateKey() throws -> SecKey {
+        if let key = try? existingPrivateKey(authenticationContext: nil) {
+            return key
+        }
+        guard Self.secureEnclaveAvailable else {
+            throw SensitiveActionError.secureEnclaveUnavailable
+        }
+        var accessError: Unmanaged<CFError>?
+        guard let accessControl = SecAccessControlCreateWithFlags(
+            nil,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            [.privateKeyUsage, .userPresence],
+            &accessError
+        ) else {
+            if let accessError { throw accessError.takeRetainedValue() }
+            throw SensitiveActionError.signingKeyUnavailable
+        }
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            kSecPrivateKeyAttrs as String: [
+                kSecAttrIsPermanent as String: true,
+                kSecAttrApplicationTag as String: tag,
+                kSecAttrAccessControl as String: accessControl,
+            ],
+        ]
+        var keyError: Unmanaged<CFError>?
+        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &keyError) else {
+            if let keyError { throw keyError.takeRetainedValue() }
+            throw SensitiveActionError.signingKeyUnavailable
+        }
+        return key
+    }
+
+    private func existingPrivateKey(authenticationContext: LAContext?) throws -> SecKey {
+        var query = keyQuery()
+        query[kSecReturnRef as String] = true
+        if let authenticationContext {
+            query[kSecUseAuthenticationContext as String] = authenticationContext
+        }
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let key = result as! SecKey?
+        else {
+            throw SensitiveActionError.signingKeyUnavailable
+        }
+        return key
+    }
+
+    private func keyQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassKey,
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrApplicationTag as String: tag,
+        ]
+    }
+
+    private static var secureEnclaveAvailable: Bool {
+        #if targetEnvironment(simulator)
+        false
+        #else
+        SecureEnclave.isAvailable
+        #endif
     }
 }
 

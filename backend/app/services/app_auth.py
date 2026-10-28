@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.security import generate_app_token, token_digest, utcnow, verify_token_digest
 from app.models import AppAccessToken, AppAuthCode, AppRefreshToken, AppSession, User
+from app.services.device_keys import DeviceKeyError, auth_code_transcript, verify_signature
 
 
 class AppAuthError(RuntimeError):
@@ -28,13 +29,22 @@ def device_id_digest(device_id: str) -> str:
     return token_digest(device_id)
 
 
-def create_app_auth_code(session: Session, *, user_id: str, device_id_hash: str) -> str:
+def create_app_auth_code(
+    session: Session,
+    *,
+    user_id: str,
+    device_id_hash: str,
+    device_public_key: str | None = None,
+    source_session_id: str | None = None,
+) -> str:
     settings = get_settings()
     code = generate_app_token()
     app_code = AppAuthCode(
         user_id=user_id,
         code_hash=token_digest(code),
         device_id_hash=device_id_hash,
+        device_public_key=device_public_key,
+        source_session_id=source_session_id,
         expires_at=utcnow() + timedelta(minutes=settings.app_auth_code_ttl_minutes),
     )
     session.add(app_code)
@@ -47,6 +57,7 @@ def exchange_auth_code(
     *,
     code: str,
     device_id: str,
+    signature: str | None = None,
     user_agent: str | None = None,
 ) -> TokenPair:
     app_code = _get_auth_code(session, code)
@@ -58,19 +69,52 @@ def exchange_auth_code(
         or not verify_token_digest(device_id, app_code.device_id_hash)
     ):
         raise AppAuthError("Invalid or expired authorization code")
+    if app_code.device_public_key:
+        if not signature:
+            raise AppAuthError("Invalid or expired authorization code")
+        try:
+            verify_signature(
+                app_code.device_public_key,
+                signature,
+                auth_code_transcript(code, device_id),
+            )
+        except DeviceKeyError as exc:
+            raise AppAuthError("Invalid or expired authorization code") from exc
+    # Serialize session creation with deletion, including users already cached by this session.
+    user = session.get(User, app_code.user_id, with_for_update=True, populate_existing=True)
+    if user is None or user.deletion_scheduled_for is not None:
+        raise AppAuthError("Invalid or expired authorization code")
 
-    app_code.consumed_at = now
+    consumed = session.execute(
+        update(AppAuthCode)
+        .where(AppAuthCode.id == app_code.id, AppAuthCode.consumed_at.is_(None))
+        .values(consumed_at=now)
+    )
+    if consumed.rowcount != 1:
+        session.rollback()
+        raise AppAuthError("Invalid or expired authorization code")
     app_session = AppSession(
         user_id=app_code.user_id,
         device_id_hash=app_code.device_id_hash,
+        device_public_key=app_code.device_public_key,
         expires_at=now + timedelta(days=get_settings().refresh_token_ttl_days),
         last_used_at=now,
         user_agent=(user_agent or "")[:256] or None,
     )
-    session.add(app_code)
     session.add(app_session)
     session.flush()
     token_pair = _issue_token_pair(session, app_session)
+    if app_code.source_session_id:
+        source_session = session.get(AppSession, app_code.source_session_id)
+        if (
+            source_session is None
+            or source_session.user_id != app_code.user_id
+            or source_session.device_public_key is not None
+            or source_session.revoked_at is not None
+        ):
+            session.rollback()
+            raise AppAuthError("Invalid or expired authorization code")
+        revoke_session(session, source_session)
     session.commit()
     return token_pair
 
@@ -86,11 +130,14 @@ def refresh_tokens(
         raise AppAuthError("Invalid or expired token")
 
     app_session = session.get(AppSession, token.session_id)
+    user = session.get(User, token.user_id)
     now = utcnow()
     compromised = (
         token.used_at is not None
         or token.revoked_at is not None
         or app_session is None
+        or user is None
+        or user.deletion_scheduled_for is not None
         or app_session.revoked_at is not None
         or _aware(token.expires_at) < now
         or (app_session is not None and _aware(app_session.expires_at) < now)
@@ -113,6 +160,15 @@ def refresh_tokens(
 
 
 def authenticate_access_token(session: Session, raw_token: str) -> User:
+    user, app_session = authenticate_access_token_with_session(session, raw_token)
+    del app_session
+    return user
+
+
+def authenticate_access_token_with_session(
+    session: Session,
+    raw_token: str,
+) -> tuple[User, AppSession]:
     token = session.scalar(
         select(AppAccessToken).where(AppAccessToken.token_hash == token_digest(raw_token))
     )
@@ -123,12 +179,12 @@ def authenticate_access_token(session: Session, raw_token: str) -> User:
     if app_session is None or app_session.revoked_at is not None or _aware(app_session.expires_at) < now:
         raise AppAuthError("Invalid or expired token")
     user = session.get(User, token.user_id)
-    if user is None:
+    if user is None or user.deletion_scheduled_for is not None:
         raise AppAuthError("Invalid or expired token")
     app_session.last_used_at = now
     session.add(app_session)
     session.commit()
-    return user
+    return user, app_session
 
 
 def revoke_with_refresh_token(session: Session, *, refresh_token: str, device_id: str | None = None) -> None:
@@ -170,6 +226,33 @@ def revoke_session(session: Session, app_session: AppSession) -> None:
         .where(AppRefreshToken.session_id == app_session.id, AppRefreshToken.revoked_at.is_(None))
         .values(revoked_at=now)
     )
+
+
+def create_session_for_device(
+    session: Session,
+    *,
+    user_id: str,
+    device_id: str,
+    device_public_key: str | None = None,
+    user_agent: str | None = None,
+) -> TokenPair:
+    user = session.get(User, user_id, with_for_update=True, populate_existing=True)
+    if user is None or user.deletion_scheduled_for is not None:
+        raise AppAuthError("Account is unavailable")
+    now = utcnow()
+    app_session = AppSession(
+        user_id=user_id,
+        device_id_hash=device_id_digest(device_id),
+        device_public_key=device_public_key,
+        expires_at=now + timedelta(days=get_settings().refresh_token_ttl_days),
+        last_used_at=now,
+        user_agent=(user_agent or "")[:256] or None,
+    )
+    session.add(app_session)
+    session.flush()
+    token_pair = _issue_token_pair(session, app_session)
+    session.commit()
+    return token_pair
 
 
 def _issue_token_pair(session: Session, app_session: AppSession) -> TokenPair:

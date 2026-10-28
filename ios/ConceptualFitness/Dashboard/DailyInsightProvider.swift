@@ -3,6 +3,25 @@ import CryptoKit
 import FoundationModels
 
 struct DailyInsightProvider {
+    func exportedInsights(userID: String) -> [DailyInsightExport] {
+        let prefix = "dailyInsight.v10.\(userID)."
+        return UserDefaults.standard.dictionaryRepresentation()
+            .compactMap { key, value -> DailyInsightExport? in
+                guard key.hasPrefix(prefix), let data = value as? Data,
+                      let entry = try? JSONDecoder().decode(CachedInsight.self, from: data),
+                      entry.userID == userID
+                else { return nil }
+                return DailyInsightExport(
+                    date: entry.date,
+                    slot: entry.slot,
+                    kind: entry.kind,
+                    text: entry.text,
+                    generatedAt: entry.generatedAt
+                )
+            }
+            .sorted { ($0.date, $0.slot, $0.kind) < ($1.date, $1.slot, $1.kind) }
+    }
+
     func cachedDailyBriefForCurrentSlot(now: Date = Date()) -> String? {
         cachedLastText(for: BriefSlot(date: now), kind: .dailyBrief, now: now)
     }
@@ -321,6 +340,19 @@ struct DailyInsightProvider {
             return details.joined(separator: "; ")
         }
         return String(describing: error)
+    }
+}
+
+struct DailyInsightExport: Encodable {
+    let date: String
+    let slot: String
+    let kind: String
+    let text: String
+    let generatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case date, slot, kind, text
+        case generatedAt = "generated_at"
     }
 }
 
