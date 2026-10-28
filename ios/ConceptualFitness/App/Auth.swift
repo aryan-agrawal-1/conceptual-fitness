@@ -205,7 +205,7 @@ final class AuthStore: ObservableObject {
     func signIn() async {
         let previousState = state
         let hadSession = keychain.refreshToken != nil
-        state = .signingIn
+        if !hadSession { state = .signingIn }
         do {
             let deviceID = keychain.deviceID
             let canEnrollDevice = signingKeys.enrollmentAvailabilityError() == nil
@@ -761,14 +761,15 @@ struct AuthGateView: View {
             ProgressView("Signing in")
         case .deletionScheduled(let deadline, let message):
             deletionScheduledView(deadline: deadline, message: message)
-        case .authenticated(let session) where session.googleHealth.status == .connected:
-            if session.profile.onboardingCompletedAt == nil {
+        case .authenticated(let session):
+            if session.profile.onboardingCompletedAt != nil {
+                AppShellView(authStore: authStore, session: session)
+                    .id(session.user.id)
+            } else if session.googleHealth.status == .connected {
                 OnboardingView(authStore: authStore, session: session)
             } else {
-                AppShellView(authStore: authStore, session: session)
+                reconnectView
             }
-        case .authenticated:
-            reconnectView
         }
     }
 
