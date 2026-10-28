@@ -46,4 +46,6 @@ Backend coverage includes key parsing, signed exchange without premature code co
 legacy enrollment, challenge replay and session binding, rejection of legacy unbound grants, signed
 recovery, and an isolated upgrade/downgrade migration roundtrip.
 
-Final checks: 166 backend tests, 25 focused tests, Ruff, isolated migration roundtrip, and iOS simulator build passed. The iOS/backend transcript bytes matched. Physical Face ID, passcode fallback, and Secure Enclave signing remain unverified because the user explicitly deferred hardware testing. The simulator has no software-key bypass.
+Final checks: 168 backend tests, 24 focused account/auth/export tests, Ruff, isolated migration roundtrip, and iOS simulator build passed. The iOS/backend transcript bytes matched. Physical Face ID, passcode fallback, and Secure Enclave signing remain unverified because the user explicitly deferred hardware testing. The simulator has no software-key bypass. Physical-device checks are tracked in #57, the final milestone of delivery tracker #51.
+
+Session creation for sign-in and recovery locks and refreshes the user row until the new session commits, using the same account lock as deletion. Regression tests reject issuance when another database session schedules deletion while the user is cached. Separate concurrency checks against an isolated PostgreSQL 16 cluster reproduced both original races and verified that deletion waits for issuance, revokes the resulting session, and leaves it revoked after recovery.

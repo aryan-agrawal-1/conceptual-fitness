@@ -30,7 +30,13 @@ from app.services.account_deletion import (
     schedule_account_deletion,
 )
 from app.services.account_recovery import AccountRecoveryError, recover_account
-from app.services.app_auth import create_app_auth_code, device_id_digest, exchange_auth_code
+from app.services.app_auth import (
+    AppAuthError,
+    create_app_auth_code,
+    create_session_for_device,
+    device_id_digest,
+    exchange_auth_code,
+)
 from app.services.device_keys import recovery_transcript
 from app.services.sensitive_actions import (
     create_sensitive_action_challenge,
@@ -135,6 +141,34 @@ def test_recovery_fails_at_deadline(session) -> None:
 
     with pytest.raises(AccountRecoveryError, match="period has ended"):
         recover_account(session, user, now=now)
+
+
+@pytest.mark.parametrize("session_source", ["sign_in", "recovery"])
+def test_session_creation_rechecks_deletion_after_another_session_schedules_it(
+    session, session_source
+) -> None:
+    user = User()
+    session.add(user)
+    session.commit()
+    code = create_app_auth_code(
+        session,
+        user_id=user.id,
+        device_id_hash=device_id_digest(DEVICE_ID),
+    )
+
+    with Session(session.get_bind()) as deletion_session:
+        schedule_account_deletion(deletion_session, deletion_session.get(User, user.id))
+
+    # The signing-in session still has the active user cached from before deletion.
+    assert user.deletion_scheduled_for is None
+    with pytest.raises(AppAuthError):
+        if session_source == "sign_in":
+            exchange_auth_code(session, code=code, device_id=DEVICE_ID)
+        else:
+            create_session_for_device(session, user_id=user.id, device_id=DEVICE_ID)
+    session.rollback()
+
+    assert session.scalar(select(AppSession).where(AppSession.user_id == user.id)) is None
 
 
 def test_deletion_routes_revoke_old_access_and_issue_only_a_fresh_recovery_session(

@@ -113,7 +113,7 @@ def recover_deletion(
             device_public_key=grant.device_public_key,
             user_agent=request.headers.get("user-agent"),
         )
-    except (AccountRecoveryError, SensitiveActionError) as exc:
+    except (AccountRecoveryError, AppAuthError, SensitiveActionError) as exc:
         raise HTTPException(status_code=403, detail="Account recovery is unavailable") from exc
 
     logger.info("Account deletion recovered user=%s", token_digest(user.id)[:12])
