@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DashboardView: View {
+    @Environment(\.profileUnits) private var units
     let client: DashboardAPIClient
     @ObservedObject var syncCoordinator: AppSyncCoordinator
     let weatherProvider: WeatherProvider
@@ -311,7 +312,7 @@ struct DashboardView: View {
     private func dashboardSections(data: DashboardData) -> some View {
         VStack(spacing: 28) {
             RecentWorkoutsSection(workouts: data.workouts)
-            HealthMetricsSection(items: MetricCardItem.items(from: data))
+            HealthMetricsSection(items: MetricCardItem.items(from: data, units: units))
         }
         .padding(.horizontal, 20)
     }

@@ -27,6 +27,7 @@ struct SkinTemperatureVariationDetailView: View {
 }
 
 private struct SkinTempSummaryPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: SkinTemperatureVariationDetail
     let timeframe: ScoreTimeframe
 
@@ -34,16 +35,16 @@ private struct SkinTempSummaryPanel: View {
         MetricHeroPanel(
             eyebrow: "Body temperature",
             headline: heroHeadline,
-            value: skinTempValueText(detail.summary.primaryValue),
-            unit: "C",
+            value: units.temperatureVariationText(detail.summary.primaryValue),
+            unit: units.temperatureSymbol,
             caption: timeframe == .year ? "monthly avg" : "period avg",
             accent: HealthTheme.skinTemperature,
             stats: [
-                MetricHeroStat(title: "Baseline", value: skinTempBaselineRangeText(detail.summary) ?? "--", tint: HealthTheme.skinTemperature),
+                MetricHeroStat(title: "Baseline", value: skinTempBaselineRangeText(detail.summary, units: units) ?? "--", tint: HealthTheme.skinTemperature),
                 MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: skinTempTrendColor(detail.summary.trend)),
                 MetricHeroStat(title: "Recorded", value: recordedText ?? "--", tint: .secondary)
             ],
-            accessibilityLabel: "Average skin temperature variation \(skinTempValueText(detail.summary.primaryValue) ?? "no value") Celsius"
+            accessibilityLabel: "Average skin temperature variation \(units.temperatureVariationText(detail.summary.primaryValue) ?? "no value") \(units.temperatureName)"
         )
     }
 
@@ -81,6 +82,7 @@ private struct SkinTempExplanationPanel: View {
 }
 
 private struct SkinTempChartPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: SkinTemperatureVariationDetail
     let timeframe: ScoreTimeframe
     @State private var selectedID: String?
@@ -116,10 +118,10 @@ private struct SkinTempChartPanel: View {
                         }
                         Spacer()
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(skinTempValueText(selectedPoint.value) ?? "--")
+                            Text(units.temperatureVariationText(selectedPoint.value) ?? "--")
                                 .font(.title3.weight(.bold))
                                 .monospacedDigit()
-                            Text("C")
+                            Text(units.temperatureSymbol)
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(.secondary)
                         }
@@ -149,6 +151,7 @@ private struct SkinTempChartPanel: View {
 }
 
 private struct SkinTempBaselineChart: View {
+    @Environment(\.profileUnits) private var units
     let points: [SkinTempDisplayPoint]
     let timeframe: ScoreTimeframe
     @Binding var selectedID: String?
@@ -190,7 +193,7 @@ private struct SkinTempBaselineChart: View {
             ZStack(alignment: .topLeading) {
                 ForEach(tickValues, id: \.self) { tick in
                     let y = skinTempYPosition(value: tick, bounds: bounds, height: plot.height) + plot.minY
-                    Text(skinTempValueText(tick) ?? "--")
+                    Text(units.temperatureVariationText(tick) ?? "--")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -251,7 +254,7 @@ private struct SkinTempBaselineChart: View {
                                     x: skinTempXPosition(index: index, count: points.count, width: plot.width) + plot.minX,
                                     y: skinTempYPosition(value: value, bounds: bounds, height: plot.height) + plot.minY
                                 )
-                                .accessibilityLabel("\(point.readoutLabel(for: timeframe)), skin temperature variation \(skinTempValueText(value) ?? "--") Celsius")
+                                .accessibilityLabel("\(point.readoutLabel(for: timeframe)), skin temperature variation \(units.temperatureVariationText(value) ?? "--") \(units.temperatureName)")
                         }
                     }
                 }
@@ -377,6 +380,7 @@ private struct SkinTempPatternPanel: View {
 }
 
 private struct SkinTempContextPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: SkinTemperatureVariationDetail
     let timeframe: ScoreTimeframe
 
@@ -459,7 +463,7 @@ private struct SkinTempContextPanel: View {
         }).max(by: { ($0.value ?? 0) < ($1.value ?? 0) }) else {
             return nil
         }
-        return "\(point.axisLabel(for: .year)) \(skinTempValueText(point.value) ?? "--") C"
+        return "\(point.axisLabel(for: .year)) \(units.temperatureVariationText(point.value) ?? "--") \(units.temperatureSymbol)"
     }
 
     private func countText(_ value: Int) -> String {
@@ -785,14 +789,6 @@ private func skinTempYPosition(value: Double, bounds: ClosedRange<Double>, heigh
     return height - (CGFloat(ratio) * height)
 }
 
-private func skinTempValueText(_ value: Double?) -> String? {
-    guard let value else { return nil }
-    if abs(value) < 0.05 {
-        return "0.0"
-    }
-    return "\(value > 0 ? "+" : "")\(String(format: "%.1f", value))"
-}
-
 private func skinTempRelationTitle(_ relation: String?) -> String {
     switch relation {
     case "normal": return "In range"
@@ -813,10 +809,10 @@ private func skinTempRelationColor(_ relation: String?) -> Color {
 
 private let skinTempMissingColor = Color.secondary.opacity(0.35)
 
-private func skinTempBaselineRangeText(_ summary: BaselineMetricSummary) -> String? {
+private func skinTempBaselineRangeText(_ summary: BaselineMetricSummary, units: ProfileUnits) -> String? {
     let lower = summary.baselineLowerBound ?? -0.3
     let upper = summary.baselineUpperBound ?? 0.3
-    return "\(skinTempValueText(lower) ?? "--") to \(skinTempValueText(upper) ?? "--") C"
+    return "\(units.temperatureVariationText(lower) ?? "--") to \(units.temperatureVariationText(upper) ?? "--") \(units.temperatureSymbol)"
 }
 
 private func skinTempTrendColor(_ trend: String?) -> Color {

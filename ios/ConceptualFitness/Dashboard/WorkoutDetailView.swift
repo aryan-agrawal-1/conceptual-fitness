@@ -131,6 +131,7 @@ struct WorkoutDetailView: View {
 }
 
 private struct WorkoutStrengthDetailSection: View {
+    @Environment(\.profileUnits) private var units
     let detail: WorkoutDetail
     let isPreparingAction: Bool
     let onRetry: () -> Void
@@ -175,7 +176,7 @@ private struct WorkoutStrengthDetailSection: View {
                 Text("Strength Session")
                     .font(.headline)
                 Spacer()
-                Text(session.strengthSummary)
+                Text(session.strengthSummary(units: units))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
@@ -273,6 +274,7 @@ private struct WorkoutStrengthExerciseCard: View {
 }
 
 private struct WorkoutStrengthSetRow: View {
+    @Environment(\.profileUnits) private var units
     let number: Int
     let set: FitnessWorkoutSet
     let isUnilateral: Bool
@@ -285,7 +287,7 @@ private struct WorkoutStrengthSetRow: View {
                 .background(.secondary.opacity(0.10), in: Circle())
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(set.recordedValues(isUnilateral: isUnilateral))
+                Text(set.recordedValues(isUnilateral: isUnilateral, units: units))
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
                 if let notes = set.notes, !notes.isEmpty {
@@ -304,7 +306,7 @@ private struct WorkoutStrengthSetRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Set \(number), \(set.recordedValues(isUnilateral: isUnilateral)), \(set.status.displayTitle)")
+        .accessibilityLabel("Set \(number), \(set.recordedValues(isUnilateral: isUnilateral, units: units)), \(set.status.displayTitle)")
     }
 }
 
@@ -349,6 +351,7 @@ private struct WorkoutDetailHeader: View {
 }
 
 private struct WorkoutSummaryMetricsPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: WorkoutDetail
 
     private var columns: [GridItem] {
@@ -364,7 +367,7 @@ private struct WorkoutSummaryMetricsPanel: View {
                 .font(.headline)
 
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(detail.summaryTiles) { tile in
+                ForEach(detail.summaryTiles(units: units)) { tile in
                     WorkoutMetricTile(tile: tile)
                 }
             }
@@ -884,13 +887,13 @@ private extension WorkoutDetail {
         DashboardFormatters.parseBackendDateTime(endTime)
     }
 
-    var summaryTiles: [WorkoutMetricTileData] {
+    func summaryTiles(units: ProfileUnits) -> [WorkoutMetricTileData] {
         var tiles = [
             WorkoutMetricTileData(id: "duration", title: "Duration", value: durationText(seconds: durationSeconds), systemImage: "clock.fill", tint: .blue)
         ]
 
         if let distanceMeters {
-            tiles.append(WorkoutMetricTileData(id: "distance", title: "Distance", value: distanceText(meters: distanceMeters), systemImage: "point.topleft.down.curvedto.point.bottomright.up", tint: .mint))
+            tiles.append(WorkoutMetricTileData(id: "distance", title: "Distance", value: units.distanceText(distanceMeters), systemImage: "point.topleft.down.curvedto.point.bottomright.up", tint: .mint))
         }
 
         if let activeCalories {
@@ -1016,13 +1019,6 @@ private func durationText(seconds: Int?) -> String {
     return "\(minutes)m"
 }
 
-private func distanceText(meters: Double) -> String {
-    if meters >= 1000 {
-        return String(format: "%.1f km", meters / 1000)
-    }
-    return "\(meters.clean) m"
-}
-
 private extension WorkoutDetail {
     var showsStrengthSection: Bool {
         if strengthSession != nil { return true }
@@ -1034,13 +1030,13 @@ private extension WorkoutDetail {
 }
 
 private extension FitnessWorkout {
-    var strengthSummary: String {
+    func strengthSummary(units: ProfileUnits) -> String {
         var values = [
             "\(summary.exerciseCount) \(summary.exerciseCount == 1 ? "exercise" : "exercises")",
             "\(summary.completedSetCount) \(summary.completedSetCount == 1 ? "set" : "sets")",
         ]
         if summary.volumeKG > 0 {
-            values.append("\(summary.volumeKG.clean) kg")
+            values.append(units.massText(summary.volumeKG))
         }
         return values.joined(separator: " · ")
     }
@@ -1055,27 +1051,28 @@ private extension FitnessWorkoutSet {
         }
     }
 
-    func recordedValues(isUnilateral: Bool) -> String {
+    func recordedValues(isUnilateral: Bool, units: ProfileUnits) -> String {
         var values: [String] = []
-        let displayedLoad = loadPerImplement ?? loadValue
+        let recordedLoad = loadPerImplement ?? loadValue
+        let displayedLoad = recordedLoad.map { (loadUnit == "lb" || loadUnit == "lbs") ? $0 * 0.45359237 : $0 }
         if let reps, let displayedLoad {
-            values.append("\(displayedLoad.clean) \(loadUnit ?? "kg") × \(reps)")
+            values.append("\(units.massText(displayedLoad)) × \(reps)")
         } else if let reps {
             values.append("\(reps) reps\(isUnilateral ? "/side" : "")")
         } else if let displayedLoad {
-            values.append("\(displayedLoad.clean) \(loadUnit ?? "kg")")
+            values.append("\(units.massText(displayedLoad))")
         }
         if let durationSeconds {
             values.append(durationText(seconds: durationSeconds))
         }
         if let distanceMeters {
-            values.append(distanceText(meters: distanceMeters))
+            values.append(units.distanceText(distanceMeters))
         }
         if let assistanceKG {
-            values.append("\(assistanceKG.clean) kg assistance")
+            values.append("\(units.massText(assistanceKG)) assistance")
         }
         if let addedLoadKG {
-            values.append("+\(addedLoadKG.clean) kg")
+            values.append("+\(units.massText(addedLoadKG))")
         }
         if let rir {
             values.append("RIR \(rir.clean)")

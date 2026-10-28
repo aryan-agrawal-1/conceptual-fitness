@@ -30,6 +30,7 @@ struct DistanceDetailView: View {
 }
 
 private struct DistanceSummaryPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: DistanceDetail
     let timeframe: ScoreTimeframe
 
@@ -61,16 +62,16 @@ private struct DistanceSummaryPanel: View {
         MetricHeroPanel(
             eyebrow: "Distance",
             headline: statusTitle,
-            value: distanceText(primaryValue),
+            value: units.distanceText(primaryValue),
             unit: "",
             caption: primaryLabel,
             accent: HealthTheme.distance,
             stats: [
-                MetricHeroStat(title: totalRowTitle, value: distanceText(timeframe == .day ? dayTotal : periodTotal), tint: HealthTheme.distance),
+                MetricHeroStat(title: totalRowTitle, value: units.distanceText(timeframe == .day ? dayTotal : periodTotal), tint: HealthTheme.distance),
                 MetricHeroStat(title: bestRowTitle, value: bestValueText, tint: .green),
                 MetricHeroStat(title: "Trend", value: metricHeroTrendText(detail.summary.trend), tint: statusColor)
             ],
-            accessibilityLabel: "\(distanceText(primaryValue)) \(primaryLabel)"
+            accessibilityLabel: "\(units.distanceText(primaryValue)) \(primaryLabel)"
         )
     }
 
@@ -97,7 +98,7 @@ private struct DistanceSummaryPanel: View {
         guard let best = displayPoints.max(by: { ($0.value ?? 0) < ($1.value ?? 0) }), let value = best.value else {
             return "--"
         }
-        return "\(distanceText(value)) \(best.shortReadout(for: timeframe))"
+        return "\(units.distanceText(value)) \(best.shortReadout(for: timeframe))"
     }
 
     private var statusTitle: String {
@@ -123,6 +124,7 @@ private struct DistanceSummaryPanel: View {
 }
 
 private struct DistanceChartPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: DistanceDetail
     let timeframe: ScoreTimeframe
     @State private var selectedID: String?
@@ -163,7 +165,7 @@ private struct DistanceChartPanel: View {
                         DistanceSelectedReadout(
                             title: selectedHourlyPoint.readoutLabel,
                             subtitle: "Hourly distance",
-                            value: distanceText(selectedHourlyPoint.value)
+                            value: units.distanceText(selectedHourlyPoint.value)
                         )
                     }
                 } else {
@@ -180,7 +182,7 @@ private struct DistanceChartPanel: View {
                     DistanceSelectedReadout(
                         title: selectedPeriodPoint.readoutLabel(for: timeframe),
                         subtitle: selectedSubtitle(for: selectedPeriodPoint),
-                        value: distanceText(selectedPeriodPoint.value)
+                        value: units.distanceText(selectedPeriodPoint.value)
                     )
                 }
             } else {
@@ -224,6 +226,7 @@ private struct DistanceChartPanel: View {
 }
 
 private struct DistanceBarChart: View {
+    @Environment(\.profileUnits) private var units
     let points: [DistanceBarPoint]
     let timeframe: ScoreTimeframe
     @Binding var selectedID: String?
@@ -256,7 +259,7 @@ private struct DistanceBarChart: View {
             ZStack(alignment: .topLeading) {
                 ForEach(tickValues, id: \.self) { tick in
                     let y = plot.maxY - CGFloat(tick / maxValue) * plot.height
-                    Text(compactDistanceText(tick))
+                    Text(units.distanceText(tick, compact: true))
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -279,7 +282,7 @@ private struct DistanceBarChart: View {
                         .fill(barColor(for: point, value: value).gradient)
                         .frame(width: barWidth, height: height)
                         .position(x: x, y: y)
-                        .accessibilityLabel("\(point.readoutLabel), \(distanceText(point.value))")
+                        .accessibilityLabel("\(point.readoutLabel), \(units.distanceText(point.value))")
                 }
 
                 if let selectedPoint, let selectedIndex = points.firstIndex(where: { $0.id == selectedPoint.id }) {
@@ -441,6 +444,7 @@ private struct DistancePatternPanel: View {
 }
 
 private struct DistanceConsistencyPanel: View {
+    @Environment(\.profileUnits) private var units
     let detail: DistanceDetail
     let timeframe: ScoreTimeframe
 
@@ -459,8 +463,8 @@ private struct DistanceConsistencyPanel: View {
     var body: some View {
         DistanceSection(title: "Distance & Consistency", systemImage: "checkmark.seal.fill") {
             VStack(spacing: 10) {
-                DistanceContextRow(title: totalTitle, value: distanceText(periodTotal))
-                DistanceContextRow(title: averageTitle, value: distanceText(averageValue))
+                DistanceContextRow(title: totalTitle, value: units.distanceText(periodTotal))
+                DistanceContextRow(title: averageTitle, value: units.distanceText(averageValue))
                 DistanceContextRow(title: "Active days", value: "\(activeDays) / \(dailyValues.count)")
                 DistanceContextRow(title: "Best \(bestUnit)", value: bestValueText)
                 DistanceContextRow(title: previousTitle, value: previousText)
@@ -495,7 +499,7 @@ private struct DistanceConsistencyPanel: View {
         guard let best = periodPoints.max(by: { ($0.value ?? 0) < ($1.value ?? 0) }), let value = best.value else {
             return "--"
         }
-        return "\(distanceText(value)) \(best.shortReadout(for: timeframe))"
+        return "\(units.distanceText(value)) \(best.shortReadout(for: timeframe))"
     }
 
     private var previousTitle: String {
@@ -512,7 +516,7 @@ private struct DistanceConsistencyPanel: View {
             return "No prior data"
         }
         let prefix = change > 0 ? "+" : ""
-        return "\(prefix)\(distanceText(change)) avg/day"
+        return "\(prefix)\(units.distanceText(change)) avg/day"
     }
 }
 
@@ -531,6 +535,7 @@ private struct DistanceDistributionItem: Identifiable {
 }
 
 private struct DistanceDistributionRow: View {
+    @Environment(\.profileUnits) private var units
     let item: DistanceDistributionItem
 
     var body: some View {
@@ -546,7 +551,7 @@ private struct DistanceDistributionRow: View {
                     Text(item.title)
                         .font(.subheadline.weight(.semibold))
                     Spacer()
-                    Text(distanceText(item.value))
+                    Text(units.distanceText(item.value))
                         .font(.subheadline.weight(.bold))
                         .monospacedDigit()
                 }
@@ -566,6 +571,7 @@ private struct DistanceDistributionRow: View {
 }
 
 private struct DistancePatternDot: View {
+    @Environment(\.profileUnits) private var units
     let point: DistancePeriodPoint
     let timeframe: ScoreTimeframe
     let averageValue: Double?
@@ -581,7 +587,7 @@ private struct DistancePatternDot: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
-        .accessibilityLabel("\(point.readoutLabel(for: timeframe)), \(distanceText(point.value))")
+        .accessibilityLabel("\(point.readoutLabel(for: timeframe)), \(units.distanceText(point.value))")
     }
 
     private var patternColor: Color {
@@ -753,30 +759,6 @@ private struct DistanceBarPoint: Identifiable {
     let axisLabel: String
     let readoutLabel: String
     let value: Double?
-}
-
-private func distanceText(_ meters: Double?) -> String {
-    guard let meters else { return "--" }
-    let absolute = abs(meters)
-    if absolute < 1000 {
-        return "\(Int(meters.rounded())) m"
-    }
-    return String(format: "%.1f km", meters / 1000)
-}
-
-private func compactDistanceText(_ meters: Double?) -> String {
-    guard let meters else { return "--" }
-    let kilometers = meters / 1000
-    if abs(kilometers) >= 100 {
-        return "\(Int(kilometers.rounded()))km"
-    }
-    if abs(kilometers) >= 10 {
-        return "\(Int(kilometers.rounded()))km"
-    }
-    if abs(meters) >= 1000 {
-        return String(format: "%.1fkm", kilometers)
-    }
-    return "\(Int(meters.rounded()))m"
 }
 
 private func distanceValues(from rawPoints: [BaselineMetricChartPoint]) -> [Double] {

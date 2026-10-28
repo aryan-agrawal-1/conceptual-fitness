@@ -77,6 +77,7 @@ struct AppShellView: View {
             .tag(AppTab.insights)
         }
         .tint(HealthTheme.color(for: .activity))
+        .environment(\.profileUnits, profileStore.profile?.unitSystem ?? .metric)
         .task { await profileStore.load() }
         .onChange(of: profileStore.revision) { _, _ in syncCoordinator.profileDidChange() }
         .task {
