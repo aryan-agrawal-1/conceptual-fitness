@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		010000000000000000000047 /* ProfileHealthEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000047 /* ProfileHealthEditors.swift */; };
+		010000000000000000000046 /* ProfileEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000046 /* ProfileEditors.swift */; };
+		010000000000000000000045 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000045 /* ProfileView.swift */; };
+		010000000000000000000044 /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000044 /* ProfileStore.swift */; };
+		010000000000000000000043 /* ProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000043 /* ProfileModels.swift */; };
 		010000000000000000000042 /* AccountDeletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000042 /* AccountDeletionView.swift */; };
         010000000000000000000041 /* AccountExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000041 /* AccountExportView.swift */; };
         010000000000000000000040 /* HistoricalBackfillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000040 /* HistoricalBackfillView.swift */; };
@@ -67,6 +72,11 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		020000000000000000000047 /* ProfileHealthEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHealthEditors.swift; sourceTree = "<group>"; };
+		020000000000000000000046 /* ProfileEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditors.swift; sourceTree = "<group>"; };
+		020000000000000000000045 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		020000000000000000000044 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
+		020000000000000000000043 /* ProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModels.swift; sourceTree = "<group>"; };
 		020000000000000000000042 /* AccountDeletionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionView.swift; sourceTree = "<group>"; };
         020000000000000000000041 /* AccountExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountExportView.swift; sourceTree = "<group>"; };
         020000000000000000000040 /* HistoricalBackfillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoricalBackfillView.swift; sourceTree = "<group>"; };
@@ -177,6 +187,11 @@
 				020000000000000000000041 /* AccountExportView.swift */,
 				020000000000000000000042 /* AccountDeletionView.swift */,
                 020000000000000000000040 /* HistoricalBackfillView.swift */,
+				020000000000000000000047 /* ProfileHealthEditors.swift */,
+				020000000000000000000046 /* ProfileEditors.swift */,
+				020000000000000000000045 /* ProfileView.swift */,
+				020000000000000000000044 /* ProfileStore.swift */,
+				020000000000000000000043 /* ProfileModels.swift */,
 				020000000000000000000016 /* Auth.swift */,
 				020000000000000000000017 /* OnboardingView.swift */,
 			);
@@ -357,6 +372,11 @@
 				010000000000000000000041 /* AccountExportView.swift in Sources */,
 				010000000000000000000042 /* AccountDeletionView.swift in Sources */,
 				010000000000000000000040 /* HistoricalBackfillView.swift in Sources */,
+				010000000000000000000047 /* ProfileHealthEditors.swift in Sources */,
+				010000000000000000000046 /* ProfileEditors.swift in Sources */,
+				010000000000000000000045 /* ProfileView.swift in Sources */,
+				010000000000000000000044 /* ProfileStore.swift in Sources */,
+				010000000000000000000043 /* ProfileModels.swift in Sources */,
 				010000000000000000000004 /* PlaceholderViews.swift in Sources */,
 				010000000000000000000005 /* GlassPanel.swift in Sources */,
 				010000000000000000000025 /* CircularProgressMetric.swift in Sources */,

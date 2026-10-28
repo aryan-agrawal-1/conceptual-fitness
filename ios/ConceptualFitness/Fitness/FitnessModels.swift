@@ -409,7 +409,9 @@ struct LocalWorkoutExercise: Codable, Identifiable, Equatable {
         sets = (0..<count).map { _ in
             LocalWorkoutSet(
                 reps: routineExercise.targetRepsMin.map(String.init) ?? "",
-                load: routineExercise.targetLoadValue.map(FitnessNumber.string) ?? "",
+                load: routineExercise.targetLoadValue.map {
+                    String((routineExercise.targetLoadUnit == "lb" || routineExercise.targetLoadUnit == "lbs") ? $0 * 0.45359237 : $0)
+                } ?? "",
                 durationSeconds: routineExercise.targetDurationSeconds.map(String.init) ?? "",
                 distanceMeters: routineExercise.targetDistanceMeters.map(FitnessNumber.string) ?? "",
                 rir: routineExercise.targetRIR.map(FitnessNumber.string) ?? ""
@@ -473,8 +475,10 @@ struct LocalWorkoutSet: Codable, Identifiable, Equatable {
         id = UUID()
         setType = remote.setType
         reps = remote.reps.map(String.init) ?? ""
-        load = (remote.loadPerImplement ?? remote.assistanceKG ?? remote.loadValue)
-            .map(FitnessNumber.string) ?? ""
+        let storedLoad = (remote.loadPerImplement ?? remote.loadValue).map {
+            (remote.loadUnit == "lb" || remote.loadUnit == "lbs") ? $0 * 0.45359237 : $0
+        }
+        load = (remote.assistanceKG ?? remote.addedLoadKG ?? storedLoad).map { String($0) } ?? ""
         durationSeconds = remote.durationSeconds.map(String.init) ?? ""
         distanceMeters = remote.distanceMeters.map(FitnessNumber.string) ?? ""
         rir = remote.rir.map(FitnessNumber.string) ?? ""

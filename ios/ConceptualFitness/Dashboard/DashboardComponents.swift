@@ -249,6 +249,7 @@ enum WorkoutSummaryRowPresentation {
 }
 
 struct WorkoutSummaryRow: View {
+    @Environment(\.profileUnits) private var units
     let workout: WorkoutSummary
     var presentation: WorkoutSummaryRowPresentation = .compact
 
@@ -264,7 +265,7 @@ struct WorkoutSummaryRow: View {
                 Text(workoutPresentation.displayName)
                     .font(titleFont)
                     .lineLimit(1)
-                Text(workout.summarySubtitle)
+                Text(workout.summarySubtitle(units: units))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -449,23 +450,23 @@ struct MetricCardItem: Identifiable {
     let chartKind: MiniMetricChartKind
     let previewPoints: [MiniMetricChartPoint]
 
-    static func items(from data: DashboardData) -> [MetricCardItem] {
+    static func items(from data: DashboardData, units: ProfileUnits = .metric) -> [MetricCardItem] {
         let metrics = data.snapshot.metrics
         var items: [MetricCardItem] = [
-            item("heart_rate_variability", value(for: "heart_rate_variability", in: data, fallback: metrics?.heartRateVariability), quality(for: "heart_rate_variability", in: data, fallback: metrics?.dataQuality), data: data),
-            item("resting_heart_rate", value(for: "resting_heart_rate", in: data, fallback: metrics?.restingHeartRate), quality(for: "resting_heart_rate", in: data, fallback: metrics?.dataQuality), data: data),
-            item("heart_rate", value(for: "heart_rate", in: data, fallback: nil), quality(for: "heart_rate", in: data, fallback: metrics?.dataQuality), data: data),
-            item("skin_temperature_variation", value(for: "skin_temperature_variation", in: data, fallback: nil), quality(for: "skin_temperature_variation", in: data, fallback: metrics?.dataQuality), data: data),
-            item("oxygen_saturation", value(for: "oxygen_saturation", in: data, fallback: metrics?.oxygenSaturation), quality(for: "oxygen_saturation", in: data, fallback: metrics?.dataQuality), data: data),
-            item("respiratory_rate", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality), data: data),
-            item("vo2_max", data.vo2Max?.current?.value ?? value(for: "vo2_max", in: data, fallback: nil), data.vo2Max?.dataQuality ?? quality(for: "vo2_max", in: data, fallback: nil), data: data)
+            item("heart_rate_variability", value(for: "heart_rate_variability", in: data, fallback: metrics?.heartRateVariability), quality(for: "heart_rate_variability", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("resting_heart_rate", value(for: "resting_heart_rate", in: data, fallback: metrics?.restingHeartRate), quality(for: "resting_heart_rate", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("heart_rate", value(for: "heart_rate", in: data, fallback: nil), quality(for: "heart_rate", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("skin_temperature_variation", value(for: "skin_temperature_variation", in: data, fallback: nil), quality(for: "skin_temperature_variation", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("oxygen_saturation", value(for: "oxygen_saturation", in: data, fallback: metrics?.oxygenSaturation), quality(for: "oxygen_saturation", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("respiratory_rate", value(for: "respiratory_rate", in: data, fallback: metrics?.respiratoryRate), quality(for: "respiratory_rate", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("vo2_max", data.vo2Max?.current?.value ?? value(for: "vo2_max", in: data, fallback: nil), data.vo2Max?.dataQuality ?? quality(for: "vo2_max", in: data, fallback: nil), data: data, units: units)
         ]
 
         items += [
-            item("sleep", value(for: "sleep", in: data, fallback: metrics?.sleepMinutes.map(Double.init)), quality(for: "sleep", in: data, fallback: metrics?.dataQuality), data: data),
-            item("steps", value(for: "steps", in: data, fallback: metrics?.steps.map(Double.init)), quality(for: "steps", in: data, fallback: metrics?.dataQuality), data: data),
-            item("total_calories", value(for: "total_calories", in: data, fallback: metrics?.totalCalories), quality(for: "total_calories", in: data, fallback: metrics?.dataQuality), data: data),
-            item("distance", distanceKilometers(from: data, fallbackMeters: metrics?.distanceMeters), quality(for: "distance", in: data, fallback: metrics?.dataQuality), data: data)
+            item("sleep", value(for: "sleep", in: data, fallback: metrics?.sleepMinutes.map(Double.init)), quality(for: "sleep", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("steps", value(for: "steps", in: data, fallback: metrics?.steps.map(Double.init)), quality(for: "steps", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("total_calories", value(for: "total_calories", in: data, fallback: metrics?.totalCalories), quality(for: "total_calories", in: data, fallback: metrics?.dataQuality), data: data, units: units),
+            item("distance", distanceKilometers(from: data, fallbackMeters: metrics?.distanceMeters), quality(for: "distance", in: data, fallback: metrics?.dataQuality), data: data, units: units)
         ]
 
         return items
@@ -488,7 +489,8 @@ struct MetricCardItem: Identifiable {
         _ key: String,
         _ value: Double?,
         _ quality: String?,
-        data: DashboardData
+        data: DashboardData,
+        units: ProfileUnits
     ) -> MetricCardItem {
         let presentation = HealthMetricPresentation.presentation(for: key)
         let unit = presentation.unit
@@ -497,7 +499,9 @@ struct MetricCardItem: Identifiable {
             if key == "steps" {
                 valueText = "\(Int(value.rounded()))"
             } else if key == "distance" {
-                valueText = String(format: "%.1f %@", value, unit)
+                valueText = units.distanceText(value * 1000)
+            } else if key == "skin_temperature_variation" {
+                valueText = "\(units.temperatureVariationText(value) ?? "--") \(units.temperatureSymbol)"
             } else if unit.isEmpty {
                 valueText = value.clean
             } else {
@@ -581,9 +585,9 @@ extension WorkoutSummary {
         presentation.activityAccent
     }
 
-    var summarySubtitle: String {
+    func summarySubtitle(units: ProfileUnits) -> String {
         let start = DashboardFormatters.parseBackendDateTime(startTime).map(DashboardFormatters.workoutTime.string) ?? date ?? "Recent"
-        let distance = distanceMeters.map { String(format: "%.1f km", $0 / 1000) }
+        let distance = distanceMeters.map { units.distanceText($0) }
         return [start, distance, summaryDurationText].compactMap(\.self).joined(separator: "  ")
     }
 

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DashboardView: View {
+    @Environment(\.profileUnits) private var units
     let client: DashboardAPIClient
     @ObservedObject var syncCoordinator: AppSyncCoordinator
     let weatherProvider: WeatherProvider
@@ -8,6 +9,7 @@ struct DashboardView: View {
     let insightProvider: DailyInsightProvider
     let firstName: String?
     let weatherEnabled: Bool
+    let profileStore: ProfileStore?
     private let loadsLiveData: Bool
     private let greetingOverride: String?
 
@@ -30,6 +32,7 @@ struct DashboardView: View {
         insightProvider: DailyInsightProvider,
         firstName: String?,
         weatherEnabled: Bool,
+        profileStore: ProfileStore? = nil,
         previewLoadState: DashboardLoadState? = nil,
         previewWeather: WeatherData = .fallback,
         greetingOverride: String? = nil
@@ -41,6 +44,7 @@ struct DashboardView: View {
         self.insightProvider = insightProvider
         self.firstName = firstName
         self.weatherEnabled = weatherEnabled
+        self.profileStore = profileStore
         self.loadsLiveData = previewLoadState == nil
         self.greetingOverride = greetingOverride
         _loadState = State(initialValue: previewLoadState ?? .loading)
@@ -79,11 +83,12 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink {
-                    ImportProfileView(
-                        coordinator: syncCoordinator,
-                        authStore: client.authStore,
-                        userID: client.userID
-                    )
+                    if let profileStore, let authStore = client.authStore, let userID = client.userID {
+                        ProfileView(store: profileStore, coordinator: syncCoordinator, authStore: authStore, userID: userID)
+                    } else {
+                        HistoricalBackfillView(coordinator: syncCoordinator, expanded: true)
+                            .padding().navigationTitle("Profile")
+                    }
                 } label: { Image(systemName: "person.crop.circle") }
                 .accessibilityLabel("Profile")
             }
@@ -131,18 +136,21 @@ struct DashboardView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
             guard loadsLiveData else { return }
-            if weatherEnabled {
-                locationProvider.requestLocation()
-            }
             await reload()
-            if weatherEnabled {
-                await reloadWeather()
-            }
         }
         .task(id: locationProvider.revision) {
             if loadsLiveData && weatherEnabled {
                 await reloadWeather()
             }
+        }
+        .task(id: weatherEnabled) {
+            guard loadsLiveData else { return }
+            guard weatherEnabled else {
+                locationProvider.stopLocationRequests()
+                return
+            }
+            locationProvider.requestLocation()
+            await reloadWeather()
         }
         .onChange(of: syncCoordinator.refreshToken) { _, _ in
             guard loadsLiveData, !isPullRefreshing else { return }
@@ -307,7 +315,7 @@ struct DashboardView: View {
     private func dashboardSections(data: DashboardData) -> some View {
         VStack(spacing: 28) {
             RecentWorkoutsSection(workouts: data.workouts)
-            HealthMetricsSection(items: MetricCardItem.items(from: data))
+            HealthMetricsSection(items: MetricCardItem.items(from: data, units: units))
         }
         .padding(.horizontal, 20)
     }
@@ -341,8 +349,8 @@ struct DashboardView: View {
 
     private var usesWeatherBackground: Bool {
         weatherEnabled
-            && locationProvider.authorizationStatus != .denied
-            && locationProvider.authorizationStatus != .restricted
+            && (!loadsLiveData || locationProvider.authorizationStatus == .authorizedWhenInUse
+                || locationProvider.authorizationStatus == .authorizedAlways)
     }
 
     @MainActor

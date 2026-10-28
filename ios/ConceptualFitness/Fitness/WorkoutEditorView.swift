@@ -221,6 +221,7 @@ struct WorkoutEditorView: View {
 }
 
 private struct ExerciseLogCard: View {
+    @Environment(\.profileUnits) private var units
     let exercise: LocalWorkoutExercise
     @ObservedObject var store: FitnessStore
     let showsRestControls: Bool
@@ -313,10 +314,10 @@ private struct ExerciseLogCard: View {
             case "duration", "duration_load":
                 Text("SECONDS").frame(maxWidth: .infinity)
                 if exercise.measurementSchema == "duration_load" {
-                    Text("KG").frame(maxWidth: .infinity)
+                    Text(units.massSymbol.uppercased()).frame(maxWidth: .infinity)
                 }
             case "carry", "cardio":
-                Text("METRES").frame(maxWidth: .infinity)
+                Text(units.shortDistanceSymbol.uppercased()).frame(maxWidth: .infinity)
                 Text("SECONDS").frame(maxWidth: .infinity)
             default:
                 Text(exercise.recordsPerSide ? "REPS/SIDE" : "REPS").frame(maxWidth: .infinity)
@@ -331,21 +332,21 @@ private struct ExerciseLogCard: View {
     private var schemaDescription: String {
         let reps = exercise.recordsPerSide ? "Reps per side" : "Reps"
         switch exercise.measurementSchema {
-        case "assisted_reps": return "\(reps) · assistance in kg"
+        case "assisted_reps": return "\(reps) · assistance in \(units.massSymbol)"
         case "bodyweight_reps": return "\(reps) · optional added load"
         case "duration": return "Timed hold"
         case "duration_load": return "Time · load"
         case "carry": return "Distance · time"
         case "cardio": return "Distance · time"
         default:
-            return exercise.recordsPerImplement ? "\(reps) · kg per dumbbell" : "\(reps) · total load"
+            return exercise.recordsPerImplement ? "\(reps) · \(units.massSymbol) per dumbbell" : "\(reps) · total load"
         }
     }
 
     private var loadHeader: String {
-        if exercise.measurementSchema == "assisted_reps" { return "ASSIST KG" }
-        if exercise.recordsPerImplement { return "KG EACH" }
-        return "KG"
+        if exercise.measurementSchema == "assisted_reps" { return "ASSIST \(units.massSymbol.uppercased())" }
+        if exercise.recordsPerImplement { return "\(units.massSymbol.uppercased()) EACH" }
+        return units.massSymbol.uppercased()
     }
 
     private func setBinding<Value>(
@@ -395,6 +396,7 @@ private struct ExerciseLogCard: View {
 }
 
 private struct SetInputRow: View {
+    @Environment(\.profileUnits) private var units
     let number: Int
     let schema: String
     let perImplement: Bool
@@ -425,13 +427,13 @@ private struct SetInputRow: View {
             switch schema {
             case "duration", "duration_load":
                 numericField("Sec", text: $duration)
-                if schema == "duration_load" { numericField("kg", text: $load) }
+                if schema == "duration_load" { WorkoutMeasurementField(title: units.massSymbol, canonical: $load, units: units, isDistance: false, setNumber: number) }
             case "carry", "cardio":
-                numericField("m", text: $distance)
+                WorkoutMeasurementField(title: units.shortDistanceSymbol, canonical: $distance, units: units, isDistance: true, setNumber: number)
                 numericField("sec", text: $duration)
             default:
                 numericField("Reps", text: $reps)
-                numericField(perImplement ? "Each" : "kg", text: $load, decimal: true)
+                WorkoutMeasurementField(title: perImplement ? "\(units.massSymbol) each" : units.massSymbol, canonical: $load, units: units, isDistance: false, setNumber: number)
             }
 
             Button {
@@ -474,6 +476,44 @@ private struct SetInputRow: View {
             .frame(maxWidth: width == nil ? .infinity : width, minHeight: 36)
             .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
             .accessibilityLabel(prompt)
+    }
+}
+
+private struct WorkoutMeasurementField: View {
+    let title: String
+    @Binding var canonical: String
+    let units: ProfileUnits
+    let isDistance: Bool
+    let setNumber: Int
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(title, text: $text)
+            .keyboardType(.decimalPad)
+            .focused($isFocused)
+            .multilineTextAlignment(.center)
+            .font(.body.monospacedDigit())
+            .padding(.horizontal, 5)
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            .accessibilityLabel("Set \(setNumber) \(isDistance ? "distance" : "load"), \(title)")
+            .onAppear(perform: displayCanonical)
+            .onChange(of: units) { _, _ in displayCanonical() }
+            .onChange(of: canonical) { _, _ in if !isFocused { displayCanonical() } }
+            .onChange(of: text) { _, value in
+                guard isFocused else { return }
+                if let number = ProfileInput.decimal(value) {
+                    canonical = String(isDistance ? units.meters(number) : units.kilograms(number))
+                } else {
+                    canonical = value
+                }
+            }
+    }
+
+    private func displayCanonical() {
+        guard let value = Double(canonical) else { text = canonical; return }
+        text = ProfileInput.number(isDistance ? units.shortDistance(value) : units.mass(value))
     }
 }
 

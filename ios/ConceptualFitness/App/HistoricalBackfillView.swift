@@ -96,77 +96,6 @@ struct HistoricalBackfillView: View {
     }
 }
 
-struct ImportProfileView: View {
-    @ObservedObject var coordinator: AppSyncCoordinator
-    var authStore: AuthStore? = nil
-    var userID: String? = nil
-
-    var body: some View {
-        ZStack {
-            AppBackground()
-            ScrollView {
-                VStack(spacing: 16) {
-                    HistoricalBackfillView(coordinator: coordinator, expanded: true)
-                    if let authStore, let userID {
-                        NavigationLink {
-                            AccountExportView(authStore: authStore, userID: userID)
-                        } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.title3)
-                                    .foregroundStyle(HealthTheme.color(for: .activity))
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Export your data").font(.headline)
-                                    Text("Choose categories and create a portable JSON archive")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(18)
-                            .contentShape(Rectangle())
-                            .panelSurface(cornerRadius: 20)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Opens account data export options")
-
-                        NavigationLink {
-                            AccountDeletionView(authStore: authStore, userID: userID)
-                        } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: "trash")
-                                    .font(.title3)
-                                    .foregroundStyle(.red)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Delete account").font(.headline)
-                                    Text("Schedule permanent deletion with a 14-day recovery period")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(18)
-                            .contentShape(Rectangle())
-                            .panelSurface(cornerRadius: 20)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Opens account deletion and recovery information")
-                    }
-                }
-                .padding(20)
-            }
-        }
-        .navigationTitle("Profile")
-        .refreshable { await coordinator.checkHistory() }
-    }
-}
-
 #if DEBUG
 enum HistoryPreviewState: String {
     case loading, waiting, running, failed, complete, empty, offline
@@ -181,7 +110,7 @@ enum HistoryPreviewState: String {
         let coordinator = AppSyncCoordinator.historyPreview(self)
         return NavigationStack {
             if ProcessInfo.processInfo.arguments.contains("-HistoryProfile") {
-                ImportProfileView(coordinator: coordinator)
+                HistoricalBackfillView(coordinator: coordinator, expanded: true).padding().navigationTitle("Profile")
             } else {
                 DashboardView(
                     client: DashboardAPIClient(), syncCoordinator: coordinator,
