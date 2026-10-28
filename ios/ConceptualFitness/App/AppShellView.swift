@@ -13,6 +13,7 @@ struct AppShellView: View {
     @State private var fitnessPath: [AppRoute] = []
     @State private var insightsPath: [AppRoute] = []
     @StateObject private var syncCoordinator: AppSyncCoordinator
+    @StateObject private var profileStore: ProfileStore
 
     private let weatherProvider = WeatherProvider()
     private let locationProvider = LocationProvider()
@@ -21,6 +22,7 @@ struct AppShellView: View {
     init(authStore: AuthStore, session: AuthSession) {
         self.authStore = authStore
         self.session = session
+        _profileStore = StateObject(wrappedValue: ProfileStore(authStore: authStore))
         #if DEBUG
         _selectedTab = State(
             initialValue: ProcessInfo.processInfo.arguments.contains("-OpenFitnessTab")
@@ -48,7 +50,8 @@ struct AppShellView: View {
                     locationProvider: locationProvider,
                     insightProvider: insightProvider,
                     firstName: session.user.firstName,
-                    weatherEnabled: session.profile.weatherEnabled
+                    weatherEnabled: profileStore.profile?.weatherEnabled ?? session.profile.weatherEnabled,
+                    profileStore: profileStore
                 )
                 .withAppDestinations(client: appClient)
             }
@@ -74,6 +77,8 @@ struct AppShellView: View {
             .tag(AppTab.insights)
         }
         .tint(HealthTheme.color(for: .activity))
+        .task { await profileStore.load() }
+        .onChange(of: profileStore.revision) { _, _ in syncCoordinator.profileDidChange() }
         .task {
             await syncCoordinator.syncIfNeeded()
         }
@@ -316,6 +321,8 @@ final class AppSyncCoordinator: ObservableObject {
     func retry() async {
         await syncIfNeeded()
     }
+
+    func profileDidChange() { refreshToken += 1 }
 
     private func pollUntilFinished() async {
         for _ in 0..<maxPollAttempts {

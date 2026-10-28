@@ -8,6 +8,7 @@ struct DashboardView: View {
     let insightProvider: DailyInsightProvider
     let firstName: String?
     let weatherEnabled: Bool
+    let profileStore: ProfileStore?
     private let loadsLiveData: Bool
     private let greetingOverride: String?
 
@@ -30,6 +31,7 @@ struct DashboardView: View {
         insightProvider: DailyInsightProvider,
         firstName: String?,
         weatherEnabled: Bool,
+        profileStore: ProfileStore? = nil,
         previewLoadState: DashboardLoadState? = nil,
         previewWeather: WeatherData = .fallback,
         greetingOverride: String? = nil
@@ -41,6 +43,7 @@ struct DashboardView: View {
         self.insightProvider = insightProvider
         self.firstName = firstName
         self.weatherEnabled = weatherEnabled
+        self.profileStore = profileStore
         self.loadsLiveData = previewLoadState == nil
         self.greetingOverride = greetingOverride
         _loadState = State(initialValue: previewLoadState ?? .loading)
@@ -79,11 +82,12 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink {
-                    ImportProfileView(
-                        coordinator: syncCoordinator,
-                        authStore: client.authStore,
-                        userID: client.userID
-                    )
+                    if let profileStore, let authStore = client.authStore, let userID = client.userID {
+                        ProfileView(store: profileStore, coordinator: syncCoordinator, authStore: authStore, userID: userID)
+                    } else {
+                        HistoricalBackfillView(coordinator: syncCoordinator, expanded: true)
+                            .padding().navigationTitle("Profile")
+                    }
                 } label: { Image(systemName: "person.crop.circle") }
                 .accessibilityLabel("Profile")
             }
