@@ -139,7 +139,7 @@ enum SensitiveActionError: LocalizedError {
     }
 }
 
-private struct HTTPResponseError: Error {
+struct HTTPResponseError: Error {
     let statusCode: Int
     let code: String?
 }
