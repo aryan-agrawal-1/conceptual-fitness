@@ -10,6 +10,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private let manager = CLLocationManager()
     private let geocoder = CLGeocoder()
+    private var wantsLocation = false
 
     override init() {
         authorizationStatus = manager.authorizationStatus
@@ -19,6 +20,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
     }
 
     func requestLocation() {
+        wantsLocation = true
         switch manager.authorizationStatus {
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
@@ -35,10 +37,17 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
         authorizationStatus = manager.authorizationStatus
     }
 
+    func stopLocationRequests() {
+        wantsLocation = false
+        geocoder.cancelGeocode()
+        location = nil
+        locationName = nil
+    }
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             authorizationStatus = manager.authorizationStatus
-            if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
+            if wantsLocation && (authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways) {
                 manager.requestLocation()
             }
         }
@@ -47,6 +56,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let latest = locations.last else { return }
         Task { @MainActor in
+            guard wantsLocation else { return }
             location = latest
             revision += 1
             await reverseGeocode(latest)

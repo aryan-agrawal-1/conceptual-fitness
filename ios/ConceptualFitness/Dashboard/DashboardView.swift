@@ -136,18 +136,21 @@ struct DashboardView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .task {
             guard loadsLiveData else { return }
-            if weatherEnabled {
-                locationProvider.requestLocation()
-            }
             await reload()
-            if weatherEnabled {
-                await reloadWeather()
-            }
         }
         .task(id: locationProvider.revision) {
             if loadsLiveData && weatherEnabled {
                 await reloadWeather()
             }
+        }
+        .task(id: weatherEnabled) {
+            guard loadsLiveData else { return }
+            guard weatherEnabled else {
+                locationProvider.stopLocationRequests()
+                return
+            }
+            locationProvider.requestLocation()
+            await reloadWeather()
         }
         .onChange(of: syncCoordinator.refreshToken) { _, _ in
             guard loadsLiveData, !isPullRefreshing else { return }
@@ -346,8 +349,8 @@ struct DashboardView: View {
 
     private var usesWeatherBackground: Bool {
         weatherEnabled
-            && locationProvider.authorizationStatus != .denied
-            && locationProvider.authorizationStatus != .restricted
+            && (!loadsLiveData || locationProvider.authorizationStatus == .authorizedWhenInUse
+                || locationProvider.authorizationStatus == .authorizedAlways)
     }
 
     @MainActor
