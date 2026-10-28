@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		010000000000000000000047 /* ProfileHealthEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000047 /* ProfileHealthEditors.swift */; };
+		010000000000000000000046 /* ProfileEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000046 /* ProfileEditors.swift */; };
 		010000000000000000000044 /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000044 /* ProfileStore.swift */; };
 		010000000000000000000043 /* ProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000043 /* ProfileModels.swift */; };
 		010000000000000000000042 /* AccountDeletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000042 /* AccountDeletionView.swift */; };
@@ -69,6 +71,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		020000000000000000000047 /* ProfileHealthEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHealthEditors.swift; sourceTree = "<group>"; };
+		020000000000000000000046 /* ProfileEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditors.swift; sourceTree = "<group>"; };
 		020000000000000000000044 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
 		020000000000000000000043 /* ProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModels.swift; sourceTree = "<group>"; };
 		020000000000000000000042 /* AccountDeletionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionView.swift; sourceTree = "<group>"; };
@@ -181,6 +185,8 @@
 				020000000000000000000041 /* AccountExportView.swift */,
 				020000000000000000000042 /* AccountDeletionView.swift */,
                 020000000000000000000040 /* HistoricalBackfillView.swift */,
+				020000000000000000000047 /* ProfileHealthEditors.swift */,
+				020000000000000000000046 /* ProfileEditors.swift */,
 				020000000000000000000044 /* ProfileStore.swift */,
 				020000000000000000000043 /* ProfileModels.swift */,
 				020000000000000000000016 /* Auth.swift */,
@@ -363,6 +369,8 @@
 				010000000000000000000041 /* AccountExportView.swift in Sources */,
 				010000000000000000000042 /* AccountDeletionView.swift in Sources */,
 				010000000000000000000040 /* HistoricalBackfillView.swift in Sources */,
+				010000000000000000000047 /* ProfileHealthEditors.swift in Sources */,
+				010000000000000000000046 /* ProfileEditors.swift in Sources */,
 				010000000000000000000044 /* ProfileStore.swift in Sources */,
 				010000000000000000000043 /* ProfileModels.swift in Sources */,
 				010000000000000000000004 /* PlaceholderViews.swift in Sources */,

@@ -31,6 +31,10 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
         }
     }
 
+    func refreshAuthorizationStatus() {
+        authorizationStatus = manager.authorizationStatus
+    }
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             authorizationStatus = manager.authorizationStatus
