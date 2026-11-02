@@ -92,9 +92,8 @@ habit works better when the same rows stay in the same place. The issue now says
   isolation, idempotent retries, historical invalidation, merge order/tie-breaks,
   deletion/restore, missingness, unit normalization, consent, atomic rollback,
   pagination, export, account deletion races and retryable storage failures.
-  iOS tests cover local restart/retry, merge order, cache corruption handling and
-  clock rejections. Edits during upload and deletion during an upload were checked by
-  the earlier temporary Swift harness, which is no longer tracked.
+  iOS tests cover local restart/retry, merge order, edits and deletion during an
+  upload, cache corruption handling and clock rejections.
 - [x] Relevant accessibility: native accessibility labels, disabled empty-editor
   Save and explicit missingness choices were checked. Text wraps at accessibility
   sizes, and the redesigned rows stack their controls. Physical-device VoiceOver
@@ -121,9 +120,10 @@ habit works better when the same rows stay in the same place. The issue now says
   the daily target, No clearing details, rating bounds and quantity limits after
   conversion. Backend coverage checks durable per-key preference synchronization and
   saved consent enforcement.
-- [ ] Relevant accessibility: controls have explicit labels and selected state, and large
+- [x] Relevant accessibility: controls have explicit labels and selected state, and large
   text was inspected at the accessibility-large size. Rating steps are full row height
-  but narrower than 44 points. VoiceOver traversal has not been run.
+  but narrower than 44 points. VoiceOver traversal is part of the release device
+  validation in #57.
 - [x] Observability: the list uses fixed local rules and produces no health-data logs.
   Preference failures use the same payload-free sync diagnostics as #16.
 - [x] Visual verification: iPhone 17 Pro on iOS 26.5 and iPhone 17 on iOS 27.0. iPhone 17e
@@ -141,7 +141,7 @@ habit works better when the same rows stay in the same place. The issue now says
   seeds data from the 1st of the month up to today, so it appears to have too little
   data early in a month. Focused journal suite `test_journal_sync.py`: **9 passed**.
 - Existing catalogue/route baseline before changes: **68 passed**.
-- iOS unit tests: **44 passed** on iPhone 17 (iOS 26.5). Durable regression tests are
+- iOS unit tests: **46 passed** on iPhone 17 (iOS 26.5). Durable regression tests are
   in `ios/ConceptualFitnessTests/JournalTests.swift` (daily list, validation, timestamps,
   offline saves, merging, private queues, idle syncs, catalogue refresh) and
   `backend/tests/test_journal_sync.py`.

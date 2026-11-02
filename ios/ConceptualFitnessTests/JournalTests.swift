@@ -307,6 +307,7 @@ final class FakeJournalServer {
     var catalogueError: Error?
     var pullError: Error?
     var extraPageFields: [String: Any] = [:]
+    var duringUpload: (() -> Void)?
 
     var paths: [String] { requests.compactMap { $0.url?.path } }
 
@@ -327,6 +328,9 @@ final class FakeJournalServer {
             return try JSONSerialization.data(withJSONObject: page)
         }
         if let syncError { throw syncError }
+        let change = duringUpload
+        duringUpload = nil
+        change?()
         // Echoes every mutation as accepted, as the server does for winning edits.
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
         let entries = (body["entries"] as? [[String: Any]] ?? []).map { $0.merging(["kind": "entry"]) { $1 } }
@@ -591,6 +595,33 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertEqual(store.entry("worked_late", day: "2026-11-02")?.response?.answer?.value, .boolean(true))
         XCTAssertTrue(store.delete("worked_late", day: "2026-11-02"))
         XCTAssertNil(store.entry("worked_late", day: "2026-11-02"))
+    }
+
+    private var uploads: Int { server.paths.filter { $0.hasSuffix("/journal/sync") }.count }
+
+    func testEditDuringUploadIsKeptAndSent() async {
+        let store = makeStore()
+        await store.synchronize()
+        XCTAssertTrue(store.save(answer(value: true)))
+        server.requests = []
+        server.duringUpload = { XCTAssertTrue(store.save(self.answer(value: false))) }
+        await store.synchronize()
+        XCTAssertEqual(store.entry("worked_late", day: "2026-11-02")?.response?.answer?.value, .boolean(false))
+        XCTAssertEqual(store.pendingCount, 0)
+        XCTAssertEqual(uploads, 2)
+    }
+
+    func testDeleteDuringUploadIsKeptAndSent() async {
+        let store = makeStore()
+        await store.synchronize()
+        XCTAssertTrue(store.save(answer()))
+        server.requests = []
+        server.duringUpload = { XCTAssertTrue(store.delete("worked_late", day: "2026-11-02")) }
+        await store.synchronize()
+        XCTAssertNil(store.entry("worked_late", day: "2026-11-02"))
+        XCTAssertEqual(store.snapshot.entries.filter(\.deleted).count, 1)
+        XCTAssertEqual(store.pendingCount, 0)
+        XCTAssertEqual(uploads, 2)
     }
 
     func testCorruptFileIsPreservedAndBlocksWrites() async throws {
