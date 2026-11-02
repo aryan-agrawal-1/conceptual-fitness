@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		01000000000000000000004C /* JournalEntryEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004C /* JournalEntryEditor.swift */; };
+		01000000000000000000004B /* JournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004B /* JournalView.swift */; };
+		01000000000000000000004A /* JournalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004A /* JournalStore.swift */; };
+		010000000000000000000049 /* JournalDailyList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000049 /* JournalDailyList.swift */; };
+		010000000000000000000048 /* JournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000048 /* JournalModels.swift */; };
 		010000000000000000000047 /* ProfileHealthEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000047 /* ProfileHealthEditors.swift */; };
 		010000000000000000000046 /* ProfileEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000046 /* ProfileEditors.swift */; };
 		010000000000000000000045 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000045 /* ProfileView.swift */; };
@@ -69,9 +74,16 @@
 		010000000000000000000034 /* bodyPaths.json in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000037 /* bodyPaths.json */; };
 		010000000000000000000035 /* AnatomeMuscleMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000038 /* AnatomeMuscleMapView.swift */; };
 		010000000000000000000036 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000039 /* WebKit.framework */; };
+		01000000000000000000F001 /* JournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000F001 /* JournalTests.swift */; };
+		01000000000000000000004D /* JournalLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004D /* JournalLedgerRow.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		02000000000000000000004C /* JournalEntryEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalEntryEditor.swift; sourceTree = "<group>"; };
+		02000000000000000000004B /* JournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalView.swift; sourceTree = "<group>"; };
+		02000000000000000000004A /* JournalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalStore.swift; sourceTree = "<group>"; };
+		020000000000000000000049 /* JournalDailyList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalDailyList.swift; sourceTree = "<group>"; };
+		020000000000000000000048 /* JournalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalModels.swift; sourceTree = "<group>"; };
 		020000000000000000000047 /* ProfileHealthEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHealthEditors.swift; sourceTree = "<group>"; };
 		020000000000000000000046 /* ProfileEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditors.swift; sourceTree = "<group>"; };
 		020000000000000000000045 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
@@ -137,6 +149,9 @@
 		020000000000000000000037 /* bodyPaths.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = bodyPaths.json; sourceTree = "<group>"; };
 		020000000000000000000038 /* AnatomeMuscleMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnatomeMuscleMapView.swift; sourceTree = "<group>"; };
 		020000000000000000000039 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		02000000000000000000F001 /* JournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalTests.swift; sourceTree = "<group>"; };
+		02000000000000000000F002 /* ConceptualFitnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConceptualFitnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		02000000000000000000004D /* JournalLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalLedgerRow.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -151,6 +166,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		03000000000000000000F001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -158,6 +180,7 @@
 			isa = PBXGroup;
 			children = (
 				040000000000000000000002 /* ConceptualFitness */,
+				04000000000000000000F001 /* ConceptualFitnessTests */,
 				040000000000000000000008 /* Frameworks */,
 				040000000000000000000009 /* Products */,
 			);
@@ -166,6 +189,12 @@
 		040000000000000000000002 /* ConceptualFitness */ = {
 			isa = PBXGroup;
 			children = (
+				020000000000000000000048 /* JournalModels.swift */,
+				020000000000000000000049 /* JournalDailyList.swift */,
+				02000000000000000000004A /* JournalStore.swift */,
+				02000000000000000000004B /* JournalView.swift */,
+				02000000000000000000004C /* JournalEntryEditor.swift */,
+				02000000000000000000004D /* JournalLedgerRow.swift */,
 				020000000000000000000001 /* ConceptualFitnessApp.swift */,
 				020000000000000000000012 /* Info.plist */,
 				020000000000000000000013 /* ConceptualFitness.entitlements */,
@@ -278,6 +307,7 @@
 			isa = PBXGroup;
 			children = (
 				020000000000000000000014 /* ConceptualFitness.app */,
+				02000000000000000000F002 /* ConceptualFitnessTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -295,6 +325,14 @@
 				020000000000000000000037 /* bodyPaths.json */,
 			);
 			path = Fitness;
+			sourceTree = "<group>";
+		};
+		04000000000000000000F001 /* ConceptualFitnessTests */ = {
+			isa = PBXGroup;
+			children = (
+				02000000000000000000F001 /* JournalTests.swift */,
+			);
+			path = ConceptualFitnessTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -317,6 +355,24 @@
 			productReference = 020000000000000000000014 /* ConceptualFitness.app */;
 			productType = "com.apple.product-type.application";
 		};
+		05000000000000000000F001 /* ConceptualFitnessTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 09000000000000000000F003 /* Build configuration list for PBXNativeTarget "ConceptualFitnessTests" */;
+			buildPhases = (
+				07000000000000000000F001 /* Sources */,
+				03000000000000000000F001 /* Frameworks */,
+				08000000000000000000F001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0A000000000000000000F001 /* PBXTargetDependency */,
+			);
+			name = ConceptualFitnessTests;
+			productName = ConceptualFitnessTests;
+			productReference = 02000000000000000000F002 /* ConceptualFitnessTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -329,6 +385,10 @@
 				TargetAttributes = {
 					050000000000000000000001 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					05000000000000000000F001 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 050000000000000000000001;
 					};
 				};
 			};
@@ -346,6 +406,7 @@
 			projectRoot = "";
 			targets = (
 				050000000000000000000001 /* ConceptualFitness */,
+				05000000000000000000F001 /* ConceptualFitnessTests */,
 			);
 		};
 /* End PBXProject section */
@@ -359,6 +420,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		08000000000000000000F001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -366,6 +434,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				010000000000000000000048 /* JournalModels.swift in Sources */,
+				010000000000000000000049 /* JournalDailyList.swift in Sources */,
+				01000000000000000000004A /* JournalStore.swift in Sources */,
+				01000000000000000000004B /* JournalView.swift in Sources */,
+				01000000000000000000004C /* JournalEntryEditor.swift in Sources */,
+				01000000000000000000004D /* JournalLedgerRow.swift in Sources */,
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,
@@ -426,7 +500,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		07000000000000000000F001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				01000000000000000000F001 /* JournalTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		0B000000000000000000F001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 060000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 050000000000000000000001;
+			remoteInfo = ConceptualFitness;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		0A000000000000000000F001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 050000000000000000000001 /* ConceptualFitness */;
+			targetProxy = 0B000000000000000000F001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		090000000000000000000004 /* Debug */ = {
@@ -604,6 +704,40 @@
 			};
 			name = Release;
 		};
+		09000000000000000000F006 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aryan.conceptualfitness.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ConceptualFitness.app/ConceptualFitness";
+			};
+			name = Debug;
+		};
+		09000000000000000000F007 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aryan.conceptualfitness.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ConceptualFitness.app/ConceptualFitness";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -621,6 +755,15 @@
 			buildConfigurations = (
 				090000000000000000000006 /* Debug */,
 				090000000000000000000007 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		09000000000000000000F003 /* Build configuration list for PBXNativeTarget "ConceptualFitnessTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				09000000000000000000F006 /* Debug */,
+				09000000000000000000F007 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

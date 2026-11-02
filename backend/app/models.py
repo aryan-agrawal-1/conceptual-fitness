@@ -81,6 +81,52 @@ class User(Base):
     )
 
 
+class JournalState(Base):
+    __tablename__ = "journal_states"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    analysis_revision: Mapped[int] = mapped_column(Integer, default=0)
+    analysis_dirty_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class JournalEntry(Base):
+    __tablename__ = "journal_entries"
+    __table_args__ = (
+        UniqueConstraint("user_id", "journal_date", "behaviour_id", name="uq_journal_entry_day_item"),
+        Index("ix_journal_entries_user_revision", "user_id", "revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    journal_date: Mapped[date] = mapped_column(Date)
+    behaviour_id: Mapped[str] = mapped_column(String(80))
+    edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    mutation_id: Mapped[str] = mapped_column(String(36))
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    normalized: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer)
+
+
+class JournalPreference(Base):
+    __tablename__ = "journal_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "key", name="uq_journal_preference_key"),
+        Index("ix_journal_preferences_user_revision", "user_id", "revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    key: Mapped[str] = mapped_column(String(100))
+    value: Mapped[bool] = mapped_column(Boolean)
+    edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    mutation_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer)
+
+
 class UserProfile(Base):
     __tablename__ = "user_profiles"
     __table_args__ = (UniqueConstraint("user_id", name="uq_user_profiles_user_id"),)

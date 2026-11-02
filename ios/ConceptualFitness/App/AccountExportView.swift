@@ -153,7 +153,8 @@ struct AccountExportView: View {
             archiveURL = try await AccountExportClient(authStore: authStore).create(
                 categories: selected,
                 grant: grant,
-                localInsights: insights
+                localInsights: insights,
+                localJournal: selected.contains(.journal) ? try JournalStore.pendingExport(userID: userID) : nil
             )
         } catch {
             guard let message = AuthStore.sensitiveActionMessage(
@@ -193,7 +194,8 @@ private struct AccountExportClient {
     func create(
         categories: Set<AccountExportCategory>,
         grant: String,
-        localInsights: [DailyInsightExport]
+        localInsights: [DailyInsightExport],
+        localJournal: JournalPush?
     ) async throws -> URL {
         guard let url = URL(string: "/account/export", relativeTo: authStore.baseURL)?.absoluteURL else {
             throw URLError(.badURL)
@@ -204,12 +206,14 @@ private struct AccountExportClient {
         request.setValue("application/zip", forHTTPHeaderField: "Accept")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
+        encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(
             ExportBody(
                 categories: categories.sorted { $0.rawValue < $1.rawValue },
                 sensitiveActionGrant: grant,
                 deviceID: authStore.sensitiveActionDeviceID,
-                localInsights: localInsights
+                localInsights: localInsights,
+                localJournal: localJournal
             )
         )
         let (downloadURL, _) = try await authStore.authenticatedDownload(for: request)
@@ -225,12 +229,14 @@ private struct AccountExportClient {
         let sensitiveActionGrant: String
         let deviceID: String
         let localInsights: [DailyInsightExport]
+        let localJournal: JournalPush?
 
         enum CodingKeys: String, CodingKey {
             case categories
             case sensitiveActionGrant = "sensitive_action_grant"
             case deviceID = "device_id"
             case localInsights = "local_insights"
+            case localJournal = "local_journal"
         }
     }
 
