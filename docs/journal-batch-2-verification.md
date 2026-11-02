@@ -52,9 +52,9 @@ presentation, reminders and AI reflection remain in their scheduled later issues
 
 ## #18: daily list acceptance criteria
 
-The issue asked for five ranked suggestions with daily rotation. After reviewing the
-design, the user replaced that with a fixed pinned list, because a daily habit works
-better when the same rows stay in the same place. The issue text still needs updating.
+The issue originally asked for five ranked suggestions with daily rotation. After
+reviewing the design, the user replaced that with a fixed pinned list, because a daily
+habit works better when the same rows stay in the same place. The issue now says so.
 
 - Five inputs are pinned by default: Mood, Perceived stress, Energy, Worked late and
   Screen use in bed. Any input can be pinned or unpinned. There is no hard limit and
