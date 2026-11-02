@@ -16,13 +16,13 @@ enum AuthState: Equatable {
     case failed(String)
 }
 
-enum GoogleHealthConnectionState: String, Decodable, Equatable {
+enum GoogleHealthConnectionState: String, Codable, Equatable {
     case connected
     case disconnected
     case errored
 }
 
-struct AuthSession: Decodable, Equatable {
+struct AuthSession: Codable, Equatable {
     let user: AuthUser
     let googleHealth: GoogleHealthStatus
     let profile: AuthProfileStatus
@@ -64,7 +64,7 @@ struct AuthMeResponse: Decodable {
     }
 }
 
-struct AuthUser: Decodable, Equatable {
+struct AuthUser: Codable, Equatable {
     let id: String
     let email: String?
     let firstName: String?
@@ -78,7 +78,7 @@ struct AuthUser: Decodable, Equatable {
     }
 }
 
-struct GoogleHealthStatus: Decodable, Equatable {
+struct GoogleHealthStatus: Codable, Equatable {
     let status: GoogleHealthConnectionState
     let connectedAt: String?
     let lastSyncAt: String?
@@ -92,7 +92,7 @@ struct GoogleHealthStatus: Decodable, Equatable {
     }
 }
 
-struct AuthProfileStatus: Decodable, Equatable {
+struct AuthProfileStatus: Codable, Equatable {
     let onboardingCompletedAt: String?
     let weatherEnabled: Bool
 
@@ -154,6 +154,7 @@ enum SensitiveActionPurpose: String {
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var state: AuthState = .checking
+    private(set) var localDataEpoch = 0
 
     let baseURL: URL
     var sensitiveActionDeviceID: String { keychain.deviceID }
@@ -196,9 +197,18 @@ final class AuthStore: ObservableObject {
             _ = try await refreshAccessToken()
             try await loadMe()
         } catch {
-            keychain.clearTokens()
-            accessToken = nil
-            state = .signedOut
+            let status = (error as? HTTPResponseError)?.statusCode
+            if status == 401 || status == 403 {
+                keychain.clearTokens()
+                accessToken = nil
+                state = .signedOut
+            } else if (error is URLError || (status ?? 0) >= 500),
+                      let cached = keychain.cachedSession(baseURL: baseURL),
+                      cached.profile.onboardingCompletedAt != nil {
+                state = .authenticated(cached)
+            } else {
+                state = .failed("Your session couldn’t be checked. Reconnect and reopen the app to retry. Your saved journal is preserved.")
+            }
         }
     }
 
@@ -337,7 +347,7 @@ final class AuthStore: ObservableObject {
             method: "PATCH",
             body: NameUpdateRequest(firstName: firstName, lastName: lastName)
         )
-        state = .authenticated(response.session)
+        setAuthenticated(response.session)
     }
 
     func sensitiveActionGrant(for purpose: SensitiveActionPurpose) async throws -> String {
@@ -465,6 +475,7 @@ final class AuthStore: ObservableObject {
     }
 
     private func clearLocalData(userID: String) {
+        localDataEpoch += 1
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
             where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history") {
@@ -475,6 +486,10 @@ final class AuthStore: ObservableObject {
                 .appendingPathComponent("FitnessDrafts", isDirectory: true)
                 .appendingPathComponent("\(userID).json")
             try? FileManager.default.removeItem(at: draft)
+            let journal = applicationSupport
+                .appendingPathComponent("Journal", isDirectory: true)
+                .appendingPathComponent("\(userID).json")
+            try? FileManager.default.removeItem(at: journal)
         }
         if let temporaryItems = try? FileManager.default.contentsOfDirectory(
             at: FileManager.default.temporaryDirectory,
@@ -532,8 +547,13 @@ final class AuthStore: ObservableObject {
     @discardableResult
     private func loadMe() async throws -> AuthSession {
         let me: AuthMeResponse = try await authenticatedRequest(path: "/auth/me")
-        state = .authenticated(me.session)
+        setAuthenticated(me.session)
         return me.session
+    }
+
+    private func setAuthenticated(_ session: AuthSession) {
+        keychain.cacheSession(session, baseURL: baseURL)
+        state = .authenticated(session)
     }
 
     private func request<T: Decodable>(path: String) async throws -> T {
@@ -1087,6 +1107,25 @@ final class KeychainStore {
     private let service = "com.conceptualfitness.auth"
     private let refreshAccount = "refresh-token"
     private let deviceAccount = "device-id"
+    private let cachedSessionAccount = "verified-session"
+
+    private struct CachedSession: Codable {
+        let baseURL: String
+        let session: AuthSession
+    }
+
+    func cacheSession(_ session: AuthSession, baseURL: URL) {
+        guard let data = try? JSONEncoder().encode(CachedSession(baseURL: baseURL.absoluteString, session: session)),
+              let value = String(data: data, encoding: .utf8) else { return }
+        save(value, account: cachedSessionAccount)
+    }
+
+    func cachedSession(baseURL: URL) -> AuthSession? {
+        guard let value = read(account: cachedSessionAccount),
+              let cached = try? JSONDecoder().decode(CachedSession.self, from: Data(value.utf8)),
+              cached.baseURL == baseURL.absoluteString else { return nil }
+        return cached.session
+    }
 
     var refreshToken: String? {
         get { read(account: refreshAccount) }
@@ -1110,6 +1149,7 @@ final class KeychainStore {
 
     func clearTokens() {
         delete(account: refreshAccount)
+        delete(account: cachedSessionAccount)
     }
 
     private func read(account: String) -> String? {

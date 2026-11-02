@@ -14,6 +14,7 @@ struct AppShellView: View {
     @State private var insightsPath: [AppRoute] = []
     @StateObject private var syncCoordinator: AppSyncCoordinator
     @StateObject private var profileStore: ProfileStore
+    @StateObject private var journalStore: JournalStore
 
     private let weatherProvider = WeatherProvider()
     private let locationProvider = LocationProvider()
@@ -23,9 +24,12 @@ struct AppShellView: View {
         self.authStore = authStore
         self.session = session
         _profileStore = StateObject(wrappedValue: ProfileStore(authStore: authStore))
+        _journalStore = StateObject(wrappedValue: JournalStore(authStore: authStore, userID: session.user.id))
         #if DEBUG
         _selectedTab = State(
-            initialValue: ProcessInfo.processInfo.arguments.contains("-OpenFitnessTab")
+            initialValue: ProcessInfo.processInfo.arguments.contains("-OpenInsightsTab")
+                ? .insights
+                : ProcessInfo.processInfo.arguments.contains("-OpenFitnessTab")
                 ? .fitness
                 : .dashboard
         )
@@ -66,11 +70,7 @@ struct AppShellView: View {
             .tag(AppTab.fitness)
 
             NavigationStack(path: $insightsPath) {
-                PlaceholderTabView(
-                    title: "Insights",
-                    systemImage: "sparkles",
-                    message: "AI reports, correlations, and longer-term health explanations will live here."
-                )
+                JournalView(store: journalStore)
                 .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.insights.label }
@@ -79,6 +79,13 @@ struct AppShellView: View {
         .tint(HealthTheme.color(for: .activity))
         .environment(\.profileUnits, profileStore.profile?.unitSystem ?? .metric)
         .task { await profileStore.load() }
+        .task {
+            while !Task.isCancelled {
+                if UIApplication.shared.applicationState == .active { await journalStore.synchronize() }
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            }
+        }
+        .onDisappear { journalStore.stop() }
         .onChange(of: profileStore.revision) { _, _ in syncCoordinator.profileDidChange() }
         .task {
             await syncCoordinator.syncIfNeeded()
@@ -88,6 +95,7 @@ struct AppShellView: View {
             if phase == .background { syncCoordinator.scheduleHistoryCheck() }
             guard phase == .active else { return }
             Task {
+                await journalStore.synchronize()
                 await syncCoordinator.checkHistory()
                 await syncCoordinator.syncIfNeeded()
             }

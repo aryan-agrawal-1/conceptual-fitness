@@ -1,0 +1,234 @@
+import Foundation
+import OSLog
+import SwiftUI
+
+@MainActor
+final class JournalStore: ObservableObject {
+    @Published private(set) var snapshot = JournalSnapshot()
+    @Published private(set) var isSyncing = false
+    @Published private(set) var message: String?
+    @Published private(set) var storageBlocked = false
+    private let authStore: AuthStore
+    private let fileURL: URL
+    private let logger = Logger(subsystem: "ConceptualFitness", category: "Journal")
+    private var worker: Task<Void, Never>?
+    private var syncAgain = false
+    private var isActive = true
+    private let dataEpoch: Int
+
+    init(authStore: AuthStore, userID: String, fileURL: URL? = nil) {
+        self.authStore = authStore
+        dataEpoch = authStore.localDataEpoch
+        self.fileURL = fileURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Journal", isDirectory: true).appendingPathComponent("\(userID).json")
+        restore()
+    }
+
+    var pendingCount: Int {
+        snapshot.entries.filter(\.pending).count + snapshot.preferences.filter(\.pending).count
+    }
+    var timezone: String? { snapshot.timezone }
+    private var syncableEntries: [JournalEntryData] {
+        let sensitive = Set(snapshot.catalogue?.categories.filter(\.requiresOptIn).map(\.id) ?? [])
+        return snapshot.entries.filter { entry in
+            guard entry.pending else { return false }
+            if entry.deleted { return true }
+            guard let item = snapshot.catalogue?.behaviours.first(where: { $0.id == entry.behaviourId }) else { return false }
+            return !sensitive.contains(item.categoryId) || enabled("opt_in:\(item.categoryId)")
+        }
+    }
+    var today: String { JournalCoding.day(Date(), timezone: timezone ?? "UTC") }
+    func enabled(_ key: String) -> Bool { snapshot.preferences.first { $0.key == key }?.value == true }
+    func entry(_ behaviour: String, day: String) -> JournalEntryData? {
+        snapshot.entries.first { $0.behaviourId == behaviour && $0.journalDate == day && !$0.deleted }
+    }
+
+    func save(_ response: JournalResponseData) -> Bool {
+        var next = snapshot
+        let entry = JournalEntryData(journalDate: response.journalDate, behaviourId: response.behaviourId,
+                                     editedAt: nextStamp(), mutationId: UUID().uuidString.lowercased(),
+                                     deleted: false, response: response, pending: true)
+        next.entries.removeAll { $0.id == entry.id }
+        next.entries.append(entry)
+        guard persist(next) else { return false }
+        scheduleSync()
+        return true
+    }
+
+    @discardableResult
+    func delete(_ behaviour: String, day: String) -> Bool {
+        var next = snapshot
+        let entry = JournalEntryData(journalDate: day, behaviourId: behaviour, editedAt: nextStamp(),
+                                     mutationId: UUID().uuidString.lowercased(), deleted: true,
+                                     response: nil, pending: true)
+        next.entries.removeAll { $0.id == entry.id }
+        next.entries.append(entry)
+        guard persist(next) else { return false }
+        scheduleSync()
+        return true
+    }
+
+    func set(_ key: String, value: Bool) {
+        var next = snapshot
+        next.preferences.removeAll { $0.key == key }
+        next.preferences.append(JournalSettingData(key: key, value: value, editedAt: nextStamp(),
+                                                   mutationId: UUID().uuidString.lowercased(), pending: true))
+        if persist(next) { scheduleSync() }
+    }
+
+    func restore() {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        do {
+            snapshot = try JournalCoding.decoder().decode(JournalSnapshot.self, from: Data(contentsOf: fileURL))
+            storageBlocked = false
+            message = nil
+        } catch {
+            storageBlocked = true
+            message = "The saved journal couldn’t open. Unlock your device and retry. Your saved file has been preserved."
+            logger.error("Journal restore failed; reason=local_storage")
+        }
+    }
+
+    func synchronize() async {
+        guard isActive, authStore.localDataEpoch == dataEpoch else { return }
+        if storageBlocked { restore() }
+        guard !storageBlocked else { return }
+        guard !isSyncing else { syncAgain = true; return }
+        isSyncing = true
+        defer { isSyncing = false }
+        do {
+            if snapshot.catalogue == nil {
+                let catalogue: JournalCatalogueData = try await get("/journal/catalogue")
+                var next = snapshot
+                next.catalogue = catalogue
+                guard persist(next) else { return }
+            }
+            repeat {
+                syncAgain = false
+                try await pullChanges()
+                let pendingEntries = Array(syncableEntries.prefix(100))
+                let pendingSettings = Array(snapshot.preferences.filter(\.pending).prefix(100))
+                if !pendingEntries.isEmpty || !pendingSettings.isEmpty {
+                    let receipt: JournalReceipt = try await send(JournalPush(
+                        entries: pendingEntries.map(JournalEntryWrite.init),
+                        preferences: pendingSettings.map(JournalSettingWrite.init)))
+                    var next = snapshot
+                    merge(receipt.acknowledgements, into: &next)
+                    guard persist(next) else { return }
+                }
+                try await pullChanges()
+            } while syncAgain || !syncableEntries.isEmpty || snapshot.preferences.contains(where: \.pending)
+            message = pendingCount > 0 ? "Private changes are saved on this device. Enable their categories to sync them, or delete the responses." : nil
+        } catch is CancellationError {
+        } catch {
+            let status = (error as? HTTPResponseError)?.statusCode ?? 0
+            if status == 422 { try? await pullChanges() }
+            message = status == 422
+                ? "Some saved changes need attention. Check private category access and answer limits, then retry."
+                : "Journal is offline. Saved entries stay on this device and will retry when you reconnect."
+            logger.error("Journal sync failed; status=\(status); reason=request_failure")
+        }
+    }
+
+    private func pullChanges() async throws {
+        var hasMore = true
+        while hasMore {
+            try Task.checkCancellation()
+            let page: JournalPage = try await get("/journal/changes?after=\(snapshot.cursor)")
+            var next = snapshot
+            merge(page.changes, into: &next)
+            next.cursor = page.cursor
+            next.timezone = page.timezone
+            next.goals = page.goals
+            next.analysisRevision = page.analysisRevision
+            guard persist(next) else { throw CancellationError() }
+            hasMore = page.hasMore
+        }
+    }
+
+    func stop() {
+        isActive = false
+        worker?.cancel()
+    }
+
+    static func pendingExport(userID: String) throws -> JournalPush {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Journal", isDirectory: true).appendingPathComponent("\(userID).json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return JournalPush(entries: [], preferences: []) }
+        let snapshot = try JournalCoding.decoder().decode(JournalSnapshot.self, from: Data(contentsOf: url))
+        return JournalPush(entries: snapshot.entries.filter(\.pending).map(JournalEntryWrite.init),
+                           preferences: snapshot.preferences.filter(\.pending).map(JournalSettingWrite.init))
+    }
+
+    private func nextStamp() -> String {
+        let latest = (snapshot.entries.map(\.editedAt) + snapshot.preferences.map(\.editedAt))
+            .map(JournalCoding.instant).max() ?? .distantPast
+        return JournalCoding.timestamp(max(Date(), latest.addingTimeInterval(0.001)))
+    }
+
+    private func scheduleSync() {
+        if isSyncing { syncAgain = true; return }
+        worker?.cancel()
+        worker = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+            await self?.synchronize()
+        }
+    }
+
+    private func merge(_ changes: [JournalChange], into next: inout JournalSnapshot) {
+        for change in changes {
+            if let remote = change.entry {
+                if let index = next.entries.firstIndex(where: { $0.id == remote.id }) {
+                    let local = next.entries[index]
+                    if local.mutationId == remote.mutationId || JournalCoding.newer(
+                        remote.editedAt, remote.mutationId, than: local.editedAt, local.mutationId) {
+                        next.entries[index] = remote
+                    }
+                } else { next.entries.append(remote) }
+            }
+            if let remote = change.setting {
+                if let index = next.preferences.firstIndex(where: { $0.key == remote.key }) {
+                    let local = next.preferences[index]
+                    if local.mutationId == remote.mutationId || JournalCoding.newer(
+                        remote.editedAt, remote.mutationId, than: local.editedAt, local.mutationId) {
+                        next.preferences[index] = remote
+                    }
+                } else { next.preferences.append(remote) }
+            }
+        }
+    }
+
+    private func persist(_ next: JournalSnapshot) -> Bool {
+        guard !storageBlocked, isActive, authStore.localDataEpoch == dataEpoch else { return false }
+        do {
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JournalCoding.encoder().encode(next)
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+            var url = fileURL
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try url.setResourceValues(values)
+            snapshot = next
+            return true
+        } catch {
+            message = "Couldn’t save on this device. Free some storage or unlock your device, then retry before leaving this screen."
+            logger.error("Journal save failed; reason=local_storage")
+            return false
+        }
+    }
+
+    private func get<Response: Decodable>(_ path: String) async throws -> Response {
+        let request = URLRequest(url: URL(string: path, relativeTo: authStore.baseURL)!.absoluteURL)
+        let data = try await authStore.authenticatedData(for: request)
+        return try JournalCoding.decoder().decode(Response.self, from: data)
+    }
+
+    private func send(_ body: JournalPush) async throws -> JournalReceipt {
+        var request = URLRequest(url: authStore.baseURL.appendingPathComponent("journal/sync"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JournalCoding.encoder().encode(body)
+        let data = try await authStore.authenticatedData(for: request)
+        return try JournalCoding.decoder().decode(JournalReceipt.self, from: data)
+    }
+}

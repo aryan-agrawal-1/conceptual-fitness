@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		01000000000000000000004C /* JournalEntryEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004C /* JournalEntryEditor.swift */; };
+		01000000000000000000004B /* JournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004B /* JournalView.swift */; };
+		01000000000000000000004A /* JournalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004A /* JournalStore.swift */; };
+		010000000000000000000049 /* JournalSuggestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000049 /* JournalSuggestions.swift */; };
+		010000000000000000000048 /* JournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000048 /* JournalModels.swift */; };
 		010000000000000000000047 /* ProfileHealthEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000047 /* ProfileHealthEditors.swift */; };
 		010000000000000000000046 /* ProfileEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000046 /* ProfileEditors.swift */; };
 		010000000000000000000045 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000045 /* ProfileView.swift */; };
@@ -72,6 +77,11 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		02000000000000000000004C /* JournalEntryEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalEntryEditor.swift; sourceTree = "<group>"; };
+		02000000000000000000004B /* JournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalView.swift; sourceTree = "<group>"; };
+		02000000000000000000004A /* JournalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalStore.swift; sourceTree = "<group>"; };
+		020000000000000000000049 /* JournalSuggestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalSuggestions.swift; sourceTree = "<group>"; };
+		020000000000000000000048 /* JournalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalModels.swift; sourceTree = "<group>"; };
 		020000000000000000000047 /* ProfileHealthEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHealthEditors.swift; sourceTree = "<group>"; };
 		020000000000000000000046 /* ProfileEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditors.swift; sourceTree = "<group>"; };
 		020000000000000000000045 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
@@ -166,6 +176,11 @@
 		040000000000000000000002 /* ConceptualFitness */ = {
 			isa = PBXGroup;
 			children = (
+				020000000000000000000048 /* JournalModels.swift */,
+				020000000000000000000049 /* JournalSuggestions.swift */,
+				02000000000000000000004A /* JournalStore.swift */,
+				02000000000000000000004B /* JournalView.swift */,
+				02000000000000000000004C /* JournalEntryEditor.swift */,
 				020000000000000000000001 /* ConceptualFitnessApp.swift */,
 				020000000000000000000012 /* Info.plist */,
 				020000000000000000000013 /* ConceptualFitness.entitlements */,
@@ -366,6 +381,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				010000000000000000000048 /* JournalModels.swift in Sources */,
+				010000000000000000000049 /* JournalSuggestions.swift in Sources */,
+				01000000000000000000004A /* JournalStore.swift in Sources */,
+				01000000000000000000004B /* JournalView.swift in Sources */,
+				01000000000000000000004C /* JournalEntryEditor.swift in Sources */,
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,
