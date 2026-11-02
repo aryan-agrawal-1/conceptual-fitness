@@ -15,9 +15,12 @@ final class JournalStore: ObservableObject {
     private var syncAgain = false
     private var isActive = true
     private let dataEpoch: Int
+    private let perform: @MainActor (URLRequest) async throws -> Data
 
-    init(authStore: AuthStore, userID: String, fileURL: URL? = nil) {
+    init(authStore: AuthStore, userID: String, fileURL: URL? = nil,
+         perform: (@MainActor (URLRequest) async throws -> Data)? = nil) {
         self.authStore = authStore
+        self.perform = perform ?? { try await authStore.authenticatedData(for: $0) }
         dataEpoch = authStore.localDataEpoch
         self.fileURL = fileURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Journal", isDirectory: true).appendingPathComponent("\(userID).json")
@@ -219,7 +222,7 @@ final class JournalStore: ObservableObject {
 
     private func get<Response: Decodable>(_ path: String) async throws -> Response {
         let request = URLRequest(url: URL(string: path, relativeTo: authStore.baseURL)!.absoluteURL)
-        let data = try await authStore.authenticatedData(for: request)
+        let data = try await perform(request)
         return try JournalCoding.decoder().decode(Response.self, from: data)
     }
 
@@ -228,7 +231,7 @@ final class JournalStore: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JournalCoding.encoder().encode(body)
-        let data = try await authStore.authenticatedData(for: request)
+        let data = try await perform(request)
         return try JournalCoding.decoder().decode(JournalReceipt.self, from: data)
     }
 }
