@@ -21,6 +21,9 @@ from app.models import (
     ExerciseFavorite,
     GoogleAccount,
     HistoricalBackfill,
+    JournalEntry,
+    JournalPreference,
+    JournalState,
     MetricDailyRollup,
     MetricHourlyRollup,
     MetricInterval,
@@ -59,6 +62,7 @@ def build_account_export(
     user_id: str,
     categories: set[str],
     local_insights: list[dict[str, object]],
+    local_journal: dict | None = None,
 ) -> BinaryIO:
     if not categories or not categories <= EXPORT_CATEGORIES:
         raise ValueError("At least one supported export category is required")
@@ -77,6 +81,7 @@ def build_account_export(
                 session=session,
                 user_id=user_id,
                 local_insights=local_insights if category == "derived_insights" else [],
+                local_journal=local_journal if category == "journal" else None,
             )
             files[filename] = {"category": category, "record_counts": counts}
 
@@ -107,6 +112,7 @@ def write_category(
     session: Session,
     user_id: str,
     local_insights: list[dict[str, object]],
+    local_journal: dict | None = None,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     with output.open(filename, "w") as target:
@@ -139,6 +145,15 @@ def write_category(
             target.write(b'"client_daily_insights":')
             target.write(json.dumps(local_insights, default=json_default).encode())
             counts["client_daily_insights"] = len(local_insights)
+        if local_journal:
+            for key in ("entries", "preferences"):
+                records = local_journal.get(key, [])
+                if records:
+                    target.write(b",")
+                    table = f"client_journal_{key}"
+                    target.write(json.dumps(table).encode() + b":")
+                    target.write(json.dumps(records, default=json_default).encode())
+                    counts[table] = len(records)
         target.write(b"}}")
     return counts
 
@@ -191,7 +206,14 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
             ),
         )
     if category == "journal":
-        return (TableExport(DailyContext, by_user(DailyContext)),)
+        return (
+            TableExport(DailyContext, by_user(DailyContext)),
+            TableExport(JournalEntry, by_user(JournalEntry)),
+            TableExport(JournalPreference, by_user(JournalPreference)),
+            TableExport(JournalState, lambda user_id: select(JournalState).where(
+                JournalState.user_id == user_id,
+            )),
+        )
     if category == "derived_insights":
         return tuple(
             TableExport(model, by_user(model))

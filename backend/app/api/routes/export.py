@@ -14,6 +14,7 @@ from app.api.deps import bearer_token_from_request
 from app.services.account_export import EXPORT_CATEGORIES, build_account_export
 from app.services.app_auth import AppAuthError, authenticate_access_token_with_session
 from app.services.sensitive_actions import SensitiveActionError, consume_sensitive_action_grant
+from app.services.journal_storage import EntryMutation, PreferenceMutation
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,11 @@ class LocalInsight(BaseModel):
     generated_at: datetime
 
 
+class LocalJournal(BaseModel):
+    entries: list[EntryMutation] = Field(default_factory=list, max_length=10000)
+    preferences: list[PreferenceMutation] = Field(default_factory=list, max_length=100)
+
+
 class ExportRequest(BaseModel):
     categories: list[
         Literal["health_and_workouts", "journal", "derived_insights", "personalization"]
@@ -35,6 +41,7 @@ class ExportRequest(BaseModel):
     sensitive_action_grant: str = Field(min_length=1)
     device_id: str = Field(min_length=16)
     local_insights: list[LocalInsight] = Field(default_factory=list, max_length=1000)
+    local_journal: LocalJournal | None = None
 
     @model_validator(mode="after")
     def unique_categories(self):
@@ -75,6 +82,7 @@ def export_account_data(
             user_id=user.id,
             categories=set(payload.categories),
             local_insights=[item.model_dump(mode="json") for item in payload.local_insights],
+            local_journal=payload.local_journal.model_dump(mode="json") if payload.local_journal else None,
         )
     except Exception as exc:
         logger.error("Account export generation failed (%s)", type(exc).__name__)

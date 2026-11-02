@@ -1,4 +1,4 @@
-"""Version 1 journal wire types. Persistence and synchronization belong to issue #16."""
+"""Version 1 journal catalogue and typed response contracts."""
 
 from __future__ import annotations
 
