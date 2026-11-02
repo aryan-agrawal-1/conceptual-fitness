@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, StrictBool, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,9 @@ from app.journal import JournalModel, ManualJournalResponse
 from app.models import JournalEntry, JournalPreference, JournalState, User
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.journal_catalogue import CATALOGUE_V1, SENSITIVE_CATEGORIES, normalize_journal_response
+
+
+CLOCK_AHEAD = "clock_ahead"
 
 
 class JournalMutation(JournalModel):
@@ -32,7 +36,7 @@ class JournalMutation(JournalModel):
     @classmethod
     def bounded_clock(cls, value: datetime) -> datetime:
         if value > utcnow() + timedelta(minutes=5):
-            raise ValueError("Edit timestamp is too far in the future")
+            raise PydanticCustomError(CLOCK_AHEAD, "Edit timestamp is too far in the future")
         return value.astimezone(timezone.utc)
 
 

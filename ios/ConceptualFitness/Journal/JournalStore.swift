@@ -126,11 +126,19 @@ final class JournalStore: ObservableObject {
         } catch {
             let status = (error as? HTTPResponseError)?.statusCode ?? 0
             if status == 422 { try? await pullChanges() }
-            message = status == 422
-                ? "Some saved changes need attention. Check private category access and answer limits, then retry."
-                : "Journal is offline. Saved entries stay on this device and will retry when you reconnect."
+            message = Self.failureMessage(for: error)
             logger.error("Journal sync failed; status=\(status); reason=request_failure")
         }
+    }
+
+    static func failureMessage(for error: Error) -> String {
+        let response = error as? HTTPResponseError
+        if response?.code == "clock_ahead" {
+            return "Your device clock is ahead, so changes can’t sync. Set the date and time automatically in Settings. Saved entries stay on this device."
+        }
+        return response?.statusCode == 422
+            ? "Some saved changes need attention. Check private category access and answer limits, then retry."
+            : "Journal is offline. Saved entries stay on this device and will retry when you reconnect."
     }
 
     private func pullChanges() async throws {

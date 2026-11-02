@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import json
 from uuid import uuid4
 from zipfile import ZipFile
@@ -165,6 +165,35 @@ def test_changes_pagination_isolation_atomic_validation_export_and_cascade(sessi
     session.commit()
     for model in (JournalEntry, JournalPreference, JournalState):
         assert session.scalar(select(model)) is None
+
+
+def test_clock_ahead_is_actionable_retryable_and_payload_free(session, auth_headers, caplog):
+    user, headers = account(session, auth_headers)
+    client = TestClient(app)
+    ahead = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    rejected = client.post("/journal/sync", headers=headers, json={"entries": [
+        edit(value={"type": "rating", "value": 3}, stamp=ahead),
+    ]})
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "clock_ahead"
+    assert "clock" in rejected.json()["detail"]["message"]
+    assert ahead not in rejected.text + caplog.text
+    assert "reason=clock_ahead" in caplog.text
+    assert session.scalar(select(JournalEntry).where(JournalEntry.user_id == user.id)) is None
+
+    # Within the allowance the same edit is accepted, so correcting the clock clears the queue.
+    close = (datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat()
+    accepted = client.post("/journal/sync", headers=headers, json={"entries": [
+        edit(value={"type": "rating", "value": 3}, stamp=close),
+    ]})
+    assert accepted.status_code == 200
+
+
+def test_other_invalid_requests_keep_the_generic_response(session, auth_headers):
+    _, headers = account(session, auth_headers)
+    rejected = TestClient(app).post("/journal/sync", headers=headers, json={"entries": [{"bad": 1}]})
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == "Invalid journal request"
 
 
 def test_sync_failure_is_retryable_and_payload_free(session, auth_headers, monkeypatch, caplog):

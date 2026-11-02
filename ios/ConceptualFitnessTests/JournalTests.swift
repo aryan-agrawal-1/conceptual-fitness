@@ -359,6 +359,26 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertNotNil(store.message)
     }
 
+    func testClockErrorIsActionableAndKeepsTheEntryQueued() async {
+        let store = makeStore()
+        await store.synchronize()
+        XCTAssertTrue(store.save(answer()))
+        server.syncError = HTTPResponseError(statusCode: 422, code: "clock_ahead")
+        await store.synchronize()
+        XCTAssertTrue(store.message?.contains("clock") == true)
+        XCTAssertEqual(store.pendingCount, 1)
+
+        server.syncError = nil
+        await store.synchronize()
+        XCTAssertNil(store.message)
+        XCTAssertEqual(store.pendingCount, 0)
+    }
+
+    func testOtherFailuresKeepTheirMessages() {
+        XCTAssertTrue(JournalStore.failureMessage(for: HTTPResponseError(statusCode: 422, code: nil)).contains("attention"))
+        XCTAssertTrue(JournalStore.failureMessage(for: URLError(.notConnectedToInternet)).contains("offline"))
+    }
+
     func testCorruptFileIsPreservedAndBlocksWrites() async throws {
         let corrupt = Data("not json".utf8)
         try corrupt.write(to: fileURL)

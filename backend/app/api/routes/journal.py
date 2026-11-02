@@ -12,7 +12,7 @@ from app.journal import JournalCatalogue
 from app.models import JournalEntry
 from app.services.journal_catalogue import CATALOGUES
 from app.services.journal_storage import (
-    JournalAccountUnavailable, JournalSync, apply_sync, changes, entry_payload,
+    CLOCK_AHEAD, JournalAccountUnavailable, JournalSync, apply_sync, changes, entry_payload,
 )
 
 
@@ -25,6 +25,12 @@ class JournalRoute(APIRoute):
             try:
                 return await handler(request)
             except RequestValidationError as exc:
+                if any(error["type"] == CLOCK_AHEAD for error in exc.errors()):
+                    logger.warning("Journal request rejected reason=clock_ahead")
+                    raise HTTPException(422, {
+                        "code": CLOCK_AHEAD,
+                        "message": "This device's clock is ahead. Set the date and time automatically, then retry.",
+                    }) from exc
                 logger.warning("Journal request rejected reason=invalid_schema")
                 # FastAPI's default validation response echoes rejected health values.
                 raise HTTPException(422, "Invalid journal request") from exc
