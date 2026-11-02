@@ -21,7 +21,8 @@ struct JournalFieldDraft {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return JournalAnswerData(type: field.inputType, value: .text(text))
         default:
-            guard let value = Double(text), value.isFinite else { return nil }
+            // Decimal keypads type a comma in many locales.
+            guard let value = Double(text.replacingOccurrences(of: ",", with: ".")), value.isFinite else { return nil }
             return JournalAnswerData(type: field.inputType, value: .number(value), unit: field.units.isEmpty ? nil : unit)
         }
     }

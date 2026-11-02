@@ -181,6 +181,14 @@ final class JournalDraftTests: XCTestCase {
         XCTAssertTrue(draft(quantity, "2", unit: "mg").valid(for: quantity, units: testCatalogue.units))
     }
 
+    func testDecimalCommaIsAccepted() {
+        let quantity = field("quantity", minimum: 0, maximum: 1000, units: ["mg"])
+        XCTAssertEqual(draft(quantity, "1,5", unit: "mg").answer(for: quantity)?.value, .number(1.5))
+        XCTAssertEqual(draft(quantity, "1.5", unit: "mg").answer(for: quantity)?.value, .number(1.5))
+        XCTAssertTrue(draft(quantity, "1,5", unit: "mg").valid(for: quantity, units: testCatalogue.units))
+        XCTAssertNil(draft(quantity, "1,5,5", unit: "mg").answer(for: quantity))
+    }
+
     func testTimeFormat() {
         let time = field("time")
         XCTAssertTrue(draft(time, "23:59").valid(for: time, units: []))
