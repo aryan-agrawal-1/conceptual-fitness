@@ -167,6 +167,12 @@ def test_changes_pagination_isolation_atomic_validation_export_and_cascade(sessi
         assert session.scalar(select(model)) is None
 
 
+def test_changes_advertise_the_latest_catalogue_version(session, auth_headers):
+    _, headers = account(session, auth_headers)
+    page = TestClient(app).get("/journal/changes", headers=headers).json()
+    assert page["catalogue_version"] == 1
+
+
 def test_clock_ahead_is_actionable_retryable_and_payload_free(session, auth_headers, caplog):
     user, headers = account(session, auth_headers)
     client = TestClient(app)

@@ -168,6 +168,7 @@ struct JournalPage: Decodable {
     let today: String
     let goals: [String]
     let analysisRevision: Int
+    let catalogueVersion: Int?
 }
 
 struct JournalReceipt: Decodable {

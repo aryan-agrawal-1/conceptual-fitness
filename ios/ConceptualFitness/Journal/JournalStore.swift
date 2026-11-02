@@ -106,12 +106,7 @@ final class JournalStore: ObservableObject {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            if snapshot.catalogue == nil {
-                let catalogue: JournalCatalogueData = try await get("/journal/catalogue")
-                var next = snapshot
-                next.catalogue = catalogue
-                guard persist(next) else { return }
-            }
+            if snapshot.catalogue == nil { try await downloadCatalogue() }
             repeat {
                 syncAgain = false
                 try await pullChanges()
@@ -155,6 +150,9 @@ final class JournalStore: ObservableObject {
             try Task.checkCancellation()
             let page: JournalPage = try await get("/journal/changes?after=\(snapshot.cursor)")
             hasMore = page.hasMore
+            if let version = page.catalogueVersion, version > snapshot.catalogue?.version ?? 0 {
+                try await downloadCatalogue(version: version)
+            }
             // An idle poll must not rewrite the whole protected file.
             guard !page.changes.isEmpty || page.cursor != snapshot.cursor || page.timezone != snapshot.timezone
                     || page.goals != snapshot.goals || page.analysisRevision != snapshot.analysisRevision
@@ -167,6 +165,14 @@ final class JournalStore: ObservableObject {
             next.analysisRevision = page.analysisRevision
             guard persist(next) else { throw CancellationError() }
         }
+    }
+
+    private func downloadCatalogue(version: Int? = nil) async throws {
+        let catalogue: JournalCatalogueData = try await get(
+            "/journal/catalogue" + (version.map { "?version=\($0)" } ?? ""))
+        var next = snapshot
+        next.catalogue = catalogue
+        guard persist(next) else { throw CancellationError() }
     }
 
     func stop() {

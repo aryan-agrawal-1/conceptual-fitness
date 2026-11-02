@@ -17,7 +17,9 @@ from app.core.security import utcnow
 from app.journal import JournalModel, ManualJournalResponse
 from app.models import JournalEntry, JournalPreference, JournalState, User
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
-from app.services.journal_catalogue import CATALOGUE_V1, SENSITIVE_CATEGORIES, normalize_journal_response
+from app.services.journal_catalogue import (
+    CATALOGUE_V1, CATALOGUES, SENSITIVE_CATEGORIES, normalize_journal_response,
+)
 
 
 CLOCK_AHEAD = "clock_ahead"
@@ -99,6 +101,7 @@ def metadata(session: Session, user_id: str) -> dict:
     profile = get_or_create_profile(session, user_id)
     state = session.get(JournalState, user_id)
     return dict(timezone=profile.timezone, today=local_date_for_profile(profile),
+                catalogue_version=max(CATALOGUES),
                 goals=[goal for goal in [profile.fitness_goal, *(profile.secondary_goals or [])] if goal],
                 analysis_revision=state.analysis_revision if state else 0)
 

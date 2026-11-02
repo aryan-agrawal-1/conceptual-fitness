@@ -240,6 +240,7 @@ final class FakeJournalServer {
     var pageChanges: [[String: Any]] = []
     var pageCursor = 0
     var syncError: Error?
+    var catalogueError: Error?
     var pullError: Error?
     var extraPageFields: [String: Any] = [:]
 
@@ -249,6 +250,7 @@ final class FakeJournalServer {
         requests.append(request)
         let path = request.url?.path ?? ""
         if path.hasSuffix("/journal/catalogue") {
+            if let catalogueError { throw catalogueError }
             return try JournalCoding.encoder().encode(catalogue)
         }
         if path.hasSuffix("/journal/changes") {
@@ -456,6 +458,50 @@ final class JournalStoreTests: XCTestCase {
         server.pullError = nil
         await store.synchronize()
         XCTAssertFalse(store.needsRetry)
+    }
+
+    private var catalogueRequests: [URLRequest] {
+        server.requests.filter { $0.url?.path.hasSuffix("/journal/catalogue") == true }
+    }
+
+    func testNewerCatalogueIsDownloadedOnceAndKeepsAnswers() async {
+        let store = makeStore()
+        await store.synchronize()
+        XCTAssertTrue(store.save(answer()))
+        server.requests = []
+        server.extraPageFields = ["catalogue_version": 2]
+        server.catalogue = JournalCatalogueData(
+            version: 2, schemaVersion: 1, categories: testCatalogue.categories,
+            behaviours: testCatalogue.behaviours + [behaviour("hydration")], units: testCatalogue.units)
+        await store.synchronize()
+        XCTAssertEqual(store.snapshot.catalogue?.version, 2)
+        XCTAssertTrue(store.snapshot.catalogue?.behaviours.contains { $0.id == "hydration" } == true)
+        XCTAssertEqual(catalogueRequests.count, 1)
+        XCTAssertEqual(catalogueRequests.first?.url?.query, "version=2")
+        XCTAssertNotNil(store.entry("worked_late", day: "2026-11-02"))
+
+        server.requests = []
+        await store.synchronize()
+        XCTAssertTrue(catalogueRequests.isEmpty)
+    }
+
+    func testMatchingOrMissingCatalogueVersionDoesNotDownload() async {
+        let store = makeStore()
+        await store.synchronize()
+        server.requests = []
+        server.extraPageFields = ["catalogue_version": 1]
+        await store.synchronize()
+        XCTAssertTrue(catalogueRequests.isEmpty)
+    }
+
+    func testCatalogueFailureKeepsTheCachedCatalogue() async {
+        let store = makeStore()
+        await store.synchronize()
+        server.extraPageFields = ["catalogue_version": 2]
+        server.catalogueError = URLError(.notConnectedToInternet)
+        await store.synchronize()
+        XCTAssertEqual(store.snapshot.catalogue?.version, 1)
+        XCTAssertTrue(store.needsRetry)
     }
 
     func testCorruptFileIsPreservedAndBlocksWrites() async throws {
