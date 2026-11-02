@@ -1,6 +1,6 @@
 # Insights journal — tracker #46, Batch 2
 
-Verified on 28–29 October 2026. Implements #16 and #18 within the delivery sequence
+Verified on 28–29 October and 2 November 2026. Implements #16 and #18 within the delivery sequence
 in #51. The user confirmed a
 usable Insights journal for this batch and automatic deterministic conflict
 resolution. The guided morning check-in, explicit completion, calendar/history
@@ -50,32 +50,36 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   server rejection still signs out. Remote operations continue to require normal
   server authentication. Sign-out/deletion clears the cached session.
 
-## #18: suggestions acceptance criteria
+## #18: daily list acceptance criteria
 
-- Exactly five eligible suggestions are ranked with fixed rules. No model or
-  generated selection participates. All catalogue inputs remain accessible.
-- Scores combine pins (+1000), matching Profile goal keywords (+80), universal
-  starting points (+60), record-building needs (+30), use in the last 30 days (+20)
-  and daily rotation (0–78). Only days before the selected date count as use, so
-  answering never reshuffles that day's list. Equal scores sort by stable behaviour ID. Expanding a
-  suggestion explains the contributing rules. The implementation contains the
-  explicit goal keyword mapping; unmatched free-form goals add no goal weight.
-- Record-building prioritizes previously used inputs with fewer than ten answers
-  in 30 days, or booleans with fewer than three answers on either side. These are
-  suggestion heuristics, not statistical evidence thresholds for future analyses.
-- Pins synchronize independently, have no hard limit and are accessible through
-  the full catalogue even when more than five are pinned. The UI recommends roughly
-  5–10 tracked inputs without enforcing a maximum.
-- Sensitive suggestions require current explicit category opt-in **and** a live,
-  deliberately answered response before the selected date. Explicit No
-  counts as deliberate use; unknown, skipped, deleted and provider data do not.
-- Private names/answers stay discreet in suggestions and saved-entry lists.
-  Deliberately exploring an enabled category reveals input names for selection.
-  Revoking access removes suggestions and stops new sensitive answers. Existing
-  entries can be reviewed/deleted. Pending private changes stay on-device until
-  category access is restored and do not block unrelated synchronization.
-- Free text is available as private user data, excluded from suggestions and
-  statistical inputs. This feature does not send journal data to AI.
+The issue asked for five ranked suggestions with daily rotation. After reviewing the
+design, the user replaced that with a fixed pinned list, because a daily habit works
+better when the same rows stay in the same place. The issue text still needs updating.
+
+- Five inputs are pinned by default: Mood, Perceived stress, Energy, Worked late and
+  Screen use in bed. Any input can be pinned or unpinned. There is no hard limit and
+  no rotation. No model or generated selection participates.
+- All other inputs sit behind "Show other inputs", ordered by matching Profile goals,
+  then use in the 30 days before the selected date, then stable behaviour ID. Only
+  earlier days count as use, so answering never moves a row. The section opens by
+  itself when one of its inputs has an entry for the selected date.
+- Pins synchronize independently. An explicit saved value overrides the defaults.
+- Turning on a private category pins all of its inputs in a named section, including
+  any unpinned earlier, without requiring a previous answer. Private inputs are shown by
+  name in Insights only while their category is on. Notifications (#19) stay discreet.
+- Turning a category off removes its rows and stops new answers. Existing entries for
+  the selected date stay reviewable under a discreet label and can be deleted. Pending
+  private changes stay on-device until access returns and do not block other sync.
+- Yes/No and rating answers save with one tap, and tapping the same answer clears it.
+  A No clears any details. Yes opens one main detail inline (stepper, slider or severity
+  buttons), with other fields behind More details. Slider limits are everyday ranges;
+  larger values can be typed in the answer sheet.
+- The header shows answers against a target of five, then "Daily target reached". This
+  is display only: it records no completion or streak (#17/#21). Skipped and not
+  applicable responses do not count; No does.
+- Normal saves show no status. A sync problem shows its message with Retry.
+- Free text is available as private user data and excluded from statistical inputs.
+  This feature does not send journal data to AI.
 
 ## #16 definition of done — explicitly checked
 
@@ -92,10 +96,9 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   clock rejections. Edits during upload and deletion during an upload were checked by
   the earlier temporary Swift harness, which is no longer tracked.
 - [x] Relevant accessibility: native accessibility labels, disabled empty-editor
-  Save, explicit missingness choices and 44-point custom row/pin/explanation
-  targets were checked. The iPhone 17e layout was inspected at accessibility text
-  size; content wraps in the native List. Physical-device VoiceOver traversal is
-  part of the release device validation in #57.
+  Save and explicit missingness choices were checked. Text wraps at accessibility
+  sizes, and the redesigned rows stack their controls. Physical-device VoiceOver
+  traversal is part of the release device validation in #57.
 - [x] Observability: journal validation/storage diagnostics contain stable reason
   codes or HTTP status only. Tests verify that health values, prose and email do
   not enter new failure logs or journal validation responses.
@@ -109,24 +112,26 @@ presentation, reminders and AI reflection remain in their scheduled later issues
 
 ## #18 definition of done — explicitly checked
 
-- [x] Success, loading, empty, error and retry acceptance criteria: five explained
-  suggestions use cached data offline, the first-use state exposes Retry, pins
-  persist immediately, and the full catalogue/private-category controls remain
-  available. The suggested tracking count is guidance rather than a hard limit.
-- [x] Applicable regression coverage: iOS tests check stable daily selection, rotation
-  across dates, pin priority, sensitive opt-in plus deliberate use, No versus
-  missing/deleted data, timezone boundaries, rating bounds and quantity limits after
+- [x] Success, loading, empty, error and retry acceptance criteria: the pinned list and
+  saved answers use cached data offline, first use exposes Retry, pins persist
+  immediately, and every input and private category stays reachable.
+- [x] Applicable regression coverage: iOS tests check default pin order, no rotation
+  across dates, pinning and unpinning, category on/off/on behaviour, reviewable answers
+  in categories that are off, stable rows while answering, goal and earlier-use ordering,
+  the daily target, No clearing details, rating bounds and quantity limits after
   conversion. Backend coverage checks durable per-key preference synchronization and
   saved consent enforcement.
-- [x] Relevant accessibility: explicit Pin/Unpin labels, expanded/collapsed
-  explanation state and 44-point custom button frames were measured in the
-  native accessibility tree. Large-text presentation was inspected on iPhone 17e.
-- [x] Observability: suggestions are fixed local rules and produce no health-data
-  logs. Preference failures use the same payload-free sync diagnostics as #16.
-- [x] Visual verification: inspected the journal/suggestion layout on iPhone 17
-  Pro and iPhone 17e; native pin state survives offline restart. A temporary layout
-  session used the same account on the second simulator and was revoked after
-  verification. The original session was preserved and text-size settings restored.
+- [ ] Relevant accessibility: controls have explicit labels and selected state, and large
+  text was inspected at the accessibility-large size. Rating steps are full row height
+  but narrower than 44 points. VoiceOver traversal has not been run.
+- [x] Observability: the list uses fixed local rules and produces no health-data logs.
+  Preference failures use the same payload-free sync diagnostics as #16.
+- [x] Visual verification: iPhone 17 Pro on iOS 26.5 and iPhone 17 on iOS 27.0. iPhone 17e
+  was not rechecked after the redesign. On iPhone 17 Pro: pinning, rating and Yes/No
+  answers, Substances on and off, slider and stepper values synchronizing, the answer
+  sheet opening, large text and the target states. Unit tests alone cover skip, not
+  applicable and the turned-off section. On simulators, the system category toggle
+  responded to a drag but not to an injected tap; check it on a device in #57.
 
 ## Checks and limits
 
@@ -136,8 +141,8 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   seeds data from the 1st of the month up to today, so it appears to have too little
   data early in a month. Focused journal suite `test_journal_sync.py`: **9 passed**.
 - Existing catalogue/route baseline before changes: **68 passed**.
-- iOS unit tests: **36 passed** on iPhone 17 (iOS 26.5). Durable regression tests are
-  in `ios/ConceptualFitnessTests/JournalTests.swift` (ranking, validation, timestamps,
+- iOS unit tests: **44 passed** on iPhone 17 (iOS 26.5). Durable regression tests are
+  in `ios/ConceptualFitnessTests/JournalTests.swift` (daily list, validation, timestamps,
   offline saves, merging, private queues, idle syncs, catalogue refresh) and
   `backend/tests/test_journal_sync.py`.
 - Native check on iPhone 17 Pro (iOS 26.5): the journal file was unchanged across 65
@@ -150,9 +155,8 @@ presentation, reminders and AI reflection remain in their scheduled later issues
 - Simulator plugin capture/control calls intermittently timed out; verification
   continued with Xcode and the plugin's bundled AXe driver plus `simctl`.
 - Local screenshots are in the ignored `tmp/journal-verification/` directory.
-- Native catalogue navigation was checked: ordinary inputs are available while
-  unenabled private categories show their access controls without behaviour names.
-  The private-category destination was inspected without changing consent settings.
+- Inputs in private categories that are off are not listed by name until the category
+  is turned on, and the private-category screen was exercised on the local account.
 - No physical-device tests were run. Secure Enclave/Face ID and full release
   validation remain in #57. The future analysis engine (#23) must consume the
   journal invalidation revision; this batch does not create speculative results.
