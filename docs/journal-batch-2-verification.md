@@ -13,15 +13,19 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   connection; subsequent edits work offline. Local write failures keep the editor
   open. An unreadable cache is preserved and blocks writes until it can be opened.
 - Opening the app or Insights, returning to the foreground, manual retry and a
-  30-second timer while the app is active retry queued changes. A completed
-  request is persisted before the cursor advances. Pagination includes tombstones.
+  30-second timer while the app is active retry queued changes. The timer runs only
+  when something needs retrying, and a pull that changes nothing doesn't rewrite the
+  file. A completed request is persisted before the cursor advances. Pagination
+  includes tombstones. Devices download a newer catalogue when the change feed
+  advertises one.
 - Creating, reading, replacing and deleting responses are supported by
   `/journal/sync`, `/journal/entries` and `/journal/changes`. Each date/input is an
   independent register; duplicate retries do not create entries or invalidations.
 - The winner is the greatest `(edited_at UTC, canonical mutation UUID)` tuple.
   Deletion uses the same ordering and clears the stored answer. Tombstones are
   retained so old offline devices cannot resurrect deleted entries. Device clocks
-  more than five minutes ahead are rejected with a retryable, actionable error.
+  more than five minutes ahead are rejected with a stable `clock_ahead` code, and the
+  app tells people to correct their clock. Their entries stay queued for retry.
 - Dates are explicit Profile-timezone calendar keys, never inferred from upload
   time. Historical entries retain their original timezone, recording/observation
   timestamps, catalogue version, entered units and missingness; normalized values
@@ -84,8 +88,9 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   isolation, idempotent retries, historical invalidation, merge order/tie-breaks,
   deletion/restore, missingness, unit normalization, consent, atomic rollback,
   pagination, export, account deletion races and retryable storage failures.
-  The temporary Swift harness covers local restart/retry, edits during upload,
-  protected cache failure/corruption handling and deletion during an upload.
+  iOS tests cover local restart/retry, merge order, cache corruption handling and
+  clock rejections. Edits during upload and deletion during an upload were checked by
+  the earlier temporary Swift harness, which is no longer tracked.
 - [x] Relevant accessibility: native accessibility labels, disabled empty-editor
   Save, explicit missingness choices and 44-point custom row/pin/explanation
   targets were checked. The iPhone 17e layout was inspected at accessibility text
@@ -108,11 +113,11 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   suggestions use cached data offline, the first-use state exposes Retry, pins
   persist immediately, and the full catalogue/private-category controls remain
   available. The suggested tracking count is guidance rather than a hard limit.
-- [x] Applicable regression coverage: the temporary Swift harness checks stable
-  daily selection, rotation across dates, pin priority, sensitive opt-in plus
-  deliberate use, No versus missing/deleted data, timezone/DST boundaries, rating
-  bounds and quantity limits after conversion. Backend coverage checks durable
-  per-key preference synchronization and saved consent enforcement.
+- [x] Applicable regression coverage: iOS tests check stable daily selection, rotation
+  across dates, pin priority, sensitive opt-in plus deliberate use, No versus
+  missing/deleted data, timezone boundaries, rating bounds and quantity limits after
+  conversion. Backend coverage checks durable per-key preference synchronization and
+  saved consent enforcement.
 - [x] Relevant accessibility: explicit Pin/Unpin labels, expanded/collapsed
   explanation state and 44-point custom button frames were measured in the
   native accessibility tree. Large-text presentation was inspected on iPhone 17e.
@@ -125,14 +130,18 @@ presentation, reminders and AI reflection remain in their scheduled later issues
 
 ## Checks and limits
 
-- Full backend suite: **241 passed**, with the existing Starlette/httpx
-  deprecation warning. Latest focused journal suite: **7 passed**, including the
-  additional account-deletion race and pending-local-export assertions.
-  Final timezone-preservation regression check: **1 passed**.
+- Full backend suite on 2 November 2026: **244 passed, 1 failed**, with the existing
+  Starlette/httpx deprecation warning. The failure is
+  `test_readiness_detail_returns_yearly_monthly_averages`, outside the journal: it
+  seeds data from the 1st of the month up to today, so it appears to have too little
+  data early in a month. Focused journal suite `test_journal_sync.py`: **9 passed**.
 - Existing catalogue/route baseline before changes: **68 passed**.
-- Temporary Swift verification harness: passed. No frontend tests were added to
-  the tracked source tree. Durable backend regression tests are in
+- iOS unit tests: **36 passed** on iPhone 17 (iOS 26.5). Durable regression tests are
+  in `ios/ConceptualFitnessTests/JournalTests.swift` (ranking, validation, timestamps,
+  offline saves, merging, private queues, idle syncs, catalogue refresh) and
   `backend/tests/test_journal_sync.py`.
+- Native check on iPhone 17 Pro (iOS 26.5): the journal file was unchanged across 65
+  idle seconds, and a pin and unpin both reached the local API with nothing left queued.
 - Final iOS Debug simulator build: passed. Swift type checking includes all new
   journal models, storage, ranking and views, and the account/export integration.
 - Changed-file Ruff, Python compilation and `git diff --check`: passed.
@@ -148,5 +157,5 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   validation remain in #57. The future analysis engine (#23) must consume the
   journal invalidation revision; this batch does not create speculative results.
 
-No production dependencies, CI changes, commits, pushes, pull requests or GitHub
-issue changes are part of this work. Real-device release validation remains #57.
+No production dependencies or CI changes are part of this work. Real-device release
+validation remains #57.
