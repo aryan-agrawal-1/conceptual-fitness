@@ -80,9 +80,12 @@ struct AppShellView: View {
         .environment(\.profileUnits, profileStore.profile?.unitSystem ?? .metric)
         .task { await profileStore.load() }
         .task {
+            if UIApplication.shared.applicationState == .active { await journalStore.synchronize() }
             while !Task.isCancelled {
-                if UIApplication.shared.applicationState == .active { await journalStore.synchronize() }
                 do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                if UIApplication.shared.applicationState == .active, journalStore.needsRetry {
+                    await journalStore.synchronize()
+                }
             }
         }
         .onDisappear { journalStore.stop() }

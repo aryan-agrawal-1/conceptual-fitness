@@ -14,6 +14,7 @@ final class JournalStore: ObservableObject {
     private var worker: Task<Void, Never>?
     private var syncAgain = false
     private var isActive = true
+    private var lastSyncFailed = false
     private let dataEpoch: Int
     private let perform: @MainActor (URLRequest) async throws -> Data
 
@@ -39,6 +40,11 @@ final class JournalStore: ObservableObject {
             guard let item = snapshot.catalogue?.behaviours.first(where: { $0.id == entry.behaviourId }) else { return false }
             return !sensitive.contains(item.categoryId) || enabled("opt_in:\(item.categoryId)")
         }
+    }
+    // Lets the foreground timer stay quiet when there is nothing to retry.
+    var needsRetry: Bool {
+        lastSyncFailed || snapshot.catalogue == nil || !syncableEntries.isEmpty
+            || snapshot.preferences.contains(where: \.pending)
     }
     var today: String { JournalCoding.day(Date(), timezone: timezone ?? "UTC") }
     func enabled(_ key: String) -> Bool { snapshot.preferences.first { $0.key == key }?.value == true }
@@ -118,14 +124,16 @@ final class JournalStore: ObservableObject {
                     var next = snapshot
                     merge(receipt.acknowledgements, into: &next)
                     guard persist(next) else { return }
+                    try await pullChanges()
                 }
-                try await pullChanges()
             } while syncAgain || !syncableEntries.isEmpty || snapshot.preferences.contains(where: \.pending)
+            lastSyncFailed = false
             message = pendingCount > 0 ? "Private changes are saved on this device. Enable their categories to sync them, or delete the responses." : nil
         } catch is CancellationError {
         } catch {
             let status = (error as? HTTPResponseError)?.statusCode ?? 0
             if status == 422 { try? await pullChanges() }
+            lastSyncFailed = true
             message = Self.failureMessage(for: error)
             logger.error("Journal sync failed; status=\(status); reason=request_failure")
         }
@@ -146,6 +154,11 @@ final class JournalStore: ObservableObject {
         while hasMore {
             try Task.checkCancellation()
             let page: JournalPage = try await get("/journal/changes?after=\(snapshot.cursor)")
+            hasMore = page.hasMore
+            // An idle poll must not rewrite the whole protected file.
+            guard !page.changes.isEmpty || page.cursor != snapshot.cursor || page.timezone != snapshot.timezone
+                    || page.goals != snapshot.goals || page.analysisRevision != snapshot.analysisRevision
+            else { continue }
             var next = snapshot
             merge(page.changes, into: &next)
             next.cursor = page.cursor
@@ -153,7 +166,6 @@ final class JournalStore: ObservableObject {
             next.goals = page.goals
             next.analysisRevision = page.analysisRevision
             guard persist(next) else { throw CancellationError() }
-            hasMore = page.hasMore
         }
     }
 

@@ -379,6 +379,67 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertTrue(JournalStore.failureMessage(for: URLError(.notConnectedToInternet)).contains("offline"))
     }
 
+    private func backdateFile() throws -> Date {
+        let past = Date(timeIntervalSince1970: 1_000_000_000)
+        try FileManager.default.setAttributes([.modificationDate: past], ofItemAtPath: fileURL.path)
+        return past
+    }
+
+    private func modified() throws -> Date? {
+        try FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
+    }
+
+    func testIdleSyncMakesOnePullAndLeavesTheFileAlone() async throws {
+        let store = makeStore()
+        await store.synchronize()
+        let past = try backdateFile()
+        server.requests = []
+        await store.synchronize()
+        XCTAssertEqual(server.paths.filter { $0.hasSuffix("/journal/changes") }.count, 1)
+        XCTAssertEqual(server.paths.count, 1)
+        XCTAssertEqual(try modified(), past)
+    }
+
+    func testProfileChangesAreStillPersisted() async throws {
+        let store = makeStore()
+        await store.synchronize()
+        let past = try backdateFile()
+        server.extraPageFields = ["timezone": "America/New_York"]
+        await store.synchronize()
+        XCTAssertEqual(store.timezone, "America/New_York")
+        XCTAssertNotEqual(try modified(), past)
+    }
+
+    func testPushPullsAgainToAdvanceTheCursor() async {
+        let store = makeStore()
+        await store.synchronize()
+        XCTAssertTrue(store.save(answer()))
+        server.requests = []
+        await store.synchronize()
+        XCTAssertEqual(server.paths.filter { $0.hasSuffix("/journal/changes") }.count, 2)
+        XCTAssertEqual(server.paths.filter { $0.hasSuffix("/journal/sync") }.count, 1)
+    }
+
+    func testNeedsRetryOnlyWhenThereIsSomethingToRetry() async {
+        let store = makeStore()
+        XCTAssertTrue(store.needsRetry)
+        await store.synchronize()
+        XCTAssertFalse(store.needsRetry)
+
+        XCTAssertTrue(store.save(answer("caffeine")))
+        await store.synchronize()
+        XCTAssertFalse(store.needsRetry, "Private changes wait for category access, not the timer")
+
+        XCTAssertTrue(store.save(answer()))
+        XCTAssertTrue(store.needsRetry)
+        server.pullError = URLError(.notConnectedToInternet)
+        await store.synchronize()
+        XCTAssertTrue(store.needsRetry)
+        server.pullError = nil
+        await store.synchronize()
+        XCTAssertFalse(store.needsRetry)
+    }
+
     func testCorruptFileIsPreservedAndBlocksWrites() async throws {
         let corrupt = Data("not json".utf8)
         try corrupt.write(to: fileURL)

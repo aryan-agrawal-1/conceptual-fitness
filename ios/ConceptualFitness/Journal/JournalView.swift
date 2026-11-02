@@ -8,7 +8,6 @@ struct JournalEditorSelection: Identifiable {
 
 struct JournalView: View {
     @ObservedObject var store: JournalStore
-    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedDay: String?
     @State private var selection: JournalEditorSelection?
     private var day: String { selectedDay ?? store.today }
@@ -68,9 +67,6 @@ struct JournalView: View {
         }
         .refreshable { await store.synchronize() }
         .task { await store.synchronize() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await store.synchronize() } }
-        }
     }
 
     @ViewBuilder private var syncStatus: some View {
