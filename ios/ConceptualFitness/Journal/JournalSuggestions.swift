@@ -26,11 +26,12 @@ enum JournalSuggestions {
         let sensitive = Set(catalogue.categories.filter(\.requiresOptIn).map(\.id))
         let date = dayDate(day)
         let recentStart = JournalCoding.day(date.addingTimeInterval(-29 * 86400), timezone: "UTC")
+        // Only earlier days count, so answering never reshuffles the selected day's list.
         let recent = snapshot.entries.filter {
-            !$0.deleted && $0.response?.answer != nil && $0.journalDate >= recentStart && $0.journalDate <= day
+            !$0.deleted && $0.response?.answer != nil && $0.journalDate >= recentStart && $0.journalDate < day
         }
         let deliberatelyUsed = Set(snapshot.entries.filter {
-            !$0.deleted && $0.response?.answer != nil && $0.journalDate <= day
+            !$0.deleted && $0.response?.answer != nil && $0.journalDate < day
         }.map(\.behaviourId))
         let dayNumber = Int(date.timeIntervalSince1970 / 86400)
         let eligible = catalogue.behaviours.filter {

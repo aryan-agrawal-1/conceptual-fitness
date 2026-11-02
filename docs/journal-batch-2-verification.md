@@ -52,7 +52,8 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   generated selection participates. All catalogue inputs remain accessible.
 - Scores combine pins (+1000), matching Profile goal keywords (+80), universal
   starting points (+60), record-building needs (+30), use in the last 30 days (+20)
-  and daily rotation (0–78). Equal scores sort by stable behaviour ID. Expanding a
+  and daily rotation (0–78). Only days before the selected date count as use, so
+  answering never reshuffles that day's list. Equal scores sort by stable behaviour ID. Expanding a
   suggestion explains the contributing rules. The implementation contains the
   explicit goal keyword mapping; unmatched free-form goals add no goal weight.
 - Record-building prioritizes previously used inputs with fewer than ten answers
@@ -62,7 +63,7 @@ presentation, reminders and AI reflection remain in their scheduled later issues
   the full catalogue even when more than five are pinned. The UI recommends roughly
   5–10 tracked inputs without enforcing a maximum.
 - Sensitive suggestions require current explicit category opt-in **and** a live,
-  deliberately answered response on or before the selected date. Explicit No
+  deliberately answered response before the selected date. Explicit No
   counts as deliberate use; unknown, skipped, deleted and provider data do not.
 - Private names/answers stay discreet in suggestions and saved-entry lists.
   Deliberately exploring an enabled category reveals input names for selection.

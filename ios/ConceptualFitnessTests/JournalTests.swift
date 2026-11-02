@@ -129,9 +129,27 @@ final class JournalSuggestionTests: XCTestCase {
         XCTAssertFalse(suggestsCaffeine(snapshot(entries: [deleted], settings: optIn)))
     }
 
-    func testPrivateUseAfterTheSelectedDateDoesNotCount() {
-        let later = entry("caffeine", day: "2026-11-03")
-        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [later], settings: [setting("opt_in:substances")])))
+    func testPrivateUseOnOrAfterTheSelectedDateDoesNotCount() {
+        let optIn = [setting("opt_in:substances")]
+        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [entry("caffeine", day: "2026-11-03")], settings: optIn)))
+        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [entry("caffeine", day: day)], settings: optIn)))
+    }
+
+    func testAnsweringDoesNotChangeTheListForThatDay() {
+        let before = JournalSuggestions.rank(snapshot(), day: day).map(\.id)
+        var entries: [JournalEntryData] = []
+        for id in before + ["sauna", "travel", "night_shift"] {
+            entries.append(entry(id, day: day))
+            XCTAssertEqual(JournalSuggestions.rank(snapshot(entries: entries), day: day).map(\.id), before)
+        }
+    }
+
+    func testEarlierAnswersStillBuildARecord() {
+        let earlier = entry("sauna", day: "2026-11-01")
+        let sauna = JournalSuggestions.rank(snapshot(entries: [earlier], settings: [setting("pin:sauna")]), day: day)
+            .first { $0.id == "sauna" }
+        XCTAssertTrue(sauna?.reasons.contains("Used in the last 30 days") == true)
+        XCTAssertTrue(sauna?.reasons.contains("Building a record: 1/10 recent entries") == true)
     }
 }
 
