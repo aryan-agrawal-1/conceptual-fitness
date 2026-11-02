@@ -76,24 +76,24 @@ struct JournalEntryEditor: View {
             Form {
                 Section {
                     Text(item.question).font(.title3.bold())
-                    Text("\(selection.day) · \(entryTimezone)")
+                    Text(JournalDay.title(selection.day, today: store.today))
                         .font(.footnote).foregroundStyle(.secondary)
                     if entryTimezone != store.timezone {
-                        Text("Input times use this entry’s original timezone. The selected journal date stays the same.")
+                        Text("Times use this entry’s original timezone, \(entryTimezone).")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     if !allowed {
-                        Text("Enable this private category before adding or changing an answer. You can still review or delete the saved response.")
+                        Text("Turn this category on to change the answer. You can still review or delete it.")
                             .foregroundStyle(.secondary)
                         NavigationLink("Manage private categories") { JournalPrivacyView(store: store) }
                     }
                 }
                 Section {
                     Picker("Response", selection: $mode) {
-                        Text("Provide an answer").tag("answer")
-                        Text("Not answered").tag("not_answered")
-                        Text("Skip for now").tag("skipped")
-                        Text("Not applicable").tag("not_applicable")
+                        Text("Answer").tag("answer")
+                        if mode == "not_answered" { Text("Not answered").tag("not_answered") }
+                        Text("Skip for today").tag("skipped")
+                        Text("Doesn’t apply").tag("not_applicable")
                         Text("Unavailable").tag("unavailable")
                     }
                     .disabled(!allowed)
@@ -101,8 +101,6 @@ struct JournalEntryEditor: View {
                         JournalFieldControl(field: item.answer, draft: binding("answer"), units: store.snapshot.catalogue?.units ?? [])
                             .disabled(!allowed)
                     }
-                } footer: {
-                    Text("No and zero are explicit answers. Missing or skipped responses remain unknown.")
                 }
                 if showDetails && !item.details.isEmpty {
                     Section("Optional details") {
@@ -112,7 +110,7 @@ struct JournalEntryEditor: View {
                     }.disabled(!allowed)
                 }
                 if item.answer.inputType == "text" {
-                    Section { Text("This note is saved for you. It is excluded from statistical inputs and is not sent to AI by this journal.").font(.footnote).foregroundStyle(.secondary) }
+                    Section { Text("This note is just for you. It isn’t used in patterns or sent to AI.").font(.footnote).foregroundStyle(.secondary) }
                 }
                 if let saveError {
                     Section { Text(saveError).foregroundStyle(.red).accessibilityIdentifier("journal.saveError") }
@@ -123,11 +121,11 @@ struct JournalEntryEditor: View {
                             if store.delete(item.id, day: selection.day) { dismiss() }
                             else { saveError = store.message }
                         }.disabled(store.storageBlocked)
-                    } footer: {
-                        Text("Your updates apply to this journal date and will be used when insights are calculated. Saving or deleting a response does not mark a day complete.")
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .navigationTitle(item.label)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -137,6 +135,7 @@ struct JournalEntryEditor: View {
                 }
             }
         }
+        .presentationDetents([.medium, .large])
     }
 
     private var showDetails: Bool {
@@ -200,8 +199,7 @@ private struct JournalFieldControl: View {
                     .lineLimit(4...10).accessibilityLabel(field.label)
                 Text("\(draft.text.count)/2000 characters").font(.caption).foregroundStyle(.secondary)
             case "time":
-                TextField("\(field.label) (HH:mm)", text: $draft.text)
-                    .keyboardType(.numbersAndPunctuation).accessibilityLabel("\(field.label), 24 hour time, HH colon mm")
+                JournalTimeField(label: field.label, text: $draft.text)
             default:
                 TextField(field.label, text: $draft.text).keyboardType(.decimalPad)
                     .accessibilityLabel(field.label)

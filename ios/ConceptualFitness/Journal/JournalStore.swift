@@ -85,6 +85,35 @@ final class JournalStore: ObservableObject {
         if persist(next) { scheduleSync() }
     }
 
+    func isPinned(_ behaviour: JournalBehaviourData) -> Bool {
+        JournalDailyList.isPinned(behaviour, in: snapshot)
+    }
+
+    @discardableResult
+    func answer(_ behaviour: JournalBehaviourData, day: String, answer: JournalAnswerData?,
+                details: [String: JournalAnswerData] = [:], missingReason: String? = nil) -> Bool {
+        save(.updating(entry(behaviour.id, day: day)?.response, behaviourId: behaviour.id, day: day,
+                       catalogueVersion: snapshot.catalogue?.version ?? 1, timezone: timezone ?? "UTC",
+                       answer: answer, details: details, missingReason: missingReason))
+    }
+
+    // Turning a category on pins everything in it again, including rows unpinned earlier.
+    func setCategory(_ category: String, enabled: Bool) {
+        var next = snapshot
+        var keys = ["opt_in:\(category)"]
+        if enabled {
+            let ids = snapshot.catalogue?.behaviours.filter { $0.categoryId == category }.map(\.id) ?? []
+            keys += ids.map { "pin:\($0)" }.filter { key in snapshot.preferences.contains { $0.key == key && !$0.value } }
+        }
+        for key in keys {
+            next.preferences.removeAll { $0.key == key }
+            next.preferences.append(JournalSettingData(key: key, value: key.hasPrefix("opt_in:") ? enabled : true,
+                                                       editedAt: nextStamp(), mutationId: UUID().uuidString.lowercased(),
+                                                       pending: true))
+        }
+        if persist(next) { scheduleSync() }
+    }
+
     func restore() {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {

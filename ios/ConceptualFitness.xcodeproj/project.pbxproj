@@ -10,7 +10,7 @@
 		01000000000000000000004C /* JournalEntryEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004C /* JournalEntryEditor.swift */; };
 		01000000000000000000004B /* JournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004B /* JournalView.swift */; };
 		01000000000000000000004A /* JournalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004A /* JournalStore.swift */; };
-		010000000000000000000049 /* JournalSuggestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000049 /* JournalSuggestions.swift */; };
+		010000000000000000000049 /* JournalDailyList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000049 /* JournalDailyList.swift */; };
 		010000000000000000000048 /* JournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000048 /* JournalModels.swift */; };
 		010000000000000000000047 /* ProfileHealthEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000047 /* ProfileHealthEditors.swift */; };
 		010000000000000000000046 /* ProfileEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000046 /* ProfileEditors.swift */; };
@@ -75,13 +75,14 @@
 		010000000000000000000035 /* AnatomeMuscleMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000038 /* AnatomeMuscleMapView.swift */; };
 		010000000000000000000036 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000039 /* WebKit.framework */; };
 		01000000000000000000F001 /* JournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000F001 /* JournalTests.swift */; };
+		01000000000000000000004D /* JournalLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004D /* JournalLedgerRow.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		02000000000000000000004C /* JournalEntryEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalEntryEditor.swift; sourceTree = "<group>"; };
 		02000000000000000000004B /* JournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalView.swift; sourceTree = "<group>"; };
 		02000000000000000000004A /* JournalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalStore.swift; sourceTree = "<group>"; };
-		020000000000000000000049 /* JournalSuggestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalSuggestions.swift; sourceTree = "<group>"; };
+		020000000000000000000049 /* JournalDailyList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalDailyList.swift; sourceTree = "<group>"; };
 		020000000000000000000048 /* JournalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalModels.swift; sourceTree = "<group>"; };
 		020000000000000000000047 /* ProfileHealthEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHealthEditors.swift; sourceTree = "<group>"; };
 		020000000000000000000046 /* ProfileEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileEditors.swift; sourceTree = "<group>"; };
@@ -150,6 +151,7 @@
 		020000000000000000000039 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		02000000000000000000F001 /* JournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalTests.swift; sourceTree = "<group>"; };
 		02000000000000000000F002 /* ConceptualFitnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConceptualFitnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		02000000000000000000004D /* JournalLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalLedgerRow.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -188,10 +190,11 @@
 			isa = PBXGroup;
 			children = (
 				020000000000000000000048 /* JournalModels.swift */,
-				020000000000000000000049 /* JournalSuggestions.swift */,
+				020000000000000000000049 /* JournalDailyList.swift */,
 				02000000000000000000004A /* JournalStore.swift */,
 				02000000000000000000004B /* JournalView.swift */,
 				02000000000000000000004C /* JournalEntryEditor.swift */,
+				02000000000000000000004D /* JournalLedgerRow.swift */,
 				020000000000000000000001 /* ConceptualFitnessApp.swift */,
 				020000000000000000000012 /* Info.plist */,
 				020000000000000000000013 /* ConceptualFitness.entitlements */,
@@ -432,10 +435,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				010000000000000000000048 /* JournalModels.swift in Sources */,
-				010000000000000000000049 /* JournalSuggestions.swift in Sources */,
+				010000000000000000000049 /* JournalDailyList.swift in Sources */,
 				01000000000000000000004A /* JournalStore.swift in Sources */,
 				01000000000000000000004B /* JournalView.swift in Sources */,
 				01000000000000000000004C /* JournalEntryEditor.swift in Sources */,
+				01000000000000000000004D /* JournalLedgerRow.swift in Sources */,
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,

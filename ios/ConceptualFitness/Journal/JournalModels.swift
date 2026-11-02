@@ -92,6 +92,20 @@ struct JournalResponseData: Codable {
     var missingReason: String?
 }
 
+extension JournalResponseData {
+    // Keeps the original timezone and recording time when an answer changes.
+    static func updating(_ existing: JournalResponseData?, behaviourId: String, day: String, catalogueVersion: Int,
+                         timezone: String, answer: JournalAnswerData?, details: [String: JournalAnswerData] = [:],
+                         missingReason: String? = nil) -> JournalResponseData {
+        let keptDetails = answer?.value == .boolean(false) ? [:] : details
+        return JournalResponseData(
+            catalogueVersion: catalogueVersion, journalDate: day, timezone: existing?.timezone ?? timezone,
+            recordedAt: existing?.recordedAt ?? JournalCoding.timestamp(), observedAt: existing?.observedAt,
+            behaviourId: behaviourId, answer: answer, details: answer == nil ? [:] : keptDetails,
+            missingReason: answer == nil ? missingReason : nil)
+    }
+}
+
 struct JournalEntryData: Codable, Identifiable {
     var journalDate: String
     var behaviourId: String

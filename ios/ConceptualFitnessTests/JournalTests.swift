@@ -70,86 +70,142 @@ private func snapshot(entries: [JournalEntryData] = [], settings: [JournalSettin
     return value
 }
 
-final class JournalSuggestionTests: XCTestCase {
+final class JournalDailyListTests: XCTestCase {
     private let day = "2026-11-02"
+    private let optIn = setting("opt_in:substances")
 
-    func testSelectsExactlyFiveAndExcludesFreeText() {
-        let ranked = JournalSuggestions.rank(snapshot(), day: day)
-        XCTAssertEqual(ranked.count, 5)
-        XCTAssertFalse(ranked.contains { $0.id == "daily_note" })
+    private func sections(_ value: JournalSnapshot) -> JournalDailySections {
+        JournalDailyList.sections(value, day: day)
     }
 
-    func testRankingIsStableForADateAndRotatesAcrossDates() {
-        let first = JournalSuggestions.rank(snapshot(), day: day).map(\.id)
-        XCTAssertEqual(first, JournalSuggestions.rank(snapshot(), day: day).map(\.id))
-        let week = ["2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"]
-            .map { JournalSuggestions.rank(snapshot(), day: $0).map(\.id) }
-        XCTAssertTrue(week.contains { $0 != first })
+    func testDefaultPinsAreFixedAndInOrder() {
+        XCTAssertEqual(sections(snapshot()).pinned.map(\.id), ["mood", "stress", "energy", "worked_late", "screen_in_bed"])
     }
 
-    func testPinsRankFirstAndExplainThemselves() {
-        let ranked = JournalSuggestions.rank(snapshot(settings: [setting("pin:sauna")]), day: day)
-        XCTAssertEqual(ranked.first?.id, "sauna")
-        XCTAssertTrue(ranked.first?.reasons.contains("Pinned by you") == true)
+    func testListDoesNotRotateAcrossDates() {
+        let first = sections(snapshot())
+        let later = JournalDailyList.sections(snapshot(), day: "2026-11-09")
+        XCTAssertEqual(first.pinned.map(\.id), later.pinned.map(\.id))
+        XCTAssertEqual(first.others.map(\.id), later.others.map(\.id))
     }
 
-    func testMoreThanFivePinsStillSelectsFive() {
-        let pins = ["mood", "stress", "energy", "screen_in_bed", "worked_late", "travel", "sauna"]
-        let ranked = JournalSuggestions.rank(snapshot(settings: pins.map { setting("pin:\($0)") }), day: day)
-        XCTAssertEqual(ranked.count, 5)
-        XCTAssertTrue(ranked.allSatisfy { pins.contains($0.id) })
+    func testYouCanUnpinADefaultAndPinAnything() {
+        let result = sections(snapshot(settings: [setting("pin:stress", false), setting("pin:sauna")]))
+        XCTAssertEqual(result.pinned.map(\.id), ["mood", "energy", "worked_late", "screen_in_bed", "sauna"])
+        XCTAssertTrue(result.others.contains { $0.id == "stress" })
     }
 
-    func testProfileGoalsAddReason() {
-        let ranked = JournalSuggestions.rank(snapshot(goals: ["Better mood"]), day: day)
-        XCTAssertTrue(ranked.first { $0.id == "mood" }?.reasons.contains("Matches a Profile goal") == true)
+    func testPrivateCategoryIsHiddenUntilTurnedOn() {
+        let off = sections(snapshot())
+        XCTAssertTrue(off.privatePinned.isEmpty)
+        XCTAssertFalse(off.others.contains { $0.id == "caffeine" })
+        XCTAssertEqual(sections(snapshot(settings: [optIn])).privatePinned.map(\.id), ["substances"])
+        XCTAssertEqual(sections(snapshot(settings: [optIn])).privatePinned.first?.behaviours.map(\.id), ["caffeine"])
     }
 
-    private func suggestsCaffeine(_ value: JournalSnapshot) -> Bool {
-        // Pinning guarantees selection whenever the input is eligible.
-        var pinned = value
-        pinned.preferences.append(setting("pin:caffeine"))
-        return JournalSuggestions.rank(pinned, day: day).contains { $0.id == "caffeine" }
+    func testUnpinnedPrivateInputMovesToOthers() {
+        let result = sections(snapshot(settings: [optIn, setting("pin:caffeine", false)]))
+        XCTAssertTrue(result.privatePinned.isEmpty)
+        XCTAssertTrue(result.others.contains { $0.id == "caffeine" })
     }
 
-    func testPrivateInputNeedsOptInAndDeliberateAnswer() {
-        let answered = entry("caffeine", day: "2026-11-01")
-        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [answered])))
-        XCTAssertFalse(suggestsCaffeine(snapshot(settings: [setting("opt_in:substances")])))
-        XCTAssertTrue(suggestsCaffeine(snapshot(entries: [answered], settings: [setting("opt_in:substances")])))
+    func testAnswersInACategoryThatIsOffStayReviewable() {
+        let saved = entry("caffeine", day: day)
+        XCTAssertEqual(sections(snapshot(entries: [saved])).turnedOff.map(\.id), ["caffeine"])
+        XCTAssertTrue(sections(snapshot()).turnedOff.isEmpty)
+        let deleted = entry("caffeine", day: day, deleted: true)
+        XCTAssertTrue(sections(snapshot(entries: [deleted])).turnedOff.isEmpty)
     }
 
-    func testExplicitNoCountsAsDeliberateButMissingAndDeletedDoNot() {
-        let optIn = [setting("opt_in:substances")]
-        let no = entry("caffeine", day: "2026-11-01", answer: .init(type: "boolean", value: .boolean(false)))
-        XCTAssertTrue(suggestsCaffeine(snapshot(entries: [no], settings: optIn)))
-        let skipped = entry("caffeine", day: "2026-11-01", answer: nil, missing: "skipped")
-        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [skipped], settings: optIn)))
-        let deleted = entry("caffeine", day: "2026-11-01", deleted: true)
-        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [deleted], settings: optIn)))
+    func testAnsweringDoesNotMoveRows() {
+        let before = sections(snapshot())
+        let entries = (before.pinned + before.others).map { entry($0.id, day: day) }
+        let after = sections(snapshot(entries: entries))
+        XCTAssertEqual(before.pinned.map(\.id), after.pinned.map(\.id))
+        XCTAssertEqual(before.others.map(\.id), after.others.map(\.id))
     }
 
-    func testPrivateUseOnOrAfterTheSelectedDateDoesNotCount() {
-        let optIn = [setting("opt_in:substances")]
-        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [entry("caffeine", day: "2026-11-03")], settings: optIn)))
-        XCTAssertFalse(suggestsCaffeine(snapshot(entries: [entry("caffeine", day: day)], settings: optIn)))
+    func testGoalsAndEarlierUseOrderTheOtherInputs() {
+        XCTAssertEqual(sections(snapshot(goals: ["Better sleep"])).others.first?.id, "night_shift")
+        let used = sections(snapshot(entries: [entry("travel", day: "2026-11-01")]))
+        XCTAssertEqual(used.others.first?.id, "travel")
     }
 
-    func testAnsweringDoesNotChangeTheListForThatDay() {
-        let before = JournalSuggestions.rank(snapshot(), day: day).map(\.id)
-        var entries: [JournalEntryData] = []
-        for id in before + ["sauna", "travel", "night_shift"] {
-            entries.append(entry(id, day: day))
-            XCTAssertEqual(JournalSuggestions.rank(snapshot(entries: entries), day: day).map(\.id), before)
+    func testLoggedCountIgnoresSkippedAndDeleted() {
+        let entries = [entry("mood", day: day), entry("travel", day: day, answer: .init(type: "boolean", value: .boolean(false))),
+                       entry("stress", day: day, answer: nil, missing: "skipped"), entry("energy", day: day, deleted: true),
+                       entry("sauna", day: "2026-11-01")]
+        XCTAssertEqual(JournalDailyList.loggedCount(snapshot(entries: entries), day: day), 2)
+    }
+
+    func testTargetIsReachedAtFiveAnswers() {
+        XCTAssertFalse(JournalDailyList.reachedTarget(0))
+        XCTAssertFalse(JournalDailyList.reachedTarget(4))
+        XCTAssertTrue(JournalDailyList.reachedTarget(5))
+        XCTAssertTrue(JournalDailyList.reachedTarget(7))
+    }
+
+    func testWeekEndsTodayAndTitlesAreRelative() {
+        let week = JournalDay.week(endingOn: "2026-11-02")
+        XCTAssertEqual(week.map(\.id).first, "2026-10-27")
+        XCTAssertEqual(week.map(\.id).last, "2026-11-02")
+        XCTAssertEqual(week.last?.number, "2")
+        XCTAssertEqual(JournalDay.title("2026-11-02", today: "2026-11-02"), "Today")
+        XCTAssertEqual(JournalDay.title("2026-11-01", today: "2026-11-02"), "Yesterday")
+        XCTAssertNotEqual(JournalDay.title("2026-10-20", today: "2026-11-02"), "Today")
+    }
+}
+
+final class JournalAnswerUpdateTests: XCTestCase {
+    private let yes = JournalAnswerData(type: "boolean", value: .boolean(true))
+    private let no = JournalAnswerData(type: "boolean", value: .boolean(false))
+    private let time = JournalAnswerData(type: "time", value: .text("14:30"))
+
+    private func update(_ existing: JournalResponseData?, _ answer: JournalAnswerData?,
+                        details: [String: JournalAnswerData] = [:], missing: String? = nil) -> JournalResponseData {
+        .updating(existing, behaviourId: "caffeine", day: "2026-11-02", catalogueVersion: 1, timezone: "UTC",
+                  answer: answer, details: details, missingReason: missing)
+    }
+
+    func testChangingAnAnswerKeepsOriginalTimezoneAndRecordingTime() {
+        let original = response("caffeine", day: "2026-11-02", answer: yes)
+        let updated = update(original, no)
+        XCTAssertEqual(updated.timezone, "Europe/London")
+        XCTAssertEqual(updated.recordedAt, original.recordedAt)
+    }
+
+    func testAnsweringNoClearsDetails() {
+        XCTAssertEqual(update(nil, yes, details: ["last_use": time]).details["last_use"]?.value, .text("14:30"))
+        XCTAssertTrue(update(nil, no, details: ["last_use": time]).details.isEmpty)
+    }
+
+    func testSkippingClearsTheAnswerAndKeepsTheReason() {
+        let skipped = update(response("caffeine", day: "2026-11-02", answer: yes), nil, details: ["last_use": time], missing: "skipped")
+        XCTAssertNil(skipped.answer)
+        XCTAssertTrue(skipped.details.isEmpty)
+        XCTAssertEqual(skipped.missingReason, "skipped")
+    }
+
+    func testRowsKeepOneMainDetailInline() {
+        func field(_ id: String, _ type: String) -> JournalFieldData {
+            JournalFieldData(id: id, label: id, inputType: type, minimum: 0, maximum: 10, units: [], ratingLabels: [])
         }
+        let caffeine = [field("amount", "quantity"), field("servings", "count"), field("last_use", "time")]
+        XCTAssertEqual(JournalDetailPanel.inlineFields(caffeine).map(\.id), ["servings"])
+        let alcohol = [field("amount", "quantity"), field("last_use", "time")]
+        XCTAssertEqual(JournalDetailPanel.inlineFields(alcohol).map(\.id), ["amount"])
+        XCTAssertEqual(JournalDetailPanel.inlineFields([field("severity", "rating")]).map(\.id), ["severity"])
+        XCTAssertTrue(JournalDetailPanel.inlineFields([field("last_use", "time")]).isEmpty)
     }
 
-    func testEarlierAnswersStillBuildARecord() {
-        let earlier = entry("sauna", day: "2026-11-01")
-        let sauna = JournalSuggestions.rank(snapshot(entries: [earlier], settings: [setting("pin:sauna")]), day: day)
-            .first { $0.id == "sauna" }
-        XCTAssertTrue(sauna?.reasons.contains("Used in the last 30 days") == true)
-        XCTAssertTrue(sauna?.reasons.contains("Building a record: 1/10 recent entries") == true)
+    func testSliderSpecsCoverEveryUnitField() {
+        func field(_ units: [String]) -> JournalFieldData {
+            JournalFieldData(id: "amount", label: "Amount", inputType: "quantity", minimum: 0, maximum: 100_000, units: units, ratingLabels: [])
+        }
+        XCTAssertEqual(JournalSliderSpec.spec(behaviour: "alcohol", field: field(["uk_alcohol_unit", "mL_ethanol"]))?.unit, "uk_alcohol_unit")
+        XCTAssertEqual(JournalSliderSpec.spec(behaviour: "caffeine", field: field(["mg", "g"]))?.unit, "mg")
+        XCTAssertEqual(JournalSliderSpec.spec(behaviour: "sauna", field: field(["s", "min", "h"]))?.unit, "min")
+        XCTAssertEqual(JournalSliderSpec.spec(behaviour: "cold_exposure", field: field(["s", "min", "h"]))?.range.upperBound, 30)
     }
 }
 
@@ -510,6 +566,31 @@ final class JournalStoreTests: XCTestCase {
         await store.synchronize()
         XCTAssertEqual(store.snapshot.catalogue?.version, 1)
         XCTAssertTrue(store.needsRetry)
+    }
+
+    func testTurningACategoryBackOnPinsEverythingAgain() async {
+        let store = makeStore()
+        await store.synchronize()
+        store.setCategory("substances", enabled: true)
+        let caffeine = testCatalogue.behaviours.first { $0.id == "caffeine" }!
+        XCTAssertTrue(store.isPinned(caffeine))
+
+        store.set("pin:caffeine", value: false)
+        XCTAssertFalse(store.isPinned(caffeine))
+        store.setCategory("substances", enabled: false)
+        XCTAssertFalse(store.isPinned(caffeine))
+        store.setCategory("substances", enabled: true)
+        XCTAssertTrue(store.isPinned(caffeine))
+    }
+
+    func testRowAnswersSaveAndClear() async {
+        let store = makeStore()
+        await store.synchronize()
+        let item = testCatalogue.behaviours.first { $0.id == "worked_late" }!
+        XCTAssertTrue(store.answer(item, day: "2026-11-02", answer: .init(type: "boolean", value: .boolean(true))))
+        XCTAssertEqual(store.entry("worked_late", day: "2026-11-02")?.response?.answer?.value, .boolean(true))
+        XCTAssertTrue(store.delete("worked_late", day: "2026-11-02"))
+        XCTAssertNil(store.entry("worked_late", day: "2026-11-02"))
     }
 
     func testCorruptFileIsPreservedAndBlocksWrites() async throws {
