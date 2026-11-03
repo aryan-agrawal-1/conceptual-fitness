@@ -62,7 +62,6 @@ def rebuild_derived_scores(
     end: date,
     include_dependents: bool = False,
 ) -> ScoreRebuildResult:
-    # Serialize score publication across current sync, history and manual edits.
     session.execute(select(User.id).where(User.id == user_id).with_for_update())
     profile = get_or_create_profile(session, user_id)
     today = local_date_for_profile(profile)
@@ -70,10 +69,7 @@ def rebuild_derived_scores(
         latest_score_date = session.scalar(select(func.max(DailyScore.score_date)).where(
             DailyScore.user_id == user_id,
         ))
-        # Invalidate existing dependent windows; do not invent empty future history.
         today = min(today, max(end, latest_score_date or end))
-    # Raw inputs feed up to 90 days of exercise references (baselines use 60).
-    # ponytail: rebuild all score types in this window; split by metric if profiling warrants.
     effective_end = min(end + timedelta(days=90) if include_dependents else end, today)
     if effective_end < start:
         effective_end = start
@@ -94,8 +90,6 @@ def rebuild_derived_scores(
         previous_inputs = deepcopy((previous.value, previous.components, previous.data_quality)) if previous else None
         strain = _upsert_strain_score(session, user_id=user_id, profile=profile, day=day)
         if include_dependents and previous_inputs != (strain.value, strain.components, strain.data_quality):
-            # Changed strain feeds 90-day category rates, 60-day baselines and
-            # 63-day residual comparisons. Propagate only while inputs change.
             effective_end = max(effective_end, min(day + timedelta(days=90), today))
         _upsert_readiness_score(session, user_id=user_id, profile=profile, day=day)
         scores_rebuilt += 3

@@ -65,7 +65,6 @@ struct JournalView: View {
         .task { await store.synchronize() }
     }
 
-    // Stays until yesterday is completed, for anyone who chose "Not now".
     @ViewBuilder private var checkInCard: some View {
         if JournalCheckIn.isDue(store.snapshot, onboardedAt: onboardedAt) {
             let yesterday = JournalDay.previous(store.today)
@@ -122,7 +121,6 @@ struct JournalView: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        // Seven columns can't reflow, so larger sizes would break the dates across lines.
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
@@ -150,7 +148,6 @@ struct JournalView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(HealthTheme.color(for: .readiness))
             } else if JournalDailyList.reachedTarget(logged) {
-                // Sits in the header's existing space, so reaching five doesn't move any rows.
                 Button("Complete check-in", action: completeSelectedDay)
                     .font(.subheadline.weight(.semibold))
                     .buttonStyle(.borderedProminent)
@@ -173,13 +170,11 @@ struct JournalView: View {
         }
     }
 
-    // Today and yesterday go on to the optional step. Older days are usually backfilled in a run.
     private func completeSelectedDay() {
         guard store.complete(day: day) else { return }
         if day >= JournalDay.previous(store.today) { checkIn = JournalCheckInSelection(day: day) }
     }
 
-    // Normal saves stay silent so rows don't move. This only appears when a sync needs attention.
     @ViewBuilder private var syncStatus: some View {
         if let message = store.message {
             VStack(alignment: .leading, spacing: 4) {

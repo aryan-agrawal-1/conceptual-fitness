@@ -46,7 +46,6 @@ logger = logging.getLogger(__name__)
 
 INITIAL_BACKFILL_DAYS = 14
 HISTORICAL_BACKFILL_DAYS = 90
-# ponytail: one-hour lease; add worker heartbeats if a single source can take longer.
 SYNC_LEASE = timedelta(hours=1)
 
 
@@ -377,7 +376,6 @@ async def sync_google_account_range(
         if historical_cursor is not None and not successful_types:
             raise RuntimeError("Historical source import failed")
 
-        # Coalesce every page into one durable checkpoint per source.
         rebuild_started = perf_counter()
         rebuild_daily_summaries(session, user_id=account.user_id, start=start, end=end)
         if profile:
@@ -482,7 +480,6 @@ def prepare_historical_backfill(
             )
             session.add(row)
         cursor = cursors.get(data_type)
-        # A completed full-range sync is a receipt, even if no history job ran.
         if (
             row.status != SyncStatus.succeeded and row.last_successful_start is None
             and account.sync_started_at is None and account.last_sync_at is not None

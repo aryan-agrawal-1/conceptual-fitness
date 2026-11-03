@@ -1670,7 +1670,6 @@ def test_full_range_sync_receipt_completes_history_without_a_worker(session, mon
     assert rows[0].status == SyncStatus.succeeded
     assert rows[0].completed_at == account.last_sync_at
     assert rows[0].last_successful_start == start
-    # Current sync freshness/worker activity cannot undo a recorded completion.
     account.last_sync_at = None
     assert sync_service.prepare_historical_backfill(session, account=account)[0].status == SyncStatus.succeeded
 
@@ -1692,7 +1691,6 @@ def test_existing_records_are_available_not_falsely_reported_as_zero_history(ses
     assert history["coverage_state"] == "untracked"
     assert history["stored_from"] == (date.today() - timedelta(days=100)).isoformat()
     assert history["stored_through"] == date.today().isoformat()
-    # Records at two dates do not prove every source/page was imported.
     assert history["status"] != "complete"
 
 

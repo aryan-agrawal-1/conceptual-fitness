@@ -178,7 +178,6 @@ def lock_account(session: Session, user_id: str) -> None:
 
 
 def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
-    # All journal writers use the same account lock, including first insertion.
     lock_account(session, user_id)
     state = session.get(JournalState, user_id)
     if state is None:
@@ -244,7 +243,6 @@ def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
 
 
 def changes(session: Session, user_id: str, after: int, limit: int) -> dict:
-    # The account lock prevents a page boundary racing an in-flight transaction.
     lock_account(session, user_id)
     entries = session.scalars(select(JournalEntry).where(
         JournalEntry.user_id == user_id, JournalEntry.revision > after,

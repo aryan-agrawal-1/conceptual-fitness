@@ -141,13 +141,11 @@ final class JournalDaysTests: XCTestCase {
     func testCompletionIsLateOnlyAfterTheFollowingCalendarDay() {
         XCTAssertFalse(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-02T23:30:00.000Z")))
         XCTAssertTrue(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-03T00:30:00.000Z")))
-        // The timezone saved with the completion decides, not UTC.
         XCTAssertFalse(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-03T00:30:00.000Z",
                                                         timezone: "America/New_York")))
     }
 
     func testMonthGridLinesUpWeekdaysAndLeapYears() {
-        // 1 November 2026 is a Sunday.
         XCTAssertEqual(JournalDay.monthGrid("2026-11-15", firstWeekday: 1).prefix(1), ["2026-11-01"])
         let monday = JournalDay.monthGrid("2026-11-15", firstWeekday: 2)
         XCTAssertEqual(monday.prefix(6).compactMap { $0 }.count, 0)
@@ -366,7 +364,6 @@ final class JournalPromptTests: XCTestCase {
     func testBoundaryFollowsProfileTimezoneNotTheDevice() {
         var value = snapshot()
         value.timezone = "Asia/Tokyo"
-        // 19:30 in London is already 04:30 the next day in Tokyo.
         XCTAssertTrue(JournalCheckIn.shouldPrompt(value, now: londonDate("2026-11-02 19:30"), lastPromptDay: "2026-11-02"))
         XCTAssertFalse(JournalCheckIn.shouldPrompt(value, now: londonDate("2026-11-02 18:30"), lastPromptDay: "2026-11-02"))
     }
@@ -770,7 +767,6 @@ final class JournalCodingTests: XCTestCase {
     }
 
     func testDayFollowsProfileTimezoneAcrossDST() {
-        // 00:30 UTC on 25 Oct 2026 is still the previous evening in New York.
         let instant = JournalCoding.instant("2026-10-25T00:30:00Z")
         XCTAssertEqual(JournalCoding.day(instant, timezone: "America/New_York"), "2026-10-24")
         XCTAssertEqual(JournalCoding.day(instant, timezone: "Europe/London"), "2026-10-25")
@@ -819,7 +815,6 @@ final class FakeJournalServer {
         let change = duringUpload
         duringUpload = nil
         change?()
-        // Echoes every mutation as accepted, as the server does for winning edits.
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
         let entries = (body["entries"] as? [[String: Any]] ?? []).map { $0.merging(["kind": "entry"]) { $1 } }
         let settings = (body["preferences"] as? [[String: Any]] ?? []).map { $0.merging(["kind": "preference"]) { $1 } }
@@ -1147,7 +1142,6 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertTrue(store.delete("mood", day: "2026-11-02"))
         XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, false)
         XCTAssertEqual(store.completion(day: "2026-11-02")?.firstCompletedAt, first)
-        // Reaching five again isn't enough: completing is always explicit.
         XCTAssertTrue(store.save(response("mood", day: "2026-11-02", answer: .init(type: "boolean", value: .boolean(true)))))
         XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, false)
         XCTAssertTrue(store.complete(day: "2026-11-02"))
@@ -1203,7 +1197,6 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertTrue(store.complete(day: "2026-11-02"))
         await store.synchronize()
         let local = store.completion(day: "2026-11-02")
-        // An older edit from another device loses, but its earlier first completion is kept.
         server.pageChanges = [["kind": "completion", "journal_date": "2026-11-02", "completed": false,
                                "first_completed_at": "2020-01-01T08:00:00Z", "timezone": "Asia/Tokyo",
                                "edited_at": "2020-01-01T08:00:00Z",

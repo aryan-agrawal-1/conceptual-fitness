@@ -9,13 +9,11 @@ struct JournalReminderSettings: Codable, Equatable {
 }
 
 enum JournalReminderPlan {
-    // Fixed wording, so notifications can't reveal what someone tracks.
     static let title = "Daily check-in"
     static let body = "Your check-in is ready."
     static let identifierPrefix = "journalReminder."
     // Individual dates rather than a repeat, because a repeat can't skip a day that's already done.
     static let horizonDays = 30
-    // Before this hour a reminder is about yesterday; from it onward, today.
     static let eveningHour = 12
 
     static func fireDates(_ settings: JournalReminderSettings, snapshot: JournalSnapshot, now: Date = Date(),
@@ -48,7 +46,6 @@ final class JournalReminders: ObservableObject {
     private var settingsKey: String { "journalReminder.\(userID)" }
     private var offeredKey: String { "journalReminderOffered.\(userID)" }
 
-    // Reminders stay on this device, because each device schedules its own.
     init(userID: String) {
         self.userID = userID
         settings = UserDefaults.standard.data(forKey: "journalReminder.\(userID)")
@@ -94,7 +91,6 @@ final class JournalReminders: ObservableObject {
         schedule()
     }
 
-    // Sign-out keeps these settings for that account but must not leave reminders firing.
     func stop() {
         stopped = true
         scheduling?.cancel()

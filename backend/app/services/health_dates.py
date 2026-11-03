@@ -58,7 +58,6 @@ def age_on(profile: UserProfile, day: date) -> int | None:
         return day.year - profile.birth_year
     return None
 
-# estimate max heart rate (HUNT Fitness Study)
 def estimated_max_heart_rate(profile: UserProfile, day: date) -> tuple[float | None, str]:
     age = age_on(profile, day)
     if age is None or age <= 0:

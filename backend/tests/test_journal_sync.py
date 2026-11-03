@@ -119,7 +119,6 @@ def test_sensitive_consent_normalization_missingness_and_no_provider_impersonati
     assert "journal-owner" not in caplog.text
     assert "caffeine" not in caplog.text
     assert "0.2" not in caplog.text
-    # Revoke access: existing values remain user-owned, but new sensitive writes require consent.
     assert client.post("/journal/sync", headers=headers, json={"preferences": [
         pref("opt_in:substances", False, stamp="2026-10-25T13:00:00Z"),
     ]}).status_code == 200
@@ -195,7 +194,6 @@ def test_clock_ahead_is_actionable_retryable_and_payload_free(session, auth_head
     assert "reason=clock_ahead" in caplog.text
     assert session.scalar(select(JournalEntry).where(JournalEntry.user_id == user.id)) is None
 
-    # Within the allowance the same edit is accepted, so correcting the clock clears the queue.
     close = (datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat()
     accepted = client.post("/journal/sync", headers=headers, json={"entries": [
         edit(value={"type": "rating", "value": 3}, stamp=close),
@@ -292,7 +290,6 @@ def test_late_earlier_completion_is_visible_to_other_devices(session, auth_heade
     client.post("/journal/sync", headers=headers, json={"completions": [
         completion(first="2026-10-26T07:00:00Z", stamp="2026-10-26T07:00:00Z")]})
     cursor = client.get("/journal/changes", headers=headers).json()["cursor"]
-    # This offline device completed first but edited earlier, so only the first completion changes.
     client.post("/journal/sync", headers=headers, json={"completions": [
         completion(completed=False, first="2026-10-25T08:00:00Z", stamp="2026-10-25T09:00:00Z")]})
     change = client.get(f"/journal/changes?after={cursor}", headers=headers).json()["changes"][0]

@@ -1,10 +1,8 @@
-# Environment and local secrets
 .env
 .env.*
 !.env.example
 !.env.*.example
 
-# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,33 +13,28 @@ __pycache__/
 .tox/
 .nox/
 
-# Virtual environments
 .venv/
 venv/
 env/
 ENV/
 
-# Python packaging and build output
 *.egg-info/
 .eggs/
 build/
 dist/
 pip-wheel-metadata/
 
-# Test and coverage output
 .coverage
 .coverage.*
 coverage.xml
 htmlcov/
 
-# Xcode build output and per-user state
 DerivedData/
 xcuserdata/
 *.xcuserstate
 *.xccheckout
 *.xcscmblueprint
 
-# Local databases and runtime files
 *.sqlite
 *.sqlite3
 *.db
@@ -49,7 +42,6 @@ xcuserdata/
 celerybeat-schedule
 celerybeat.pid
 
-# OS and editor files
 .DS_Store
 Thumbs.db
 .idea/
@@ -57,7 +49,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Local planning notes
 project-spec.md
 docs/native-health-design-direction.md
 tmp/

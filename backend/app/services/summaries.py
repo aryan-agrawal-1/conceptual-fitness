@@ -229,7 +229,6 @@ def _data_quality(summary: DailySummary) -> str:
 
 def _update_profile_body_metrics(session: Session, *, user_id: str, end: date) -> None:
     profile = get_or_create_profile(session, user_id)
-    # Historical rebuilds must not replace current body metrics with older values.
     end = local_date_for_profile(profile)
     latest_weight = preferred_body_sample(
         session,

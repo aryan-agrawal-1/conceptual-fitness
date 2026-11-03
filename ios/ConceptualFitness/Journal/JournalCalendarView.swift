@@ -1,6 +1,5 @@
 import SwiftUI
 
-// Everything here reads the local snapshot, so history stays available offline.
 struct JournalCalendarView: View {
     @ObservedObject var store: JournalStore
     let selectedDay: String
@@ -77,7 +76,6 @@ struct JournalCalendarView: View {
                 }
             }
         }
-        // Seven columns can't reflow, so larger sizes would break the dates across lines.
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
@@ -124,11 +122,9 @@ struct JournalCalendarView: View {
         .accessibilityLabel("\(title) days are marked with a \(status == .completed ? "filled circle" : status == .incomplete ? "solid ring" : "dashed ring")")
     }
 
-    // Any historical date stays a few taps away, however far back it is.
     private var jumpPicker: some View {
         let timezone = TimeZone(identifier: store.timezone ?? "UTC") ?? .gmt
         return DatePicker("Go to a month", selection: Binding(get: {
-            // Midday UTC is still the 1st in every timezone that could shift this month.
             JournalDay.date(month).addingTimeInterval(12 * 3600)
         }, set: {
             month = JournalDay.monthStart(JournalCoding.day($0, timezone: timezone.identifier))
@@ -138,7 +134,6 @@ struct JournalCalendarView: View {
     }
 }
 
-// Shape carries the state as well as colour, so it reads without relying on hue alone.
 struct JournalDayShape: View {
     let status: JournalDayStatus
     private var tint: Color { HealthTheme.color(for: .activity) }

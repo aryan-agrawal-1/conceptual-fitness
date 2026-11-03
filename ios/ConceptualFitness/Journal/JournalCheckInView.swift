@@ -33,7 +33,6 @@ struct JournalSectionTitle: View {
     }
 }
 
-// Answers save as they're made, so "Not now" never loses anything.
 struct JournalCheckInView: View {
     @ObservedObject var store: JournalStore
     @ObservedObject var reminders: JournalReminders
@@ -68,7 +67,6 @@ struct JournalCheckInView: View {
             }
             .sheet(item: $selection) { JournalEntryEditor(store: store, selection: $0) }
             .sensoryFeedback(.success, trigger: completed) { _, isCompleted in isCompleted }
-            // With no reminder to ask about, the confirmation has nothing left to wait for.
             .task(id: completed) {
                 guard completed, !reminders.shouldOffer else { return }
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
@@ -82,7 +80,6 @@ struct JournalCheckInView: View {
             VStack(alignment: .leading, spacing: 12) {
                 dateHeader
                 rows
-                // A pinned bar would cover the rows at the largest text sizes.
                 if typeSize.isAccessibilitySize { completeControls }
                 if let message = store.message {
                     Text(message).font(.caption).foregroundStyle(.secondary)
@@ -94,7 +91,6 @@ struct JournalCheckInView: View {
         }
     }
 
-    // The date is spelled out because this usually asks about yesterday, not today.
     private var dateHeader: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Check in for \(JournalDay.title(day, today: store.today).lowercased())")
@@ -216,7 +212,6 @@ private struct JournalCheckmark: Shape {
     }
 }
 
-// The circle springs in, then the tick draws itself across it.
 struct JournalCompleteMark: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var size: CGFloat = 128

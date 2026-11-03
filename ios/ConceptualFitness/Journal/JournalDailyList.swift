@@ -8,10 +8,8 @@ struct JournalDailySections {
     }
 
     var pinned: [JournalBehaviourData] = []
-    // Private categories that are on, each pinned as its own group.
     var privatePinned: [Section] = []
     var others: [JournalBehaviourData] = []
-    // Saved answers in categories that have been turned off stay reviewable.
     var turnedOff: [JournalBehaviourData] = []
 }
 
@@ -21,7 +19,6 @@ enum JournalDailyList {
 
     static func reachedTarget(_ logged: Int) -> Bool { logged >= dailyTarget }
 
-    // Fixed rules, independent of AI. These keywords also make free-form Profile goals useful.
     static let goalRules: [(words: [String], behaviours: Set<String>)] = [
         (["sleep", "circadian", "rest"], ["screen_in_bed", "worked_late", "night_shift", "sleep_mask", "caffeine"]),
         (["strength", "muscle", "exercise", "fitness", "recovery", "endurance"], ["energy", "muscle_soreness", "sauna", "stress"]),
@@ -47,7 +44,6 @@ enum JournalDailyList {
 
         var result = JournalDailySections()
         let standard = pinned.filter { !privateIds.contains($0.categoryId) }
-        // Defaults keep their agreed order; pins you add follow in catalogue order.
         result.pinned = standard.sorted { order($0.id) == order($1.id) ? $0.id < $1.id : order($0.id) < order($1.id) }
         result.privatePinned = privateCategories.compactMap { category in
             let rows = pinned.filter { $0.categoryId == category.id }
@@ -69,7 +65,6 @@ enum JournalDailyList {
 
     private static func order(_ id: String) -> Int { defaultPins.firstIndex(of: id) ?? defaultPins.count }
 
-    // Goals and recent use order the rest. Only earlier days count, so answering never moves a row.
     private static func ranked(_ items: [JournalBehaviourData], snapshot: JournalSnapshot,
                                day: String) -> [JournalBehaviourData] {
         let goals = snapshot.goals.joined(separator: " ").lowercased()
@@ -86,7 +81,6 @@ enum JournalDailyList {
     }
 }
 
-// Journal dates are plain calendar keys, so these format them without a timezone shift.
 enum JournalDay {
     struct Item: Identifiable {
         let id: String
@@ -149,7 +143,6 @@ enum JournalDay {
         return Array(symbols[(firstWeekday - 1)...] + symbols[..<(firstWeekday - 1)])
     }
 
-    // Leading nils line the first of the month up under its weekday.
     static func monthGrid(_ day: String, firstWeekday: Int) -> [String?] {
         let calendar = utcCalendar
         let start = date(monthStart(day))

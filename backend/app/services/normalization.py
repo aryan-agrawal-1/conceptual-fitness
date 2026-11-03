@@ -34,7 +34,6 @@ BULK_MEASUREMENT_DATA_TYPES = {
 }
 
 
-# take a data point, create the raw record and rebuild the normalised rows derived from it
 def upsert_raw_and_normalized(
     session: Session,
     *,
@@ -445,7 +444,6 @@ def _bulk_upsert_normalized_rows(
     )
 
 
-# delete previously generated normalised rows for this record
 def _replace_normalized(session: Session, raw_record_id: str, *, storage: str | None = None) -> None:
     _replace_normalized_many(session, [raw_record_id], storage=storage)
 
@@ -619,7 +617,6 @@ def _normalize_workout(
     )
 
 
-# create the hash which acts as a fingerprint for the record
 def _content_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
