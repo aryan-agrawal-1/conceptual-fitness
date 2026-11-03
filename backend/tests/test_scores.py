@@ -1302,17 +1302,15 @@ def test_readiness_context_uses_selected_period_aggregates(session, auth_headers
 
 def test_readiness_detail_returns_yearly_monthly_averages(session, auth_headers) -> None:
     user = _user_with_profile(session, birth_year=1990)
-    anchor = date.today()
-    start = anchor.replace(day=1)
+    start = date(2026, 9, 1)
+    anchor = start + timedelta(days=15)
     for offset in range(0, 16):
         day = start + timedelta(days=offset)
-        if day > anchor:
-            break
         _add_sleep(session, user, day)
         _add_summary(session, user, day, hrv=54 + (offset % 12), rhr=58 - (offset % 5))
         _add_hr_workout(session, user, day, bpm=145 + offset % 5 * 3)
 
-    rebuild_derived_scores(session, user_id=user.id, start=start, end=min(anchor, start + timedelta(days=15)))
+    rebuild_derived_scores(session, user_id=user.id, start=start, end=anchor)
     session.commit()
 
     response = TestClient(app).get(
