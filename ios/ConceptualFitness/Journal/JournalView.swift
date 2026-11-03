@@ -98,7 +98,7 @@ struct JournalView: View {
 
     private var weekStrip: some View {
         let index = dayIndex
-        return HStack(spacing: 2) {
+        return HStack(spacing: 4) {
             ForEach(JournalDay.week(endingOn: store.today)) { item in
                 let selected = item.id == day
                 Button { selectedDay = item.id; othersExpanded = nil } label: {
@@ -107,11 +107,14 @@ struct JournalView: View {
                         Text(item.number).font(.system(.subheadline, design: .rounded, weight: .bold))
                         weekMark(index.status(item.id), selected: selected)
                     }
+                    .padding(.vertical, 3)
                     .foregroundStyle(selected ? .white : .primary.opacity(0.75))
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .background {
                         if selected {
                             RoundedRectangle(cornerRadius: 14, style: .continuous).fill(HealthTheme.color(for: .activity))
+                        } else {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial)
                         }
                     }
                     .contentShape(Rectangle())
