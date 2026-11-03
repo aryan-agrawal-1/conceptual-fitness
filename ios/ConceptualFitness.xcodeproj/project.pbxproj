@@ -80,6 +80,7 @@
 		01000000000000000000004F /* JournalCheckInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004F /* JournalCheckInView.swift */; };
 		010000000000000000000050 /* JournalCalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000050 /* JournalCalendarView.swift */; };
 		010000000000000000000051 /* JournalReminders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000051 /* JournalReminders.swift */; };
+		010000000000000000000099 /* JournalAIContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000099 /* JournalAIContext.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -160,6 +161,7 @@
 		02000000000000000000004F /* JournalCheckInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalCheckInView.swift; sourceTree = "<group>"; };
 		020000000000000000000050 /* JournalCalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalCalendarView.swift; sourceTree = "<group>"; };
 		020000000000000000000051 /* JournalReminders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalReminders.swift; sourceTree = "<group>"; };
+		020000000000000000000099 /* JournalAIContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalAIContext.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -207,6 +209,7 @@
 				02000000000000000000004F /* JournalCheckInView.swift */,
 				020000000000000000000050 /* JournalCalendarView.swift */,
 				020000000000000000000051 /* JournalReminders.swift */,
+				020000000000000000000099 /* JournalAIContext.swift */,
 				020000000000000000000001 /* ConceptualFitnessApp.swift */,
 				020000000000000000000012 /* Info.plist */,
 				020000000000000000000013 /* ConceptualFitness.entitlements */,
@@ -456,6 +459,7 @@
 				01000000000000000000004F /* JournalCheckInView.swift in Sources */,
 				010000000000000000000050 /* JournalCalendarView.swift in Sources */,
 				010000000000000000000051 /* JournalReminders.swift in Sources */,
+				010000000000000000000099 /* JournalAIContext.swift in Sources */,
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,

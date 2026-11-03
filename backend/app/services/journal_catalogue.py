@@ -34,6 +34,7 @@ CATEGORIES = (
     JournalCategory(id="reflection", label="Reflection", requires_opt_in=True),
 )
 SENSITIVE_CATEGORIES = frozenset(item.id for item in CATEGORIES if item.requires_opt_in)
+AI_CONSENT_KEYS = frozenset(f"ai_context:{consumer}:reflection" for consumer in ("daily_brief", "coach"))
 
 UNITS = (
     UnitDefinition(id="mg", label="Milligrams", canonical_unit="mg", multiplier=1),
@@ -145,6 +146,7 @@ CATALOGUE_V1 = JournalCatalogue(
     units=UNITS, observation_schema=TypeAdapter(JournalObservation).json_schema(),
 )
 CATALOGUES = {1: CATALOGUE_V1}
+STATISTICAL_BEHAVIOURS = frozenset(item.id for item in CATALOGUE_V1.behaviours if item.statistical_input)
 
 
 class JournalContractError(ValueError):

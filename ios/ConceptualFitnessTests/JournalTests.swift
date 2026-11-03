@@ -512,6 +512,121 @@ final class JournalDraftTests: XCTestCase {
     }
 }
 
+final class JournalNoteLimitTests: XCTestCase {
+    private let note = JournalFieldData(id: "answer", label: "Daily note", inputType: "text", minimum: nil, maximum: nil,
+                                        units: [], ratingLabels: [])
+
+    private func valid(_ text: String) -> Bool {
+        var draft = JournalFieldDraft(field: note, answer: nil)
+        draft.text = text
+        return draft.valid(for: note, units: [])
+    }
+
+    func testTheLimitCountsWhatTheServerCounts() {
+        XCTAssertTrue(valid(String(repeating: "x", count: 2000)))
+        XCTAssertFalse(valid(String(repeating: "x", count: 2001)))
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"
+        XCTAssertEqual(family.count, 1)
+        XCTAssertEqual(JournalFieldDraft.noteLength(family), 7)
+        XCTAssertFalse(valid(String(repeating: family, count: 400)))
+    }
+
+    func testTheNoteOnlyMentionsTheLimitNearIt() {
+        XCTAssertNil(JournalFieldDraft.noteLimitMessage(""))
+        XCTAssertNil(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 1799)))
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 1800)), "200 characters left")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 1999)), "1 character left")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 2000)), "0 characters left")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 2001)), "1 character over the limit")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 2010)), "10 characters over the limit")
+    }
+}
+
+final class JournalAIContextTests: XCTestCase {
+    private let note = JournalAnswerData(type: "text", value: .text("Slept badly"))
+    private let recording = "opt_in:reflection"
+
+    private func notes(_ consumer: JournalAIConsumer, settings: [JournalSettingData], limit: Int = 5,
+                       entries: [JournalEntryData]? = nil) -> [JournalAINote] {
+        let saved = entries ?? [entry("daily_note", day: "2026-11-01", answer: note)]
+        return JournalAIContext.notes(for: consumer, in: snapshot(entries: saved, settings: settings), limit: limit)
+    }
+
+    func testEveryFeatureStartsWithNoAccess() {
+        for consumer in JournalAIConsumer.allCases {
+            XCTAssertEqual(notes(consumer, settings: []), [])
+            XCTAssertEqual(notes(consumer, settings: [setting(recording)]), [])
+        }
+    }
+
+    func testConsentForOneFeatureNeverOpensTheOther() {
+        let brief = [setting(recording), setting(JournalAIConsumer.dailyBrief.consentKey)]
+        XCTAssertEqual(notes(.dailyBrief, settings: brief).map(\.text), ["Slept badly"])
+        XCTAssertEqual(notes(.coach, settings: brief), [])
+        let coach = [setting(recording), setting(JournalAIConsumer.coach.consentKey)]
+        XCTAssertEqual(notes(.coach, settings: coach).map(\.text), ["Slept badly"])
+        XCTAssertEqual(notes(.dailyBrief, settings: coach), [])
+    }
+
+    func testWithdrawingEitherChoiceStopsAccess() {
+        let key = JournalAIConsumer.dailyBrief.consentKey
+        XCTAssertEqual(notes(.dailyBrief, settings: [setting(recording), setting(key, false)]), [])
+        XCTAssertEqual(notes(.dailyBrief, settings: [setting(recording, false), setting(key)]), [])
+        XCTAssertEqual(notes(.dailyBrief, settings: [setting(key)]), [])
+    }
+
+    func testOnlySavedNotesAreReturnedNewestFirst() {
+        let settings = [setting(recording), setting(JournalAIConsumer.dailyBrief.consentKey)]
+        let saved = [
+            entry("daily_note", day: "2026-10-30", answer: note),
+            entry("daily_note", day: "2026-11-01", answer: note),
+            entry("daily_note", day: "2026-11-02", deleted: true),
+            entry("daily_note", day: "2026-11-03", answer: nil, missing: "skipped"),
+            entry("mood", day: "2026-11-01", answer: .init(type: "rating", value: .number(4))),
+        ]
+        XCTAssertEqual(notes(.dailyBrief, settings: settings, entries: saved).map(\.journalDate),
+                       ["2026-11-01", "2026-10-30"])
+        XCTAssertEqual(notes(.dailyBrief, settings: settings, limit: 1, entries: saved).map(\.journalDate),
+                       ["2026-11-01"])
+    }
+
+    func testAnUnknownCatalogueFailsClosed() {
+        var unknown = snapshot(entries: [entry("daily_note", day: "2026-11-01", answer: note)],
+                               settings: [setting(recording), setting(JournalAIConsumer.coach.consentKey)])
+        unknown.catalogue = nil
+        XCTAssertEqual(JournalAIContext.notes(for: .coach, in: unknown, limit: 5), [])
+    }
+}
+
+final class DailyBriefCacheTests: XCTestCase {
+    private let owner = "brief-cache-owner"
+
+    override func tearDown() {
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.contains("brief-cache-") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        super.tearDown()
+    }
+
+    func testTheLastBriefIsOnlyShownToItsOwnAccount() async throws {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let json = """
+        {"snapshot": {"user_id": "\(owner)", "date": "\(formatter.string(from: now))", "scores": {}},
+         "metric_summaries": {}, "recent_workouts": [], "sync_status": []}
+        """
+        let bundle = try JSONDecoder().decode(DashboardBundle.self, from: Data(json.utf8))
+        let provider = DailyInsightProvider()
+        let brief = await provider.dailyBrief(for: bundle, now: now)
+        XCTAssertNotNil(brief)
+        XCTAssertEqual(provider.cachedDailyBriefForCurrentSlot(userID: owner, now: now), brief)
+        XCTAssertNil(provider.cachedDailyBriefForCurrentSlot(userID: "brief-cache-other", now: now))
+    }
+}
+
 final class JournalCodingTests: XCTestCase {
     func testNewerComparesInstantsThenMutationIds() {
         XCTAssertTrue(JournalCoding.newer("2026-11-02T08:00:01Z", "a", than: "2026-11-02T08:00:00Z", "b"))

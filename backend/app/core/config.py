@@ -37,6 +37,7 @@ class Settings:
     google_health_client_secret: str
     google_health_redirect_uri: str
     token_encryption_key: str
+    journal_encryption_key: str
     session_secret_key: str
     access_token_ttl_minutes: int
     refresh_token_ttl_days: int
@@ -123,6 +124,7 @@ def get_settings() -> Settings:
         google_health_client_secret=_get(env, "GOOGLE_HEALTH_CLIENT_SECRET"),
         google_health_redirect_uri=_get(env, "GOOGLE_HEALTH_REDIRECT_URI"),
         token_encryption_key=_get(env, "TOKEN_ENCRYPTION_KEY"),
+        journal_encryption_key=_get(env, "JOURNAL_ENCRYPTION_KEY"),
         session_secret_key=_get(env, "SESSION_SECRET_KEY"),
         access_token_ttl_minutes=_get_int(env, "ACCESS_TOKEN_TTL_MINUTES", 15),
         refresh_token_ttl_days=_get_int(env, "REFRESH_TOKEN_TTL_DAYS", 30),
@@ -147,6 +149,7 @@ def missing_or_placeholder_keys(settings: Settings) -> list[str]:
         ("GOOGLE_HEALTH_CLIENT_SECRET", settings.google_health_client_secret),
         ("GOOGLE_HEALTH_REDIRECT_URI", settings.google_health_redirect_uri),
         ("TOKEN_ENCRYPTION_KEY", settings.token_encryption_key),
+        ("JOURNAL_ENCRYPTION_KEY", settings.journal_encryption_key),
         ("SESSION_SECRET_KEY", settings.session_secret_key),
     )
     return [

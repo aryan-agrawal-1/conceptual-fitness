@@ -296,7 +296,7 @@ struct DashboardView: View {
         case .loaded(let data):
             return data.dailyBrief?.nonEmptyDashboardText
         case .loading:
-            return insightProvider.cachedDailyBriefForCurrentSlot()?.nonEmptyDashboardText
+            return client.userID.flatMap { insightProvider.cachedDailyBriefForCurrentSlot(userID: $0) }?.nonEmptyDashboardText
         case .failed:
             return nil
         }

@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import utcnow
+from app.db.sealed_json import SealedJSON
 from app.db.session import Base
 
 
@@ -106,8 +107,8 @@ class JournalEntry(Base):
     edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     mutation_id: Mapped[str] = mapped_column(String(36))
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
-    response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    normalized: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    response: Mapped[dict | None] = mapped_column(SealedJSON, nullable=True)
+    normalized: Mapped[dict | None] = mapped_column(SealedJSON, nullable=True)
     revision: Mapped[int] = mapped_column(Integer)
 
 

@@ -1,8 +1,8 @@
 """Atomic per-item LWW registers and a durable, account-scoped change feed.
 
 Completion is deliberately separate from response persistence, and streaks are not stored
-here. Every accepted manual change invalidates future journal analyses in the same
-transaction; completion does not, because it changes no observation.
+here. Every accepted change to a statistical input invalidates future journal analyses in the
+same transaction; notes and completion do not, because neither is an observation the analysis uses.
 """
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from app.journal import JournalModel, ManualJournalResponse
 from app.models import JournalCompletion, JournalEntry, JournalPreference, JournalState, User
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.journal_catalogue import (
-    CATALOGUE_V1, CATALOGUES, SENSITIVE_CATEGORIES, normalize_journal_response,
+    AI_CONSENT_KEYS, CATALOGUE_V1, CATALOGUES, SENSITIVE_CATEGORIES, STATISTICAL_BEHAVIOURS,
+    normalize_journal_response,
 )
 
 
@@ -69,7 +70,7 @@ class PreferenceMutation(JournalMutation):
     @classmethod
     def known_key(cls, value: str) -> str:
         keys = {f"pin:{item.id}" for item in CATALOGUE_V1.behaviours}
-        keys |= {f"opt_in:{item}" for item in SENSITIVE_CATEGORIES}
+        keys |= {f"opt_in:{item}" for item in SENSITIVE_CATEGORIES} | AI_CONSENT_KEYS
         if value not in keys:
             raise ValueError("Unknown journal preference")
         return value
@@ -225,7 +226,8 @@ def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
             row.normalized = normalized
             row.revision = state.revision
             session.add(row)
-            changed_days.add(mutation.journal_date)
+            if mutation.behaviour_id in STATISTICAL_BEHAVIOURS:
+                changed_days.add(mutation.journal_date)
             session.flush()
         acknowledgements.append(entry_payload(row))
     for mutation in sorted(payload.completions, key=lambda item: (item.edited_at, item.mutation_id)):
