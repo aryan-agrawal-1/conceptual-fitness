@@ -15,9 +15,16 @@ struct JournalView: View {
     @State private var checkIn: JournalCheckInSelection?
     @State private var choosingDate = false
     @State private var othersExpanded: Bool?
+    @State private var fireBehindToolbar = true
     private var day: String { selectedDay ?? store.today }
     private var dayIndex: JournalDayIndex { JournalDayIndex(store.snapshot, today: store.today) }
     private var isReady: Bool { store.snapshot.catalogue != nil && store.timezone != nil }
+    private var toolbarOverFire: Bool {
+        fireBehindToolbar && JournalStreak(store.snapshot.completions, today: store.today).current > 0
+    }
+    private var toolbarIconStyle: AnyShapeStyle {
+        toolbarOverFire ? AnyShapeStyle(.white) : AnyShapeStyle(.tint)
+    }
 
     var body: some View {
         ZStack {
@@ -25,8 +32,7 @@ struct JournalView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if isReady {
-                        streakCard
-                        weekStrip
+                        streakHero
                         dayHeader
                         dayNote
                         syncStatus
@@ -38,17 +44,20 @@ struct JournalView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
+            .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < 190 } action: {
+                fireBehindToolbar = $1
+            }
         }
         .navigationTitle("Insights")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             if isReady {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { choosingDate = true } label: { Image(systemName: "calendar") }
-                        .accessibilityLabel("History")
-                    NavigationLink { JournalPrivacyView(store: store) } label: {
-                        Image(systemName: "lock")
-                    }
-                    .accessibilityLabel("Private categories")
+                if #available(iOS 26.0, *) {
+                    toolbarButtons.sharedBackgroundVisibility(toolbarOverFire ? .hidden : .automatic)
+                } else {
+                    toolbarButtons
                 }
             }
         }
@@ -67,9 +76,24 @@ struct JournalView: View {
         }
     }
 
-    private var streakCard: some View {
-        JournalStreakCard(summary: JournalStreakSummary(store.snapshot, today: store.today, onboardedAt: onboardedAt),
-                          settled: store.hasSettled) { checkIn = JournalCheckInSelection(day: $0) }
+    private var toolbarButtons: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button { choosingDate = true } label: { Image(systemName: "calendar").foregroundStyle(toolbarIconStyle) }
+                .accessibilityLabel("History")
+            NavigationLink { JournalPrivacyView(store: store) } label: {
+                Image(systemName: "lock").foregroundStyle(toolbarIconStyle)
+            }
+            .accessibilityLabel("Private categories")
+        }
+    }
+
+    private var streakHero: some View {
+        JournalStreakHero(summary: JournalStreakSummary(store.snapshot, today: store.today, onboardedAt: onboardedAt),
+                          settled: store.hasSettled) {
+            checkIn = JournalCheckInSelection(day: $0)
+        } calendar: {
+            weekStrip
+        }
     }
 
     private var weekStrip: some View {

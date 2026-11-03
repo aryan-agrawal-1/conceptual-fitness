@@ -1,6 +1,8 @@
 import SwiftUI
 
-private enum JournalFirePalette {
+enum JournalFirePalette {
+    static let ember = Color(red: 0.56, green: 0.08, blue: 0.02)
+    static let glow = Color(red: 0.93, green: 0.29, blue: 0.04)
     static let top = Color(red: 0.79, green: 0.16, blue: 0.03)
     static let bottom = Color(red: 0.87, green: 0.23, blue: 0.03)
     static let deep = Color(red: 0.74, green: 0.15, blue: 0.03)
@@ -14,6 +16,7 @@ struct JournalFireBackground: View {
     var lean: Double = 0.25
     var reach: Double = 1
     var rises = false
+    var base = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var risen = false
 
@@ -43,8 +46,12 @@ struct JournalFireBackground: View {
             }
             .scaleEffect(x: 1, y: rises && !risen ? 0.05 : 1, anchor: .bottom)
         }
-        .background(LinearGradient(colors: [JournalFirePalette.top, JournalFirePalette.bottom],
-                                   startPoint: .top, endPoint: .bottom))
+        .background {
+            if base {
+                LinearGradient(colors: [JournalFirePalette.top, JournalFirePalette.bottom],
+                               startPoint: .top, endPoint: .bottom)
+            }
+        }
         .accessibilityHidden(true)
         .onAppear {
             guard rises, !reduceMotion else {
@@ -105,42 +112,65 @@ struct JournalFireBackground: View {
     }
 }
 
-struct JournalStreakCard: View {
+struct JournalStreakHero<Calendar: View>: View {
     let summary: JournalStreakSummary
     let settled: Bool
     let open: (String) -> Void
-    @ScaledMetric(relativeTo: .largeTitle) private var countSize: CGFloat = 54
+    @ViewBuilder let calendar: Calendar
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .largeTitle) private var countSize: CGFloat = 42
 
+    private static var overscroll: CGFloat { 600 }
+    private static var calendarFade: CGFloat { 84 }
     private var lit: Bool { summary.count > 0 }
-    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 22, style: .continuous) }
 
     var body: some View {
-        surfaced {
-            VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Insights")
+                    .font(.system(.title, design: .rounded, weight: .bold))
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.top, -44)
                 details
                 if let action = summary.action { actionButton(action) }
             }
-            .padding(16)
-            .padding(.bottom, lit && summary.action == nil ? 40 : 0)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(lit ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            calendar.padding(.top, 2)
         }
-        .accessibilityIdentifier("journal.streak.card")
+        .padding(.bottom, lit ? 38 : 10)
+        .environment(\.colorScheme, .light)
+        .background {
+            if lit { fire.padding(.horizontal, -16) }
+        }
+        .accessibilityIdentifier("journal.streak.hero")
     }
 
-    @ViewBuilder private func surfaced(@ViewBuilder content: () -> some View) -> some View {
-        if lit {
-            content()
-                .foregroundStyle(.white)
-                .background { JournalFireBackground() }
-                .clipShape(shape)
-                .shadow(color: JournalFirePalette.orange.opacity(0.35), radius: 16, y: 8)
-        } else {
-            content().panelSurface(cornerRadius: 22)
+    private var fire: some View {
+        GeometryReader { proxy in
+            let total = proxy.size.height + Self.overscroll
+            JournalFireBackground(lean: 0.4, reach: 1, base: false)
+                .frame(height: proxy.size.height)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .frame(height: total)
+                .background(LinearGradient(stops: [
+                    .init(color: JournalFirePalette.ember, location: Self.overscroll / total),
+                    .init(color: JournalFirePalette.top, location: (Self.overscroll + proxy.size.height * 0.5) / total),
+                    .init(color: JournalFirePalette.glow, location: 1)
+                ], startPoint: .top, endPoint: .bottom))
+                .mask {
+                    LinearGradient(stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 1 - Self.calendarFade / total),
+                        .init(color: .clear, location: 1)
+                    ], startPoint: .top, endPoint: .bottom)
+                }
+                .offset(y: -Self.overscroll)
         }
+        .accessibilityHidden(true)
     }
 
     private var details: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "flame.fill")
                     .font(.system(size: countSize * 0.62))
@@ -148,20 +178,23 @@ struct JournalStreakCard: View {
                 Text("\(summary.count)")
                     .font(.system(size: countSize, weight: .heavy, design: .rounded))
                 Text("day streak").font(.title3.weight(.bold))
+                if !typeSize.isAccessibilitySize {
+                    Spacer(minLength: 8)
+                    progress
+                }
             }
             Text(summary.message)
                 .font(.subheadline.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.trailing, lit ? 56 : 0)
                 .opacity(settled ? 1 : 0)
                 .accessibilityHidden(!settled)
-            progress
+            if typeSize.isAccessibilitySize { progress }
         }
         .accessibilityElement(children: .combine)
     }
 
     private var progress: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 3) {
             HStack(spacing: 4) {
                 ForEach(0..<JournalDailyList.dailyTarget, id: \.self) { dot in
                     Circle()
@@ -171,7 +204,7 @@ struct JournalStreakCard: View {
             }
             .accessibilityHidden(true)
             Text("\(summary.answeredToday) of \(JournalDailyList.dailyTarget) today")
-                .font(.footnote.weight(.medium))
+                .font(.caption.weight(.semibold))
                 .monospacedDigit()
         }
     }
