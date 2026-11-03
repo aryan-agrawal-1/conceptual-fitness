@@ -50,12 +50,10 @@ class TagUpdate(BaseModel):
     severity: str | None = Field(default=None, max_length=32)
     value: dict[str, Any] | None = None
 
-# get all the tag types
 @router.get("/types")
 def tag_types() -> dict[str, list[str]]:
     return {"types": sorted(DEFAULT_TAG_TYPES)}
 
-# retrieved logged user tags
 @router.get("", response_model=list[TagPayload])
 def list_tags(
     session: DbSession,

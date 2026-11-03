@@ -197,7 +197,6 @@ def _upsert_readiness_score(
     )
 
 
-# combine acute sleep loss, fragmentation, and carried sleep burden
 def _readiness_sleep_component(
     session: Session,
     user_id: str,
@@ -258,7 +257,6 @@ def _readiness_sleep_component(
     }
 
 
-# carry sleep burden forward with slow decay and partial recovery credit
 def _sleep_burden_state(
     session: Session,
     user_id: str,
@@ -307,7 +305,6 @@ def _sleep_burden_state(
     }
 
 
-# combine the current autonomic deviation with the previous three-night median
 def _autonomic_component(session: Session, user_id: str, day: date) -> dict[str, Any] | None:
     hrv = _autonomic_metric_component(session, user_id, day, "heart_rate_variability")
     rhr = _autonomic_metric_component(session, user_id, day, "resting_heart_rate")
@@ -404,7 +401,6 @@ def _metric_z_for_day(
     }
 
 
-# score decayed cardio and muscular exposure against separate personal references
 def _load_recovery_component(session: Session, user_id: str, day: date) -> dict[str, Any] | None:
     cardio = _load_channel_component(session, user_id, day, "cardio")
     muscular = _load_channel_component(session, user_id, day, "muscular")
@@ -550,7 +546,6 @@ def _local_muscle_loads_for_day(
     return totals
 
 
-# group persistent or concordant illness-like signals before applying one modifier
 def _anomaly_component(
     session: Session,
     user_id: str,

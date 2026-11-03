@@ -152,7 +152,6 @@ STATISTICAL_BEHAVIOURS = frozenset(item.id for item in CATALOGUE_V1.behaviours i
 class JournalContractError(ValueError):
     def __init__(self, code: str):
         self.code = code
-        # Behaviour IDs, values and prose must never enter diagnostics.
         logger.warning("Journal response rejected reason=%s", code)
         super().__init__(code)
 

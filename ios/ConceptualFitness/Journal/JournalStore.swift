@@ -42,7 +42,6 @@ final class JournalStore: ObservableObject {
             return !sensitive.contains(item.categoryId) || enabled("opt_in:\(item.categoryId)")
         }
     }
-    // Lets the foreground timer stay quiet when there is nothing to retry.
     var needsRetry: Bool {
         lastSyncFailed || snapshot.catalogue == nil || !syncableEntries.isEmpty
             || snapshot.preferences.contains(where: \.pending)
@@ -81,7 +80,6 @@ final class JournalStore: ObservableObject {
         return true
     }
 
-    // Completion is always an explicit action, and needs five answers on the date being completed.
     @discardableResult
     func complete(day: String) -> Bool {
         guard JournalDailyList.reachedTarget(JournalDailyList.loggedCount(snapshot, day: day)) else { return false }
@@ -102,8 +100,6 @@ final class JournalStore: ObservableObject {
         snapshot.completions.first { $0.journalDate == day }
     }
 
-    // A later edit that drops below five makes the day incomplete, so reaching five again
-    // needs another explicit completion. The first completion is kept for streaks.
     private func withdrawCompletionIfNeeded(_ day: String, in next: inout JournalSnapshot) {
         guard let index = next.completions.firstIndex(where: { $0.journalDate == day && $0.completed }),
               !JournalDailyList.reachedTarget(JournalDailyList.loggedCount(next, day: day)) else { return }
@@ -133,7 +129,6 @@ final class JournalStore: ObservableObject {
                        answer: answer, details: details, missingReason: missingReason))
     }
 
-    // Turning a category on pins everything in it again, including rows unpinned earlier.
     func setCategory(_ category: String, enabled: Bool) {
         var next = snapshot
         var keys = ["opt_in:\(category)"]
@@ -221,7 +216,6 @@ final class JournalStore: ObservableObject {
             if let version = page.catalogueVersion, version > snapshot.catalogue?.version ?? 0 {
                 try await downloadCatalogue(version: version)
             }
-            // An idle poll must not rewrite the whole protected file.
             guard !page.changes.isEmpty || page.cursor != snapshot.cursor || page.timezone != snapshot.timezone
                     || page.goals != snapshot.goals || page.analysisRevision != snapshot.analysisRevision
             else { continue }
@@ -299,7 +293,6 @@ final class JournalStore: ObservableObject {
                     let local = next.completions[index]
                     var winner = local.mutationId == remote.mutationId || JournalCoding.newer(
                         remote.editedAt, remote.mutationId, than: local.editedAt, local.mutationId) ? remote : local
-                    // Every device converges on the earliest completion, whichever edit wins.
                     let earliest = JournalCoding.instant(remote.firstCompletedAt) < JournalCoding.instant(local.firstCompletedAt)
                         ? remote : local
                     winner.firstCompletedAt = earliest.firstCompletedAt

@@ -40,7 +40,6 @@ class GoogleOAuthCompletion:
     source_session_id: str | None
 
 
-# authorisation for google
 def create_authorization_url(
     session: Session,
     *,
@@ -118,7 +117,6 @@ def consume_oauth_state(session: Session, raw_state: str) -> OAuthState:
     return oauth_state
 
 
-# time to get the tokens
 async def complete_google_health_oauth(
     session: Session,
     *,

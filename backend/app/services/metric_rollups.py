@@ -418,7 +418,6 @@ def _minute_values(record: HighVolumeRecord) -> list[tuple[datetime, float]]:
     if record.start_time is None or record.end_time is None or record.end_time <= record.start_time:
         return []
     duration = (record.end_time - record.start_time).total_seconds()
-    # Coarse intervals cannot establish movement in any particular minute.
     if record.metric in MOVEMENT_MINUTE_METRICS and duration > 60:
         return []
     cursor = _truncate_minute(record.start_time)

@@ -80,7 +80,6 @@ def exchange_auth_code(
             )
         except DeviceKeyError as exc:
             raise AppAuthError("Invalid or expired authorization code") from exc
-    # Serialize session creation with deletion, including users already cached by this session.
     user = session.get(User, app_code.user_id, with_for_update=True, populate_existing=True)
     if user is None or user.deletion_scheduled_for is not None:
         raise AppAuthError("Invalid or expired authorization code")

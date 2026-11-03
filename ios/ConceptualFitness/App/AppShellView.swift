@@ -127,14 +127,11 @@ struct AppShellView: View {
         DashboardFormatters.parseBackendDateTime(session.profile.onboardingCompletedAt)
     }
 
-    // Reminders only need rescheduling when completed days or the timezone change.
     private var reminderInputs: [String] {
         journalStore.snapshot.completions.filter(\.completed).map(\.journalDate).sorted()
             + [journalStore.snapshot.timezone ?? ""]
     }
 
-    // A workout in progress or an open editor must never be interrupted, so this waits for
-    // the next chance rather than using up the day's prompt.
     private var isPresentingElsewhere: Bool {
         UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows).first(where: \.isKeyWindow)?
@@ -373,7 +370,6 @@ final class AppSyncCoordinator: ObservableObject {
                 await pollUntilFinished()
             }
         } catch let error as URLError where error.code == .timedOut {
-            // The server may still be importing after the request times out.
             await pollUntilFinished()
         } catch {
             logger.error("Sync request failed: \(String(describing: type(of: error)), privacy: .public)")

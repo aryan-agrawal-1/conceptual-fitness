@@ -290,7 +290,6 @@ def _regularity_score(
         return None
     start_diff = _circular_minutes_diff(start_minute, references["start_minute"])
     end_diff = _circular_minutes_diff(end_minute, references["end_minute"])
-    # average bedtime and wake-time drift before interpolation
     avg_diff = (start_diff + end_diff) / 2
     score = _interpolate_anchors(avg_diff, REGULARITY_SCORE_ANCHORS)
     return {
@@ -311,7 +310,6 @@ def _continuity_score(sleep: SleepSession, *, age: int | None = None) -> dict[st
     awake = sleep.minutes_awake
     if awake is None:
         return None
-    # map wake-after-sleep-onset minutes onto the continuity scale
     score = _interpolate_anchors(awake, CONTINUITY_SCORE_ANCHORS)
     caps: list[dict[str, Any]] = []
     if efficiency is not None:
@@ -358,7 +356,6 @@ def _timing_score(
     )
     target_midpoint = _circular_midpoint(references["start_minute"], references["end_minute"])
     drift = _circular_minutes_diff(actual_midpoint, target_midpoint)
-    # score circular midpoint drift against the timing anchors
     score = _interpolate_anchors(drift, TIMING_SCORE_ANCHORS)
     return {
         "score": round(score, 1),
@@ -431,7 +428,6 @@ def _sleep_physiology_score(
         "temperature": ("skin_temperature_variation",),
     }
     abnormal_groups: list[str] = []
-    # count persistent or paired abnormalities by physiology group
     for group, metrics in groups.items():
         current_crossings = [metric for metric in metrics if current[metric]]
         persistent = any(current[metric] and previous[metric] for metric in metrics)
@@ -495,7 +491,6 @@ def _stage_score(
     deep_values = [item[1] for item in references[-28:]]
     rem_delta = _spread_delta(rem_pct, rem_values)
     deep_delta = _spread_delta(deep_pct, deep_values)
-    # grade stage deviations in robust spread units
     beyond_two = sum(delta > 2 for delta in (rem_delta, deep_delta))
     if rem_delta > 3 or deep_delta > 3 or beyond_two == 2:
         score = 60.0
@@ -586,7 +581,6 @@ def _validated_stage_totals(sleep: SleepSession) -> tuple[dict[str, float], floa
     if any(current[1] > nxt[0] for current, nxt in zip(intervals, intervals[1:])):
         return {}, 0.0
     covered = sum((end - start).total_seconds() / 60 for start, end, _ in intervals)
-    # require stage intervals to cover ninety percent of the sleep period
     coverage = covered / expected_period
     if coverage < 0.90:
         return {}, coverage

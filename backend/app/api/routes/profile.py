@@ -144,7 +144,6 @@ class ProfileUpdate(BaseModel):
         return list(dict.fromkeys(cleaned))
 
 
-# full profile get endpoint
 @router.get("", response_model=ProfilePayload)
 def get_profile(session: DbSession, user: CurrentUser) -> ProfilePayload:
     profile = get_or_create_profile(session, user.id)
@@ -152,7 +151,6 @@ def get_profile(session: DbSession, user: CurrentUser) -> ProfilePayload:
     return _profile_payload(session, profile)
 
 
-# full profile update endpoint
 @router.patch("", response_model=ProfilePayload)
 def update_profile(
     payload: ProfileUpdate,

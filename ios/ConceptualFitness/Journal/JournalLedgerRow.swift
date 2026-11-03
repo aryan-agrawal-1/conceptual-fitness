@@ -99,7 +99,6 @@ struct JournalLedgerRow: View {
         .accessibilityLabel("\(title) \(behaviour.label)")
     }
 
-    // Tapping the chosen answer again clears it, so a mistaken tap is easy to undo.
     private func choose(_ answer: JournalAnswerData, current: JournalScalar) {
         if response?.answer?.value == current {
             store.delete(behaviour.id, day: day)
@@ -203,7 +202,6 @@ struct JournalDetailPanel: View {
     let openEditor: () -> Void
     private var inlineFields: [JournalFieldData] { JournalDetailPanel.inlineFields(behaviour.details) }
 
-    // One main control keeps the row compact. Everything else sits behind More details.
     static func inlineFields(_ details: [JournalFieldData]) -> [JournalFieldData] {
         if let count = details.first(where: { $0.inputType == "count" }) { return [count] }
         return details.first.map { $0.inputType == "time" ? [] : [$0] } ?? []
@@ -238,7 +236,6 @@ struct JournalDetailPanel: View {
     }
 }
 
-// Slider ranges are everyday limits. Larger values can still be typed in the answer sheet.
 struct JournalSliderSpec {
     let unit: String
     let label: String
@@ -324,7 +321,6 @@ private struct JournalDetailField: View {
     }
 
     @ViewBuilder private func sliderField(_ spec: JournalSliderSpec) -> some View {
-        // An answer saved in another unit keeps its value until edited in the sheet.
         if let number, let unit = value?.unit, unit != spec.unit {
             HStack {
                 Text(field.label).font(.footnote).foregroundStyle(.primary.opacity(0.65))

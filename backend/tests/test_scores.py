@@ -771,7 +771,6 @@ def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> 
 
     assert strain.components["source_zone_load"] is None
     assert strain.value is None
-    # A recorded stationary workout qualifies even without steps.
     workout = Workout(
         user_id=user.id, workout_type="cycling", civil_date=day,
         start_time=_dt(day, 8), end_time=_dt(day, 8, 30),
@@ -935,7 +934,6 @@ def test_strain_calculates_detailed_muscular_set_dose(session) -> None:
     assert muscular["workouts"][0]["session_effort_modifier"] == 1
     assert muscular["workouts"][0]["exercises"][0]["e1rm_source"] == "current_session_provisional"
 
-    # Removing an old workout must also remove it from later strength references.
     from app.services.strain_scores import _exercise_e1rm
 
     old = Workout(user_id=user.id, start_time=start - timedelta(days=1),
@@ -1355,7 +1353,7 @@ def test_strain_requires_same_minute_movement_except_inside_workouts(session) ->
     replace_high_volume_rollups(session, account=account, metric="steps", records=records,
                                 range_start=start, range_end=start + timedelta(hours=1))
     movement = _movement_minutes(session, user.id, day)
-    assert len(movement) == 1  # A whole-hour total must not become 60 eligible minutes.
+    assert len(movement) == 1
     # SQLite returns naive timestamps; keep the test samples aligned with stored evidence.
     start = next(iter(movement))
     samples = [MetricSample(observed_at=start + timedelta(minutes=i), value=140) for i in range(61)]

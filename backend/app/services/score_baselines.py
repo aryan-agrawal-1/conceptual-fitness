@@ -177,7 +177,6 @@ def _calculate_personal_baseline(
             metadata=metadata,
         )
 
-    # calculate metric-specific centre, spread, and alert bounds
     if metric in {"sleep_start_minute", "sleep_end_minute"}:
         centre = _circular_median_minutes(values)
         spread = _circular_robust_spread(values, centre)
@@ -420,7 +419,6 @@ def _drop_observation_outliers(
     if len(observations) < 8 or metric == "strain_load":
         return observations
     values = [item.value for item in observations]
-    # exclude readings beyond four robust standard deviations
     if metric in {"sleep_start_minute", "sleep_end_minute"}:
         centre = _circular_median_minutes(values)
         spread = _circular_robust_spread(values, centre)
@@ -461,9 +459,7 @@ def _weekday_mean(observations: list[BaselineObservation], weekday: int) -> floa
     return round(float(mean(values)), 4) if values else None
 
 
-# calculate an exponentially weighted moving average
 def _ewma(values: list[float], *, half_life: float) -> float:
-    # convert the half-life into a daily smoothing factor
     alpha = 1 - exp(log(0.5) / half_life)
     result = float(values[0])
     for value in values[1:]:
@@ -479,7 +475,6 @@ def _percentile(values: list[float], quantile: float) -> float:
     lower_index = int(position)
     upper_index = min(lower_index + 1, len(ordered) - 1)
     fraction = position - lower_index
-    # interpolate between the surrounding ordered readings
     return float(ordered[lower_index] + fraction * (ordered[upper_index] - ordered[lower_index]))
 
 

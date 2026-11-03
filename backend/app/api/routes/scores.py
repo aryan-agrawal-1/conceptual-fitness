@@ -22,7 +22,6 @@ from app.services.scores import (
 
 router = APIRouter(tags=["scores"])
 
-# get all daily scores
 @router.get("/scores/daily")
 def daily_scores(
     session: DbSession,
@@ -41,7 +40,6 @@ def daily_scores(
     ).all()
     return [_score_payload(score) for score in scores]
 
-# rebuild scores for a day
 @router.post("/scores/rebuild")
 def rebuild_scores(
     session: DbSession,
@@ -60,7 +58,6 @@ def rebuild_scores(
         "targets_rebuilt": result.targets_rebuilt,
     }
 
-# get score history for a certain interval
 @router.get("/scores/{score_type}")
 def score_history(
     session: DbSession,
@@ -84,7 +81,6 @@ def score_history(
     ).all()
     return [_score_payload(score) for score in scores]
 
-# get strain targets for a certain interval
 @router.get("/strain/targets")
 def strain_targets(
     session: DbSession,

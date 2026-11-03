@@ -55,7 +55,6 @@ struct DailyInsightProvider {
         return nil
     }
 
-    // Missing scores have no recovery band; don't ask a language model to infer one.
     func missingScoreBrief(for snapshot: DashboardSnapshot) -> String? {
         switch (snapshot.scores.sleep?.value, snapshot.scores.readiness?.value) {
         case (nil, nil):

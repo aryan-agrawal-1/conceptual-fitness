@@ -24,7 +24,6 @@ from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# hand work to celery to backfill data
 def enqueue_initial_backfill(account_id: str) -> bool:
     try:
         initial_backfill.delay(account_id)

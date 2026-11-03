@@ -321,7 +321,6 @@ class SensitiveActionGrant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-# Original imported data from google health api
 class RawHealthRecord(Base):
     __tablename__ = "raw_health_records"
     __table_args__ = (
@@ -348,7 +347,6 @@ class RawHealthRecord(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
-# normalised measurements from the raw record
 class MetricSample(Base):
     __tablename__ = "metric_samples"
     __table_args__ = (
@@ -370,7 +368,6 @@ class MetricSample(Base):
     source_device: Mapped[str | None] = mapped_column(String(160), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-# normalised measirements in a certain time range
 class MetricInterval(Base):
     __tablename__ = "metric_intervals"
     __table_args__ = (
@@ -885,7 +882,6 @@ class DailyContext(Base):
     value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-# so i know where the last sync was
 class SyncCursor(Base):
     __tablename__ = "sync_cursors"
     __table_args__ = (UniqueConstraint("google_account_id", "data_type", name="uq_sync_cursor"),)

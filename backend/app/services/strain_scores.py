@@ -154,7 +154,6 @@ def _upsert_strain_score(
         day=day,
         workouts=workouts,
     )
-    # combine the two independent physiological load channels
     total = cardio_total + muscular["load_points"]
     total = round(total, 2)
 
@@ -203,7 +202,6 @@ def _upsert_strain_target(session: Session, *, user_id: str, week_start: date) -
     progress = sum(value for _, value in current_loads)
     phase = _phase_for_count(len(prior_loads))
     target_points = None if chronic is None else round(chronic * 7, 2)
-    # compare current weekly load with seven days of chronic load
     ratio = None if not target_points else round(progress / target_points, 3)
     target.target_load_points = target_points
     target.chronic_load_points = None if chronic is None else round(chronic * 7, 2)
@@ -225,7 +223,6 @@ def _upsert_strain_target(session: Session, *, user_id: str, week_start: date) -
     return target
 
 
-# accumulate movement-gated hrr dose from usable minute coverage
 def _cardio_load_from_hr(
     samples: list[MetricSample],
     workouts: list[Workout],
@@ -290,7 +287,6 @@ def _cardio_load_from_hr(
         has_movement = workout is not None or minute_start in movement_minutes
         if not has_movement:
             continue
-        # apply the modified banister dose after the movement gate
         intensity = _clamp((hr - rhr) / (max_hr - rhr), 0.0, 1.0)
         points_per_minute = _cardio_dose(intensity, k)
         minutes = seconds / 60
@@ -356,7 +352,6 @@ def _cardio_k(sex: str | None) -> float:
 
 
 def _cardio_dose(hrr: float, k: float) -> float:
-    # apply the eligibility ramp to the exponential hrr dose
     if hrr < STRAIN_V2_CONFIG["hrr_eligibility_start"]:
         return 0.0
     if hrr < STRAIN_V2_CONFIG["hrr_full_credit"]:
@@ -462,7 +457,6 @@ def _muscular_load(
     }
 
 
-# route completed sets through e1rm, muscle allocation, and local compression
 def _detailed_muscular_load(
     session: Session,
     *,
@@ -590,7 +584,6 @@ def _set_dose(
     return item.reps * relative_load * involvement * difficulty * status_factor
 
 
-# select and slowly decay the strongest credible recent exercise baseline
 def _exercise_e1rm(
     session: Session,
     workout: Workout,
@@ -876,7 +869,6 @@ def _source_zone_load(
             if minutes is None:
                 continue
             midpoint = hrr_midpoints[min(index, len(hrr_midpoints) - 1)]
-            # use provider zones only for the portion not covered by hrr samples
             contribution = minutes * _cardio_dose(midpoint, k) * uncovered_ratio
             total += contribution
             workout_total += contribution
@@ -902,7 +894,6 @@ def _source_zone_load(
     }
 
 
-# fill only hrr minutes not already covered by direct samples
 def _source_zone_load_from_intervals(
     session: Session,
     user_id: str,
@@ -944,7 +935,6 @@ def _source_zone_load_from_intervals(
         interval_seconds = (interval.end_time - interval.start_time).total_seconds()
         if interval_seconds <= 0:
             continue
-        # Apply the same minute gate to zone fallbacks and never refill covered HR minutes.
         density = min(1.0, max(0.0, interval.value / interval_seconds))
         cursor = interval.start_time.replace(second=0, microsecond=0)
         contributed = False
@@ -1169,7 +1159,6 @@ def _chronic_load(loads: list[tuple[date, float]]) -> float | None:
     ewma = values[0]
     for value in values[1:]:
         ewma = alpha * value + (1 - alpha) * ewma
-    # retain the higher reference so a short break does not collapse the target
     return max(rolling_mean, ewma)
 
 

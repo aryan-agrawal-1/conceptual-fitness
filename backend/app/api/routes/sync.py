@@ -124,7 +124,6 @@ def retry_current_historical_backfill(
     return {"status": "queued", "account_id": account.id}
 
 
-# having a manual sync option feels smart
 @router.post("/manual")
 async def manual_sync(
     session: DbSession,
@@ -170,7 +169,6 @@ async def manual_sync(
     }
 
 
-# Info about the last sync
 @router.get("/status")
 def sync_status(session: DbSession, account_id: str | None = Query(default=None)) -> list[dict[str, object]]:
     statement = select(SyncCursor)
@@ -232,7 +230,6 @@ def _current_status_payload(
             for model in (MetricDailyRollup, MetricSample, MetricInterval, SleepSession, Workout)
         ]).subquery()
         first, last = session.execute(select(func.min(dates.c.day), func.max(dates.c.day))).one()
-        # Saved records prove availability, not that every provider page was checked.
         untracked = first is not None and first < historical_backfill["range_end"] - timedelta(days=13) and all(
             row.status.value not in {"succeeded", "running"}
             and row.last_error in {None, "QueueUnavailable"}

@@ -294,7 +294,6 @@ def _strain_channel_load(
     return float(value) if isinstance(value, (int, float)) else None
 
 
-# decay the previous three reliable strain days into today's residual exposure
 def _residual_load_exposure(
     session: Session,
     user_id: str,
@@ -378,7 +377,6 @@ def _metric_baseline_score(
     else:
         spread = baseline.spread_value or max(abs(baseline.median_value) * 0.08, 1.0)
         delta = (value - baseline.median_value) / spread
-    # orient the standardized delta so positive always means better
     signed = delta if higher_is_better else -delta
     score = _clamp(80 + signed * 12, 0, 100)
     return {
@@ -405,7 +403,6 @@ def _weighted_score(components: dict[str, Any], weights: dict[str, float]) -> fl
         denominator += weight
     if denominator == 0:
         return None
-    # normalize weights across only the available components
     return round(numerator / denominator, 1)
 
 
@@ -445,7 +442,6 @@ def _robust_spread(values: list[float]) -> float:
         return 0.0
     med = median(values)
     deviations = [abs(value - med) for value in values]
-    # scale median absolute deviation to a standard-deviation equivalent
     return float(median(deviations) * 1.4826)
 
 
@@ -481,7 +477,6 @@ def _circular_minutes_diff(a: float, b: float) -> float:
 
 
 def _circular_mean_minutes(values: list[float]) -> float:
-    # average clock times as angles to handle midnight wraparound
     angles = [value / 1440 * 2 * pi for value in values]
     angle = atan2(mean([sin(item) for item in angles]), mean([cos(item) for item in angles]))
     return (angle % (2 * pi)) / (2 * pi) * 1440
@@ -506,7 +501,6 @@ def _interpolate_anchors(value: float, anchors: list[tuple[float, float]]) -> fl
         return float(anchors[0][1])
     for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
         if value <= x1:
-            # linearly interpolate between the surrounding research anchors
             ratio = (value - x0) / (x1 - x0)
             return float(y0 + ratio * (y1 - y0))
     return float(anchors[-1][1])

@@ -4,7 +4,6 @@ enum JournalDayStatus: Equatable {
     case completed, incomplete, missing, notStarted, upcoming
 }
 
-// One pass over the snapshot, so the calendar doesn't rescan every entry for each day.
 struct JournalDayIndex {
     let today: String
     private let answers: [String: Int]
@@ -28,12 +27,10 @@ struct JournalDayIndex {
 
     func answerCount(_ day: String) -> Int { answers[day] ?? 0 }
 
-    // Another device can clear answers without knowing about this completion, so both must hold.
     func isCompleted(_ day: String) -> Bool {
         completions.contains(day) && JournalDailyList.reachedTarget(answerCount(day))
     }
 
-    // Days before the journal was first used stay neutral rather than reading as missed.
     func status(_ day: String) -> JournalDayStatus {
         if day > today { return .upcoming }
         if isCompleted(day) { return .completed }
@@ -57,12 +54,10 @@ struct JournalDayIndex {
 struct JournalCheckInScreen {
     var pinned: [JournalBehaviourData] = []
     var privatePinned: [JournalDailySections.Section] = []
-    // Unpinned rows added only when fewer than five are pinned, so the check-in can always finish here.
     var topUp: [JournalBehaviourData] = []
 }
 
 enum JournalCheckIn {
-    // Before this hour, "yesterday" is still the day people are living in.
     static let promptFloorHour = 4
 
     static func screen(_ snapshot: JournalSnapshot, day: String) -> JournalCheckInScreen {
@@ -73,7 +68,6 @@ enum JournalCheckIn {
                                     topUp: Array(sections.others.prefix(missing)))
     }
 
-    // Yesterday's check-in is on offer, and nobody is asked about the day before they joined.
     static func isDue(_ snapshot: JournalSnapshot, now: Date = Date(), onboardedAt: Date? = nil) -> Bool {
         guard snapshot.catalogue != nil, let timezone = snapshot.timezone,
               let zone = TimeZone(identifier: timezone) else { return false }
@@ -91,13 +85,11 @@ enum JournalCheckIn {
         return lastPromptDay != JournalCoding.day(now, timezone: timezone)
     }
 
-    // A tapped reminder opens whichever check-in still needs doing.
     static func reminderTarget(_ snapshot: JournalSnapshot, today: String) -> String {
         let yesterday = JournalDay.previous(today)
         return JournalDayIndex(snapshot, today: today).isCompleted(yesterday) ? today : yesterday
     }
 
-    // Yesterday can be completed on time until the end of the following calendar day.
     static func isLate(_ completion: JournalCompletionData) -> Bool {
         let first = JournalCoding.day(JournalCoding.instant(completion.firstCompletedAt), timezone: completion.timezone)
         return first > JournalDay.next(completion.journalDate)

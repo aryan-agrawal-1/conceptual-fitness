@@ -48,7 +48,6 @@ def merge_verified_id_token_claims(
         return {**verified_claims, "auth_time": token_claims["auth_time"]}
     return verified_claims
 
-# All the google health calls i need to make
 class GoogleHealthClient:
     def __init__(self, settings: Settings | None = None, timeout: float | None = None) -> None:
         self.settings = settings or get_settings()

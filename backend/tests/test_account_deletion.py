@@ -159,7 +159,6 @@ def test_session_creation_rechecks_deletion_after_another_session_schedules_it(
     with Session(session.get_bind()) as deletion_session:
         schedule_account_deletion(deletion_session, deletion_session.get(User, user.id))
 
-    # The signing-in session still has the active user cached from before deletion.
     assert user.deletion_scheduled_for is None
     with pytest.raises(AppAuthError):
         if session_source == "sign_in":

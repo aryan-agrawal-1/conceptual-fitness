@@ -952,7 +952,6 @@ def _sleep_dashboard_summary(
     }
 
 
-# returns time series data for a metric (like for a hr graph)
 @router.get("/metrics/{metric}")
 def metric_series(
     session: DbSession,
@@ -1017,7 +1016,6 @@ def metric_series(
     }
 
 
-# All the sleep data
 @router.get("/sleep/detail")
 def sleep_detail(
     session: DbSession,
@@ -2310,7 +2308,6 @@ def _rounded(value: float | None) -> float | None:
     return round(float(value), 2)
 
 
-# all the workout data
 @router.get("/workouts")
 def workouts(
     session: DbSession,

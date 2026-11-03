@@ -50,7 +50,6 @@ async def repair(account_id: str) -> None:
             print(f"Rebuilding {start} through {end}", flush=True)
             client = GoogleHealthClient()
             token = (await client.refresh_access_token(decrypt_secret(account.encrypted_refresh_token)))["access_token"]
-            # These sources return original intervals, not hourly totals spread across minutes.
             for data_type in ("steps", "distance"):
                 seen, _ = await _sync_data_type(
                     session, account=account, client=client, access_token=token,

@@ -93,7 +93,6 @@ struct JournalResponseData: Codable {
 }
 
 extension JournalResponseData {
-    // Keeps the original timezone and recording time when an answer changes.
     static func updating(_ existing: JournalResponseData?, behaviourId: String, day: String, catalogueVersion: Int,
                          timezone: String, answer: JournalAnswerData?, details: [String: JournalAnswerData] = [:],
                          missingReason: String? = nil) -> JournalResponseData {
@@ -128,8 +127,6 @@ struct JournalSettingData: Codable, Identifiable {
     var id: String { key }
 }
 
-// One explicit completion per date. The first completion outlives later edits, so a day that
-// drops below five answers becomes incomplete without losing when it was first completed.
 struct JournalCompletionData: Codable, Identifiable {
     var journalDate: String
     var completed: Bool
@@ -142,7 +139,6 @@ struct JournalCompletionData: Codable, Identifiable {
     var id: String { journalDate }
 }
 
-// Wire projections exclude local queue bookkeeping and derived server fields.
 struct JournalEntryWrite: Encodable {
     let journalDate: String
     let behaviourId: String
@@ -229,7 +225,6 @@ struct JournalSnapshot: Codable {
     var analysisRevision = 0
 }
 
-// Files saved before completions existed must keep opening, or the journal would lock itself.
 extension JournalSnapshot {
     enum CodingKeys: String, CodingKey {
         case catalogue, timezone, goals, entries, preferences, completions, cursor, analysisRevision

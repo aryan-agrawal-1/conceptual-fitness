@@ -14,7 +14,6 @@ from app.services.scores import SCORE_VERSIONS, STRAIN_LOAD_VERSION
 
 router = APIRouter(tags=["dashboard"])
 
-# full daily summary
 def _summary_payload(summary: DailySummary) -> dict[str, object]:
     return {
         "date": summary.summary_date,
@@ -33,7 +32,6 @@ def _summary_payload(summary: DailySummary) -> dict[str, object]:
     }
 
 
-# scores endpoint
 def _score_payload(score: DailyScore | None) -> dict[str, object] | None:
     if score is None:
         return None
@@ -49,7 +47,6 @@ def _score_payload(score: DailyScore | None) -> dict[str, object] | None:
         "computed_at": score.computed_at,
     }
 
-# get scores for given day
 def _scores_for_day(session: DbSession, user_id: str, day: date) -> dict[str, object]:
     scores: dict[str, object] = {}
     for score_type, version in SCORE_VERSIONS.items():
@@ -64,7 +61,6 @@ def _scores_for_day(session: DbSession, user_id: str, day: date) -> dict[str, ob
         scores[score_type] = _score_payload(score)
     return scores
 
-# get strain target
 def _strain_target_payload(target: StrainTarget | None) -> dict[str, object] | None:
     if target is None:
         return None

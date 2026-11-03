@@ -102,7 +102,6 @@ struct AccountProfile: Decodable, Equatable {
     }
 }
 
-// PATCH distinguishes an explicit clear from an omitted field.
 enum ProfileValue: Encodable {
     case text(String), number(Double), bool(Bool), list([String]), object([String: ProfileValue]), null
 
