@@ -166,16 +166,10 @@ struct JournalView: View {
         }
     }
 
-    // Only states what's true today. Streaks (#21) and patterns (#23) add their own lines when they ship.
     @ViewBuilder private var dayNote: some View {
-        if !dayIndex.isCompleted(day) {
-            if store.completion(day: day) != nil {
-                Text("This day fell below five answers. Complete it again when you’re ready.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            } else if day < JournalDay.previous(store.today) {
-                Text("You’re editing a past day.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
+        if let note = JournalStreak.dayNote(day: day, today: store.today, completion: store.completion(day: day),
+                                            isCompleted: dayIndex.isCompleted(day)) {
+            Text(note).font(.footnote).foregroundStyle(.secondary)
         }
     }
 

@@ -159,6 +159,136 @@ final class JournalDaysTests: XCTestCase {
     }
 }
 
+final class JournalStreakTests: XCTestCase {
+    private func onTime(_ day: String, completed: Bool = true) -> JournalCompletionData {
+        completion(day, completed: completed, first: "\(day)T12:00:00.000Z")
+    }
+
+    private func late(_ day: String) -> JournalCompletionData {
+        completion(day, first: "\(JournalDay.next(JournalDay.next(day)))T12:00:00.000Z")
+    }
+
+    private func days(_ values: String...) -> [JournalCompletionData] { values.map { onTime($0) } }
+
+    func testNoHistoryHasNoStreakAndBothDaysOpen() {
+        let streak = JournalStreak([], today: "2026-11-03")
+        XCTAssertEqual(streak.current, 0)
+        XCTAssertEqual(streak.longest, 0)
+        XCTAssertEqual(streak.openDays, ["2026-11-02", "2026-11-03"])
+    }
+
+    func testConsecutiveDaysEndingTodayCount() {
+        let streak = JournalStreak(days("2026-11-01", "2026-11-02", "2026-11-03"), today: "2026-11-03")
+        XCTAssertEqual(streak.current, 3)
+        XCTAssertEqual(streak.longest, 3)
+        XCTAssertEqual(streak.openDays, [])
+    }
+
+    func testOpenYesterdayKeepsTheStreakAliveUntilItsDeadline() {
+        let history = days("2026-10-30", "2026-10-31", "2026-11-01")
+        let open = JournalStreak(history, today: "2026-11-03")
+        XCTAssertEqual(open.current, 3)
+        XCTAssertEqual(open.openDays, ["2026-11-02", "2026-11-03"])
+        let closed = JournalStreak(history, today: "2026-11-04")
+        XCTAssertEqual(closed.current, 0)
+        XCTAssertEqual(closed.longest, 3)
+    }
+
+    func testTodayCountsWhileYesterdayIsStillOpen() {
+        let streak = JournalStreak(days("2026-11-01", "2026-11-03"), today: "2026-11-03")
+        XCTAssertEqual(streak.current, 2)
+        XCTAssertEqual(streak.longest, 2)
+        XCTAssertEqual(streak.openDays, ["2026-11-02"])
+    }
+
+    func testMissedDayResetsTheStreakAndKeepsTheLongest() {
+        let streak = JournalStreak(days("2026-10-20", "2026-10-21", "2026-10-22", "2026-11-02", "2026-11-03"),
+                                   today: "2026-11-03")
+        XCTAssertEqual(streak.current, 2)
+        XCTAssertEqual(streak.longest, 3)
+    }
+
+    func testDeadlineIsTheEndOfTheFollowingCalendarDay() {
+        let inTime = completion("2026-11-01", first: "2026-11-02T23:30:00.000Z")
+        XCTAssertEqual(JournalStreak([inTime], today: "2026-11-02").current, 1)
+        let tooLate = completion("2026-11-01", first: "2026-11-03T00:30:00.000Z")
+        XCTAssertEqual(JournalStreak([tooLate], today: "2026-11-03").current, 0)
+    }
+
+    func testLateCompletionDoesNotRepairAnOlderStreak() {
+        let history = days("2026-10-28", "2026-10-29", "2026-10-31", "2026-11-01") + [late("2026-10-30")]
+        let streak = JournalStreak(history, today: "2026-11-01")
+        XCTAssertEqual(streak.current, 2)
+        XCTAssertEqual(streak.longest, 2)
+    }
+
+    func testDayThatDropsBelowFiveKeepsItsCredit() {
+        let history = [onTime("2026-11-01"), onTime("2026-11-02", completed: false), onTime("2026-11-03")]
+        let streak = JournalStreak(history, today: "2026-11-03")
+        XCTAssertEqual(streak.current, 3)
+        XCTAssertEqual(streak.openDays, [])
+    }
+
+    func testCompletionsCanArriveInAnyOrder() {
+        let streak = JournalStreak(days("2026-11-03", "2026-11-01", "2026-11-02"), today: "2026-11-03")
+        XCTAssertEqual(streak.current, 3)
+        XCTAssertEqual(streak.longest, 3)
+    }
+
+    func testRunsCrossClockChangesAndYearEnd() {
+        let clockChange = days("2026-10-24", "2026-10-25", "2026-10-26")
+        XCTAssertEqual(JournalStreak(clockChange, today: "2026-10-26").current, 3)
+        let yearEnd = days("2026-12-31", "2027-01-01")
+        XCTAssertEqual(JournalStreak(yearEnd, today: "2027-01-01").current, 2)
+    }
+
+    func testSavedTimezoneDecidesTheDeadlineAfterTheProfileMoves() {
+        let newYork = completion("2026-11-01", first: "2026-11-03T00:30:00.000Z", timezone: "America/New_York")
+        XCTAssertEqual(JournalStreak([newYork], today: "2026-11-02").current, 1)
+        XCTAssertEqual(JournalStreak([newYork], today: "2026-11-03").current, 1)
+    }
+
+    func testMovingWestKeepsADayAlreadyEarnedAhead() {
+        let history = [onTime("2026-11-02"),
+                       completion("2026-11-03", first: "2026-11-03T01:00:00.000Z", timezone: "Asia/Tokyo")]
+        XCTAssertEqual(JournalStreak(history, today: "2026-11-02").current, 2)
+    }
+
+    func testLateDayStaysClosedAfterMovingWest() {
+        let streak = JournalStreak([onTime("2026-10-31"), late("2026-11-01")], today: "2026-11-02")
+        XCTAssertEqual(streak.current, 0)
+        XCTAssertEqual(streak.openDays, ["2026-11-02"])
+    }
+
+    func testPastDayNoteSaysEditsCannotRestoreAStreak() {
+        XCTAssertEqual(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02", completion: nil, isCompleted: false),
+                       "You’re editing a past day. Completing it now won’t restore a streak.")
+    }
+
+    func testTodayAndYesterdayHaveNoNote() {
+        XCTAssertNil(JournalStreak.dayNote(day: "2026-11-02", today: "2026-11-02", completion: nil, isCompleted: false))
+        XCTAssertNil(JournalStreak.dayNote(day: "2026-11-01", today: "2026-11-02", completion: nil, isCompleted: false))
+    }
+
+    func testNotesSayWhetherAWithdrawnDayKeepsItsCredit() {
+        XCTAssertEqual(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02",
+                                             completion: onTime("2026-10-30", completed: false), isCompleted: false),
+                       "This day fell below five answers. Complete it again when you’re ready. Your streak isn’t affected.")
+        var lateDay = late("2026-10-30")
+        lateDay.completed = false
+        XCTAssertEqual(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02", completion: lateDay, isCompleted: false),
+                       "This day fell below five answers. Complete it again when you’re ready. It doesn’t count toward your streak.")
+    }
+
+    func testCompletedDaysOnlyExplainALateCompletion() {
+        XCTAssertNil(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02",
+                                           completion: onTime("2026-10-30"), isCompleted: true))
+        XCTAssertEqual(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02",
+                                             completion: late("2026-10-30"), isCompleted: true),
+                       "Completed after its deadline, so this day doesn’t count toward your streak.")
+    }
+}
+
 final class JournalCheckInScreenTests: XCTestCase {
     private let day = "2026-11-01"
 
@@ -1051,6 +1181,19 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertEqual(restarted.pendingCount, 0)
         XCTAssertEqual(restarted.completion(day: "2026-11-02")?.pending, false)
         XCTAssertTrue(server.paths.contains { $0.hasSuffix("journal/sync") })
+    }
+
+    func testStreakCreditSurvivesWithdrawalAndOfflineRestart() async {
+        let store = makeStore()
+        await store.synchronize()
+        let day = store.today
+        answerFive(store, day: day)
+        XCTAssertTrue(store.complete(day: day))
+        XCTAssertTrue(store.delete("mood", day: day))
+        let restored = makeStore()
+        restored.restore()
+        XCTAssertEqual(restored.completion(day: day)?.completed, false)
+        XCTAssertEqual(JournalStreak(restored.snapshot.completions, today: day).current, 1)
     }
 
     func testRemoteCompletionsMergeAndKeepTheEarliestFirstCompletion() async {
