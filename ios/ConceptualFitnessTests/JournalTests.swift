@@ -530,6 +530,16 @@ final class JournalNoteLimitTests: XCTestCase {
         XCTAssertEqual(JournalFieldDraft.noteLength(family), 7)
         XCTAssertFalse(valid(String(repeating: family, count: 400)))
     }
+
+    func testTheNoteOnlyMentionsTheLimitNearIt() {
+        XCTAssertNil(JournalFieldDraft.noteLimitMessage(""))
+        XCTAssertNil(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 1799)))
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 1800)), "200 characters left")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 1999)), "1 character left")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 2000)), "0 characters left")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 2001)), "1 character over the limit")
+        XCTAssertEqual(JournalFieldDraft.noteLimitMessage(String(repeating: "x", count: 2010)), "10 characters over the limit")
+    }
 }
 
 final class JournalAIContextTests: XCTestCase {

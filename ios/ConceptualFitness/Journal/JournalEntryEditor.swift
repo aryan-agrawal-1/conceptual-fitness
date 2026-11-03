@@ -2,7 +2,15 @@ import SwiftUI
 
 struct JournalFieldDraft {
     static let noteLimit = 2000
+    static let noteWarningRemaining = 200
     static func noteLength(_ text: String) -> Int { text.unicodeScalars.count }
+    static func noteLimitMessage(_ text: String) -> String? {
+        let remaining = noteLimit - noteLength(text)
+        guard remaining <= noteWarningRemaining else { return nil }
+        let count = abs(remaining)
+        let noun = count == 1 ? "character" : "characters"
+        return remaining < 0 ? "\(count) \(noun) over the limit" : "\(count) \(noun) left"
+    }
 
     var text = ""
     var unit = ""
@@ -55,6 +63,7 @@ struct JournalEntryEditor: View {
     @State private var fields: [String: JournalFieldDraft]
     @State private var saveError: String?
     private var item: JournalBehaviourData { selection.behaviour }
+    private var isNote: Bool { item.answer.inputType == "text" }
     private var existing: JournalEntryData? { store.entry(item.id, day: selection.day) }
     private var entryTimezone: String { existing?.response?.timezone ?? store.timezone ?? "UTC" }
     private var allowed: Bool {
@@ -66,7 +75,8 @@ struct JournalEntryEditor: View {
         self.store = store
         self.selection = selection
         let response = store.entry(selection.behaviour.id, day: selection.day)?.response
-        _mode = State(initialValue: response?.missingReason ?? "answer")
+        let isNote = selection.behaviour.answer.inputType == "text"
+        _mode = State(initialValue: isNote ? "answer" : response?.missingReason ?? "answer")
         var drafts = ["answer": JournalFieldDraft(field: selection.behaviour.answer, answer: response?.answer)]
         for detail in selection.behaviour.details {
             drafts[detail.id] = JournalFieldDraft(field: detail, answer: response?.details[detail.id])
@@ -77,50 +87,13 @@ struct JournalEntryEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Text(item.question).font(.title3.bold())
-                    Text(JournalDay.title(selection.day, today: store.today))
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if entryTimezone != store.timezone {
-                        Text("Times use this entry’s original timezone, \(entryTimezone).")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if !allowed {
-                        Text("Turn this category on to change the answer. You can still review or delete it.")
-                            .foregroundStyle(.secondary)
-                        NavigationLink("Manage private categories") { JournalPrivacyView(store: store) }
-                    }
-                }
-                Section {
-                    Picker("Response", selection: $mode) {
-                        Text("Answer").tag("answer")
-                        if mode == "not_answered" { Text("Not answered").tag("not_answered") }
-                        Text("Skip for today").tag("skipped")
-                        Text("Doesn’t apply").tag("not_applicable")
-                        Text("Unavailable").tag("unavailable")
-                    }
-                    .disabled(!allowed)
-                    if mode == "answer" {
-                        JournalFieldControl(field: item.answer, draft: binding("answer"), units: store.snapshot.catalogue?.units ?? [])
-                            .disabled(!allowed)
-                    }
-                }
-                if showDetails && !item.details.isEmpty {
-                    Section("Optional details") {
-                        ForEach(item.details) { field in
-                            JournalFieldControl(field: field, draft: binding(field.id), units: store.snapshot.catalogue?.units ?? [])
-                        }
-                    }.disabled(!allowed)
-                }
-                if item.answer.inputType == "text" {
-                    Section { Text("This note is just for you. It isn’t used in patterns, and the app’s AI can’t read it.").font(.footnote).foregroundStyle(.secondary) }
-                }
+                if isNote { noteSections } else { answerSections }
                 if let saveError {
                     Section { Text(saveError).foregroundStyle(.red).accessibilityIdentifier("journal.saveError") }
                 }
                 if existing != nil {
                     Section {
-                        Button("Delete response", role: .destructive) {
+                        Button(isNote ? "Delete note" : "Delete response", role: .destructive) {
                             if store.delete(item.id, day: selection.day) { dismiss() }
                             else { saveError = store.message }
                         }.disabled(store.storageBlocked)
@@ -139,6 +112,56 @@ struct JournalEntryEditor: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    @ViewBuilder private var noteSections: some View {
+        Section {
+            JournalFieldControl(field: item.answer, draft: binding("answer"), units: [])
+                .disabled(!allowed)
+        } header: {
+            Text(JournalDay.longTitle(selection.day)).textCase(nil)
+        }
+        if !allowed { Section { categoryOffNotice } }
+    }
+
+    @ViewBuilder private var answerSections: some View {
+        Section {
+            Text(item.question).font(.title3.bold())
+            Text(JournalDay.title(selection.day, today: store.today))
+                .font(.footnote).foregroundStyle(.secondary)
+            if entryTimezone != store.timezone {
+                Text("Times use this entry’s original timezone, \(entryTimezone).")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if !allowed { categoryOffNotice }
+        }
+        Section {
+            Picker("Response", selection: $mode) {
+                Text("Answer").tag("answer")
+                if mode == "not_answered" { Text("Not answered").tag("not_answered") }
+                Text("Skip for today").tag("skipped")
+                Text("Doesn’t apply").tag("not_applicable")
+                Text("Unavailable").tag("unavailable")
+            }
+            .disabled(!allowed)
+            if mode == "answer" {
+                JournalFieldControl(field: item.answer, draft: binding("answer"), units: store.snapshot.catalogue?.units ?? [])
+                    .disabled(!allowed)
+            }
+        }
+        if showDetails && !item.details.isEmpty {
+            Section("Optional details") {
+                ForEach(item.details) { field in
+                    JournalFieldControl(field: field, draft: binding(field.id), units: store.snapshot.catalogue?.units ?? [])
+                }
+            }.disabled(!allowed)
+        }
+    }
+
+    @ViewBuilder private var categoryOffNotice: some View {
+        Text("Turn this category on to change the answer. You can still review or delete it.")
+            .foregroundStyle(.secondary)
+        NavigationLink("Manage private categories") { JournalPrivacyView(store: store) }
     }
 
     private var showDetails: Bool {
@@ -200,7 +223,10 @@ private struct JournalFieldControl: View {
             case "text":
                 TextField(field.label, text: $draft.text, axis: .vertical)
                     .lineLimit(4...10).accessibilityLabel(field.label)
-                Text("\(JournalFieldDraft.noteLength(draft.text))/\(JournalFieldDraft.noteLimit) characters").font(.caption).foregroundStyle(.secondary)
+                if let message = JournalFieldDraft.noteLimitMessage(draft.text) {
+                    Text(message).font(.caption)
+                        .foregroundStyle(JournalFieldDraft.noteLength(draft.text) > JournalFieldDraft.noteLimit ? Color.red : Color.secondary)
+                }
             case "time":
                 JournalTimeField(label: field.label, text: $draft.text)
             default:
@@ -217,7 +243,7 @@ private struct JournalFieldControl: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if !draft.text.isEmpty && !draft.valid(for: field, units: units) {
+            if field.inputType != "text" && !draft.text.isEmpty && !draft.valid(for: field, units: units) {
                 Text("Enter a valid \(field.inputType) within the shown limits.")
                     .font(.footnote).foregroundStyle(.red)
             }
