@@ -14,7 +14,7 @@ from app.api.deps import bearer_token_from_request
 from app.services.account_export import EXPORT_CATEGORIES, build_account_export
 from app.services.app_auth import AppAuthError, authenticate_access_token_with_session
 from app.services.sensitive_actions import SensitiveActionError, consume_sensitive_action_grant
-from app.services.journal_storage import EntryMutation, PreferenceMutation
+from app.services.journal_storage import CompletionMutation, EntryMutation, PreferenceMutation
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ class LocalInsight(BaseModel):
 class LocalJournal(BaseModel):
     entries: list[EntryMutation] = Field(default_factory=list, max_length=10000)
     preferences: list[PreferenceMutation] = Field(default_factory=list, max_length=100)
+    completions: list[CompletionMutation] = Field(default_factory=list, max_length=10000)
 
 
 class ExportRequest(BaseModel):

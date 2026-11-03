@@ -128,6 +128,20 @@ struct JournalSettingData: Codable, Identifiable {
     var id: String { key }
 }
 
+// One explicit completion per date. The first completion outlives later edits, so a day that
+// drops below five answers becomes incomplete without losing when it was first completed.
+struct JournalCompletionData: Codable, Identifiable {
+    var journalDate: String
+    var completed: Bool
+    var firstCompletedAt: String
+    var timezone: String
+    var editedAt: String
+    var mutationId: String
+    var revision: Int = 0
+    var pending = false
+    var id: String { journalDate }
+}
+
 // Wire projections exclude local queue bookkeeping and derived server fields.
 struct JournalEntryWrite: Encodable {
     let journalDate: String
@@ -154,23 +168,38 @@ struct JournalSettingWrite: Encodable {
     }
 }
 
+struct JournalCompletionWrite: Encodable {
+    let journalDate: String
+    let completed: Bool
+    let firstCompletedAt: String
+    let timezone: String
+    let editedAt: String
+    let mutationId: String
+    init(_ completion: JournalCompletionData) {
+        journalDate = completion.journalDate; completed = completion.completed
+        firstCompletedAt = completion.firstCompletedAt; timezone = completion.timezone
+        editedAt = completion.editedAt; mutationId = completion.mutationId
+    }
+}
+
 struct JournalPush: Encodable {
     let entries: [JournalEntryWrite]
     let preferences: [JournalSettingWrite]
+    var completions: [JournalCompletionWrite] = []
 }
 
 struct JournalChange: Decodable {
     let entry: JournalEntryData?
     let setting: JournalSettingData?
+    let completion: JournalCompletionData?
 
     enum CodingKeys: String, CodingKey { case kind }
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        if try container.decode(String.self, forKey: .kind) == "entry" {
-            entry = try JournalEntryData(from: decoder); setting = nil
-        } else {
-            entry = nil; setting = try JournalSettingData(from: decoder)
-        }
+        let kind = try container.decode(String.self, forKey: .kind)
+        entry = kind == "entry" ? try JournalEntryData(from: decoder) : nil
+        completion = kind == "completion" ? try JournalCompletionData(from: decoder) : nil
+        setting = kind == "preference" ? try JournalSettingData(from: decoder) : nil
     }
 }
 
@@ -195,8 +224,27 @@ struct JournalSnapshot: Codable {
     var goals: [String] = []
     var entries: [JournalEntryData] = []
     var preferences: [JournalSettingData] = []
+    var completions: [JournalCompletionData] = []
     var cursor = 0
     var analysisRevision = 0
+}
+
+// Files saved before completions existed must keep opening, or the journal would lock itself.
+extension JournalSnapshot {
+    enum CodingKeys: String, CodingKey {
+        case catalogue, timezone, goals, entries, preferences, completions, cursor, analysisRevision
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        catalogue = try values.decodeIfPresent(JournalCatalogueData.self, forKey: .catalogue)
+        timezone = try values.decodeIfPresent(String.self, forKey: .timezone)
+        goals = try values.decode([String].self, forKey: .goals)
+        entries = try values.decode([JournalEntryData].self, forKey: .entries)
+        preferences = try values.decode([JournalSettingData].self, forKey: .preferences)
+        completions = try values.decodeIfPresent([JournalCompletionData].self, forKey: .completions) ?? []
+        cursor = try values.decode(Int.self, forKey: .cursor)
+        analysisRevision = try values.decode(Int.self, forKey: .analysisRevision)
+    }
 }
 
 enum JournalCoding {
@@ -249,6 +297,23 @@ extension JournalEntryData {
         mutationId = try values.decode(String.self, forKey: .mutationId)
         deleted = try values.decode(Bool.self, forKey: .deleted)
         response = try values.decodeIfPresent(JournalResponseData.self, forKey: .response)
+        revision = try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        pending = try values.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+    }
+}
+
+extension JournalCompletionData {
+    enum CodingKeys: String, CodingKey {
+        case journalDate, completed, firstCompletedAt, timezone, editedAt, mutationId, revision, pending
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        journalDate = try values.decode(String.self, forKey: .journalDate)
+        completed = try values.decode(Bool.self, forKey: .completed)
+        firstCompletedAt = try values.decode(String.self, forKey: .firstCompletedAt)
+        timezone = try values.decode(String.self, forKey: .timezone)
+        editedAt = try values.decode(String.self, forKey: .editedAt)
+        mutationId = try values.decode(String.self, forKey: .mutationId)
         revision = try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0
         pending = try values.decodeIfPresent(Bool.self, forKey: .pending) ?? false
     }

@@ -1,12 +1,14 @@
 """Atomic per-item LWW registers and a durable, account-scoped change feed.
 
-Completion/streaks are deliberately separate from response persistence. Every accepted
-manual change invalidates future journal analyses in the same transaction.
+Completion is deliberately separate from response persistence, and streaks are not stored
+here. Every accepted manual change invalidates future journal analyses in the same
+transaction; completion does not, because it changes no observation.
 """
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AwareDatetime, Field, StrictBool, field_validator, model_validator
 from pydantic_core import PydanticCustomError
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
 from app.journal import JournalModel, ManualJournalResponse
-from app.models import JournalEntry, JournalPreference, JournalState, User
+from app.models import JournalCompletion, JournalEntry, JournalPreference, JournalState, User
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.journal_catalogue import (
     CATALOGUE_V1, CATALOGUES, SENSITIVE_CATEGORIES, normalize_journal_response,
@@ -73,16 +75,38 @@ class PreferenceMutation(JournalMutation):
         return value
 
 
+class CompletionMutation(JournalMutation):
+    journal_date: date
+    completed: StrictBool
+    first_completed_at: AwareDatetime
+    timezone: str = Field(min_length=1, max_length=80)
+
+    @field_validator("first_completed_at")
+    @classmethod
+    def bounded_first_completion(cls, value: datetime) -> datetime:
+        return cls.bounded_clock(value)
+
+    @field_validator("timezone")
+    @classmethod
+    def known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Unknown timezone") from exc
+        return value
+
+
 class JournalSync(JournalModel):
     entries: list[EntryMutation] = Field(default_factory=list, max_length=100)
     preferences: list[PreferenceMutation] = Field(default_factory=list, max_length=100)
+    completions: list[CompletionMutation] = Field(default_factory=list, max_length=100)
 
 
 def aware(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
-def wins(mutation: JournalMutation, row: JournalEntry | JournalPreference) -> bool:
+def wins(mutation: JournalMutation, row: JournalEntry | JournalPreference | JournalCompletion) -> bool:
     return (mutation.edited_at, mutation.mutation_id) > (aware(row.edited_at), row.mutation_id)
 
 
@@ -95,6 +119,40 @@ def entry_payload(row: JournalEntry) -> dict:
 def preference_payload(row: JournalPreference) -> dict:
     return dict(kind="preference", key=row.key, value=row.value, edited_at=aware(row.edited_at),
                 mutation_id=row.mutation_id, revision=row.revision)
+
+
+def completion_payload(row: JournalCompletion) -> dict:
+    return dict(kind="completion", journal_date=row.journal_date, completed=row.completed,
+                first_completed_at=aware(row.first_completed_at), timezone=row.timezone,
+                edited_at=aware(row.edited_at), mutation_id=row.mutation_id, revision=row.revision)
+
+
+def apply_completion(session: Session, state: JournalState, user_id: str, mutation: CompletionMutation) -> dict:
+    """The current state is last-write-wins; the earliest completion always survives.
+
+    Later edits can make a day incomplete without losing the moment it was first completed,
+    which is what lets streak calculation keep days already earned.
+    """
+    row = session.scalar(select(JournalCompletion).where(
+        JournalCompletion.user_id == user_id, JournalCompletion.journal_date == mutation.journal_date,
+    ))
+    newer = row is None or wins(mutation, row)
+    earlier = row is not None and mutation.first_completed_at < aware(row.first_completed_at)
+    if newer or earlier:
+        state.revision += 1
+        if row is None:
+            row = JournalCompletion(user_id=user_id, journal_date=mutation.journal_date,
+                                    first_completed_at=mutation.first_completed_at,
+                                    timezone=mutation.timezone)
+        if newer:
+            row.completed = mutation.completed
+            row.edited_at, row.mutation_id = mutation.edited_at, mutation.mutation_id
+        if earlier:
+            row.first_completed_at, row.timezone = mutation.first_completed_at, mutation.timezone
+        row.revision = state.revision
+        session.add(row)
+        session.flush()
+    return completion_payload(row)
 
 
 def metadata(session: Session, user_id: str) -> dict:
@@ -170,6 +228,8 @@ def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
             changed_days.add(mutation.journal_date)
             session.flush()
         acknowledgements.append(entry_payload(row))
+    for mutation in sorted(payload.completions, key=lambda item: (item.edited_at, item.mutation_id)):
+        acknowledgements.append(apply_completion(session, state, user_id, mutation))
     if changed_days:
         state.analysis_revision += 1
         state.analysis_dirty_from = min(changed_days | (
@@ -190,8 +250,12 @@ def changes(session: Session, user_id: str, after: int, limit: int) -> dict:
     preferences = session.scalars(select(JournalPreference).where(
         JournalPreference.user_id == user_id, JournalPreference.revision > after,
     ).order_by(JournalPreference.revision).limit(limit + 1)).all()
+    completions = session.scalars(select(JournalCompletion).where(
+        JournalCompletion.user_id == user_id, JournalCompletion.revision > after,
+    ).order_by(JournalCompletion.revision).limit(limit + 1)).all()
     rows = sorted([*(entry_payload(row) for row in entries),
-                   *(preference_payload(row) for row in preferences)], key=lambda row: row["revision"])
+                   *(preference_payload(row) for row in preferences),
+                   *(completion_payload(row) for row in completions)], key=lambda row: row["revision"])
     page = rows[:limit]
     cursor = page[-1]["revision"] if page else after
     return dict(changes=page, cursor=cursor, has_more=len(rows) > limit,

@@ -30,6 +30,7 @@ final class JournalStore: ObservableObject {
 
     var pendingCount: Int {
         snapshot.entries.filter(\.pending).count + snapshot.preferences.filter(\.pending).count
+            + snapshot.completions.filter(\.pending).count
     }
     var timezone: String? { snapshot.timezone }
     private var syncableEntries: [JournalEntryData] {
@@ -45,6 +46,7 @@ final class JournalStore: ObservableObject {
     var needsRetry: Bool {
         lastSyncFailed || snapshot.catalogue == nil || !syncableEntries.isEmpty
             || snapshot.preferences.contains(where: \.pending)
+            || snapshot.completions.contains(where: \.pending)
     }
     var today: String { JournalCoding.day(Date(), timezone: timezone ?? "UTC") }
     func enabled(_ key: String) -> Bool { snapshot.preferences.first { $0.key == key }?.value == true }
@@ -59,6 +61,7 @@ final class JournalStore: ObservableObject {
                                      deleted: false, response: response, pending: true)
         next.entries.removeAll { $0.id == entry.id }
         next.entries.append(entry)
+        withdrawCompletionIfNeeded(response.journalDate, in: &next)
         guard persist(next) else { return false }
         scheduleSync()
         return true
@@ -72,9 +75,42 @@ final class JournalStore: ObservableObject {
                                      response: nil, pending: true)
         next.entries.removeAll { $0.id == entry.id }
         next.entries.append(entry)
+        withdrawCompletionIfNeeded(day, in: &next)
         guard persist(next) else { return false }
         scheduleSync()
         return true
+    }
+
+    // Completion is always an explicit action, and needs five answers on the date being completed.
+    @discardableResult
+    func complete(day: String) -> Bool {
+        guard JournalDailyList.reachedTarget(JournalDailyList.loggedCount(snapshot, day: day)) else { return false }
+        var next = snapshot
+        let stamp = nextStamp()
+        let existing = snapshot.completions.first { $0.journalDate == day }
+        next.completions.removeAll { $0.journalDate == day }
+        next.completions.append(JournalCompletionData(
+            journalDate: day, completed: true, firstCompletedAt: existing?.firstCompletedAt ?? stamp,
+            timezone: existing?.timezone ?? timezone ?? "UTC", editedAt: stamp,
+            mutationId: UUID().uuidString.lowercased(), pending: true))
+        guard persist(next) else { return false }
+        scheduleSync()
+        return true
+    }
+
+    func completion(day: String) -> JournalCompletionData? {
+        snapshot.completions.first { $0.journalDate == day }
+    }
+
+    // A later edit that drops below five makes the day incomplete, so reaching five again
+    // needs another explicit completion. The first completion is kept for streaks.
+    private func withdrawCompletionIfNeeded(_ day: String, in next: inout JournalSnapshot) {
+        guard let index = next.completions.firstIndex(where: { $0.journalDate == day && $0.completed }),
+              !JournalDailyList.reachedTarget(JournalDailyList.loggedCount(next, day: day)) else { return }
+        next.completions[index].completed = false
+        next.completions[index].editedAt = nextStamp()
+        next.completions[index].mutationId = UUID().uuidString.lowercased()
+        next.completions[index].pending = true
     }
 
     func set(_ key: String, value: Bool) {
@@ -141,16 +177,19 @@ final class JournalStore: ObservableObject {
                 try await pullChanges()
                 let pendingEntries = Array(syncableEntries.prefix(100))
                 let pendingSettings = Array(snapshot.preferences.filter(\.pending).prefix(100))
-                if !pendingEntries.isEmpty || !pendingSettings.isEmpty {
+                let pendingCompletions = Array(snapshot.completions.filter(\.pending).prefix(100))
+                if !pendingEntries.isEmpty || !pendingSettings.isEmpty || !pendingCompletions.isEmpty {
                     let receipt: JournalReceipt = try await send(JournalPush(
                         entries: pendingEntries.map(JournalEntryWrite.init),
-                        preferences: pendingSettings.map(JournalSettingWrite.init)))
+                        preferences: pendingSettings.map(JournalSettingWrite.init),
+                        completions: pendingCompletions.map(JournalCompletionWrite.init)))
                     var next = snapshot
                     merge(receipt.acknowledgements, into: &next)
                     guard persist(next) else { return }
                     try await pullChanges()
                 }
             } while syncAgain || !syncableEntries.isEmpty || snapshot.preferences.contains(where: \.pending)
+                || snapshot.completions.contains(where: \.pending)
             lastSyncFailed = false
             message = pendingCount > 0 ? "Private changes are saved on this device. Enable their categories to sync them, or delete the responses." : nil
         } catch is CancellationError {
@@ -215,11 +254,13 @@ final class JournalStore: ObservableObject {
         guard FileManager.default.fileExists(atPath: url.path) else { return JournalPush(entries: [], preferences: []) }
         let snapshot = try JournalCoding.decoder().decode(JournalSnapshot.self, from: Data(contentsOf: url))
         return JournalPush(entries: snapshot.entries.filter(\.pending).map(JournalEntryWrite.init),
-                           preferences: snapshot.preferences.filter(\.pending).map(JournalSettingWrite.init))
+                           preferences: snapshot.preferences.filter(\.pending).map(JournalSettingWrite.init),
+                           completions: snapshot.completions.filter(\.pending).map(JournalCompletionWrite.init))
     }
 
     private func nextStamp() -> String {
-        let latest = (snapshot.entries.map(\.editedAt) + snapshot.preferences.map(\.editedAt))
+        let latest = (snapshot.entries.map(\.editedAt) + snapshot.preferences.map(\.editedAt)
+                      + snapshot.completions.map(\.editedAt))
             .map(JournalCoding.instant).max() ?? .distantPast
         return JournalCoding.timestamp(max(Date(), latest.addingTimeInterval(0.001)))
     }
@@ -252,6 +293,19 @@ final class JournalStore: ObservableObject {
                         next.preferences[index] = remote
                     }
                 } else { next.preferences.append(remote) }
+            }
+            if let remote = change.completion {
+                if let index = next.completions.firstIndex(where: { $0.id == remote.id }) {
+                    let local = next.completions[index]
+                    var winner = local.mutationId == remote.mutationId || JournalCoding.newer(
+                        remote.editedAt, remote.mutationId, than: local.editedAt, local.mutationId) ? remote : local
+                    // Every device converges on the earliest completion, whichever edit wins.
+                    let earliest = JournalCoding.instant(remote.firstCompletedAt) < JournalCoding.instant(local.firstCompletedAt)
+                        ? remote : local
+                    winner.firstCompletedAt = earliest.firstCompletedAt
+                    winner.timezone = earliest.timezone
+                    next.completions[index] = winner
+                } else { next.completions.append(remote) }
             }
         }
     }

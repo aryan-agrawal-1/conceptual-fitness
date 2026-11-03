@@ -127,6 +127,24 @@ class JournalPreference(Base):
     revision: Mapped[int] = mapped_column(Integer)
 
 
+class JournalCompletion(Base):
+    __tablename__ = "journal_completions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "journal_date", name="uq_journal_completion_day"),
+        Index("ix_journal_completions_user_revision", "user_id", "revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    journal_date: Mapped[date] = mapped_column(Date)
+    completed: Mapped[bool] = mapped_column(Boolean)
+    first_completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str] = mapped_column(String(80))
+    edited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    mutation_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer)
+
+
 class UserProfile(Base):
     __tablename__ = "user_profiles"
     __table_args__ = (UniqueConstraint("user_id", name="uq_user_profiles_user_id"),)

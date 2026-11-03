@@ -5,6 +5,7 @@ struct ProfileView: View {
     @ObservedObject var coordinator: AppSyncCoordinator
     @ObservedObject var authStore: AuthStore
     let userID: String
+    var journalReminders: JournalReminders?
     @State private var connectionAction: ConnectionAction?
     @State private var isUpdatingConnection = false
     @State private var connectionError: String?
@@ -78,6 +79,8 @@ struct ProfileView: View {
                     }
                 }
             }
+
+            if let journalReminders { JournalReminderSection(reminders: journalReminders) }
 
             Section("Connections and sync") {
                 LabeledContent("Google Health", value: connectionTitle)

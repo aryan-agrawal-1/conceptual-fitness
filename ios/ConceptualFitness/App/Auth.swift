@@ -478,7 +478,8 @@ final class AuthStore: ObservableObject {
         localDataEpoch += 1
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
-            where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history") {
+            where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history")
+                || key.hasPrefix("journalReminder") || key.hasPrefix("journalPrompted") {
             defaults.removeObject(forKey: key)
         }
         if let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
@@ -953,7 +954,7 @@ private extension AuthSession {
                 lastError: nil
             ),
             profile: AuthProfileStatus(
-                onboardingCompletedAt: FitnessDate.string(Date()),
+                onboardingCompletedAt: FitnessDate.string(Date().addingTimeInterval(-30 * 86400)),
                 weatherEnabled: false
             )
         )

@@ -21,6 +21,7 @@ from app.models import (
     ExerciseFavorite,
     GoogleAccount,
     HistoricalBackfill,
+    JournalCompletion,
     JournalEntry,
     JournalPreference,
     JournalState,
@@ -146,7 +147,7 @@ def write_category(
             target.write(json.dumps(local_insights, default=json_default).encode())
             counts["client_daily_insights"] = len(local_insights)
         if local_journal:
-            for key in ("entries", "preferences"):
+            for key in ("entries", "preferences", "completions"):
                 records = local_journal.get(key, [])
                 if records:
                     target.write(b",")
@@ -210,6 +211,7 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
             TableExport(DailyContext, by_user(DailyContext)),
             TableExport(JournalEntry, by_user(JournalEntry)),
             TableExport(JournalPreference, by_user(JournalPreference)),
+            TableExport(JournalCompletion, by_user(JournalCompletion)),
             TableExport(JournalState, lambda user_id: select(JournalState).where(
                 JournalState.user_id == user_id,
             )),
