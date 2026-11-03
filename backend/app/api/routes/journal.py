@@ -8,6 +8,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
+from app.db.sealed_json import JournalTextUnavailable
 from app.journal import JournalCatalogue
 from app.models import JournalEntry
 from app.services.journal_catalogue import CATALOGUES
@@ -36,6 +37,9 @@ class JournalRoute(APIRoute):
                 raise HTTPException(422, "Invalid journal request") from exc
             except JournalAccountUnavailable:
                 raise HTTPException(401, "Account is unavailable") from None
+            except JournalTextUnavailable:
+                logger.error("Journal request failed reason=note_text_unavailable")
+                raise HTTPException(503, "Journal sync is unavailable. Retry your saved changes.") from None
 
         return safe_handler
 

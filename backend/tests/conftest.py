@@ -32,6 +32,7 @@ os.environ.update(
         "GOOGLE_HEALTH_API_TIMEOUT_SECONDS": "30",
         "GOOGLE_HEALTH_PAGE_SIZE": "500",
         "TOKEN_ENCRYPTION_KEY": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+        "JOURNAL_ENCRYPTION_KEY": "YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI=",
         "SESSION_SECRET_KEY": "test-session-secret",
         "ACCESS_TOKEN_TTL_MINUTES": "15",
         "REFRESH_TOKEN_TTL_DAYS": "30",

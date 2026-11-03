@@ -1,11 +1,19 @@
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+import importlib.util
 import json
+from pathlib import Path
 from uuid import uuid4
 from zipfile import ZipFile
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+import pytest
+from sqlalchemy import select, text
 
+from app.core.config import get_settings
 from app.main import app
 from app.models import JournalCompletion, JournalEntry, JournalPreference, JournalState, User, UserProfile
 from app.services.account_export import build_account_export
@@ -329,3 +337,148 @@ def test_completion_pages_export_and_cascade(session, auth_headers):
     session.delete(owner)
     session.commit()
     assert session.scalar(select(JournalCompletion)) is None
+
+
+NOTE_TEXT = "Argument about the paperwork, slept badly"
+
+
+def note_edit(body=NOTE_TEXT, **kwargs):
+    return edit("daily_note", value={"type": "text", "value": body}, **kwargs)
+
+
+def stored_columns(session):
+    return [" ".join(str(column) for column in row) for row in session.execute(
+        text("SELECT response, normalized FROM journal_entries ORDER BY behaviour_id")
+    )]
+
+
+def use_journal_key(monkeypatch, key):
+    settings = replace(get_settings(), journal_encryption_key=key)
+    monkeypatch.setattr("app.db.sealed_json.get_settings", lambda: settings)
+
+
+def test_note_text_is_encrypted_at_rest_and_readable_through_every_route(session, auth_headers):
+    owner, headers = account(session, auth_headers)
+    client = TestClient(app)
+    synced = client.post("/journal/sync", headers=headers, json={
+        "entries": [note_edit(), edit(value={"type": "rating", "value": 4})],
+        "preferences": [pref("opt_in:reflection")],
+    })
+    assert synced.status_code == 200
+    note_ack = next(row for row in synced.json()["acknowledgements"] if row.get("behaviour_id") == "daily_note")
+    assert note_ack["response"]["answer"] == {"type": "text", "value": NOTE_TEXT}
+
+    session.expire_all()
+    note_columns, mood_columns = stored_columns(session)
+    assert NOTE_TEXT not in note_columns
+    assert "ciphertext" in note_columns
+    assert "ciphertext" not in mood_columns
+    assert '"rating"' in mood_columns
+
+    feed = client.get("/journal/changes", headers=headers).json()["changes"]
+    note = next(row for row in feed if row.get("behaviour_id") == "daily_note")
+    assert note["response"]["answer"]["value"] == NOTE_TEXT
+    assert note["normalized"]["canonical_answer"]["value"] == NOTE_TEXT
+    entries = client.get("/journal/entries?start=2026-10-24&end=2026-10-24", headers=headers).json()
+    assert NOTE_TEXT in json.dumps(entries)
+    with ZipFile(build_account_export(session, user_id=owner.id, categories={"journal"}, local_insights=[])) as archive:
+        exported = json.loads(archive.read("journal.json"))["tables"]["journal_entries"]
+    assert NOTE_TEXT in json.dumps(exported)
+    assert "ciphertext" not in json.dumps(exported)
+
+    client.post("/journal/sync", headers=headers, json={"entries": [
+        edit("daily_note", deleted=True, stamp="2026-10-26T12:00:00Z"),
+    ]})
+    session.expire_all()
+    assert "ciphertext" not in stored_columns(session)[0]
+    session.delete(owner)
+    session.commit()
+    assert session.scalar(select(JournalEntry)) is None
+
+
+def test_unreadable_note_text_is_retryable_and_payload_free(session, auth_headers, monkeypatch, caplog):
+    _, headers = account(session, auth_headers)
+    client = TestClient(app)
+    assert client.post("/journal/sync", headers=headers, json={
+        "entries": [note_edit()], "preferences": [pref("opt_in:reflection")],
+    }).status_code == 200
+    use_journal_key(monkeypatch, Fernet.generate_key().decode())
+    session.expire_all()
+    response = client.get("/journal/changes", headers=headers)
+    assert response.status_code == 503
+    assert NOTE_TEXT not in response.text
+    assert "reason=note_text_unavailable" in caplog.text
+    assert NOTE_TEXT not in caplog.text
+
+
+def test_a_missing_key_queues_notes_without_blocking_typed_answers(session, auth_headers, monkeypatch, caplog):
+    _, headers = account(session, auth_headers)
+    client = TestClient(app)
+    client.post("/journal/sync", headers=headers, json={"preferences": [pref("opt_in:reflection")]})
+    use_journal_key(monkeypatch, "")
+    assert client.post("/journal/sync", headers=headers, json={"entries": [note_edit()]}).status_code == 503
+    assert NOTE_TEXT not in caplog.text
+    session.rollback()
+    assert session.scalar(select(JournalEntry)) is None
+    assert client.post("/journal/sync", headers=headers, json={
+        "entries": [edit(value={"type": "rating", "value": 4})],
+    }).status_code == 200
+
+
+def test_older_keys_keep_opening_notes_after_rotation(session, auth_headers, monkeypatch):
+    _, headers = account(session, auth_headers)
+    client = TestClient(app)
+    client.post("/journal/sync", headers=headers, json={
+        "entries": [note_edit()], "preferences": [pref("opt_in:reflection")],
+    })
+    old_key = get_settings().journal_encryption_key
+    use_journal_key(monkeypatch, f"{Fernet.generate_key().decode()},{old_key}")
+    session.expire_all()
+    note = client.get("/journal/changes", headers=headers).json()["changes"]
+    assert NOTE_TEXT in json.dumps(note)
+
+
+def test_migration_seals_existing_notes_and_can_reverse(session):
+    migration_path = Path(__file__).parents[1] / "migrations/versions/0026_seal_journal_notes.py"
+    spec = importlib.util.spec_from_file_location("seal_journal_notes", migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    user = User()
+    session.add(user)
+    session.flush()
+    value = json.dumps({"answer": {"type": "text", "value": NOTE_TEXT}, "journal_date": "2026-10-24"})
+    insert = text(
+        "INSERT INTO journal_entries (id, user_id, journal_date, behaviour_id, edited_at, mutation_id,"
+        " deleted, response, normalized, revision) VALUES (:id, :user_id, '2026-10-24', :behaviour,"
+        " '2026-10-25 12:00:00', :mutation, :deleted, :response, :response, 1)"
+    )
+    connection = session.connection()
+    connection.execute(insert, dict(id=str(uuid4()), user_id=user.id, behaviour="daily_note",
+                                    mutation=str(uuid4()), deleted=False, response=value))
+    connection.execute(insert, dict(id=str(uuid4()), user_id=user.id, behaviour="energy",
+                                    mutation=str(uuid4()), deleted=False,
+                                    response=json.dumps({"answer": {"type": "rating", "value": 4}})))
+    connection.execute(text(
+        "INSERT INTO journal_entries (id, user_id, journal_date, behaviour_id, edited_at, mutation_id, deleted,"
+        " revision) VALUES (:id, :user_id, '2026-10-23', 'daily_note', '2026-10-25 12:00:00', :mutation, :deleted, 2)"
+    ), dict(id=str(uuid4()), user_id=user.id, mutation=str(uuid4()), deleted=True))
+    with Operations.context(MigrationContext.configure(connection)):
+        migration.upgrade()
+        tombstone = connection.execute(text(
+            "SELECT count(*) FROM journal_entries WHERE deleted AND response IS NULL"
+        )).scalar_one()
+        assert tombstone == 1
+        sealed, energy = connection.execute(text(
+            "SELECT response FROM journal_entries WHERE NOT deleted ORDER BY behaviour_id"
+        )).scalars().all()
+        assert NOTE_TEXT not in str(sealed)
+        assert "ciphertext" in str(sealed)
+        assert "ciphertext" not in str(energy)
+        migration.upgrade()
+        migration.downgrade()
+    restored = connection.execute(text(
+        "SELECT response FROM journal_entries WHERE behaviour_id = 'daily_note' AND NOT deleted"
+    )).scalar_one()
+    assert NOTE_TEXT in str(restored)
+    assert "ciphertext" not in str(restored)
+    session.rollback()

@@ -25,4 +25,6 @@ Dates and timestamps use ISO 8601 strings. Empty selected categories contain the
 
 Provider refresh tokens, app access and refresh tokens, OAuth state, one-time authorization grants, sync page tokens, and internal error text are excluded. The app sends cached daily briefs to the export endpoint only while generating the archive; the backend does not persist them.
 
+Daily note text is encrypted in the database and decrypted for the archive, so `journal.json` holds it as plain text.
+
 The current product has no stored coach conversation, memory, plan, evidence-version, encrypted-vault, or E2EE record types. A future encrypted-memory implementation must decrypt and assemble those records on-device rather than send plaintext memory to the backend.
