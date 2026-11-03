@@ -145,6 +145,7 @@ CATALOGUE_V1 = JournalCatalogue(
     units=UNITS, observation_schema=TypeAdapter(JournalObservation).json_schema(),
 )
 CATALOGUES = {1: CATALOGUE_V1}
+STATISTICAL_BEHAVIOURS = frozenset(item.id for item in CATALOGUE_V1.behaviours if item.statistical_input)
 
 
 class JournalContractError(ValueError):

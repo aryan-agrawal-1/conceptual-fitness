@@ -482,3 +482,25 @@ def test_migration_seals_existing_notes_and_can_reverse(session):
     assert NOTE_TEXT in str(restored)
     assert "ciphertext" not in str(restored)
     session.rollback()
+
+
+def test_note_edits_do_not_invalidate_analysis_but_inputs_still_do(session, auth_headers):
+    user, headers = account(session, auth_headers)
+    client = TestClient(app)
+    client.post("/journal/sync", headers=headers, json={
+        "entries": [note_edit()], "preferences": [pref("opt_in:reflection")],
+    })
+    client.post("/journal/sync", headers=headers, json={"entries": [
+        edit("daily_note", deleted=True, stamp="2026-10-26T12:00:00Z"),
+    ]})
+    state = session.get(JournalState, user.id)
+    assert state.analysis_revision == 0
+    assert state.analysis_dirty_from is None
+    client.post("/journal/sync", headers=headers, json={"entries": [
+        edit(value={"type": "rating", "value": 4}, day="2026-10-20"),
+        note_edit(day="2026-10-10", stamp="2026-10-26T13:00:00Z"),
+    ]})
+    session.expire_all()
+    state = session.get(JournalState, user.id)
+    assert state.analysis_revision == 1
+    assert state.analysis_dirty_from == date(2026, 10, 20)
