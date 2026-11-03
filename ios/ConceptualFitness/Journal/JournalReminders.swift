@@ -15,6 +15,67 @@ enum JournalReminderPlan {
     // Individual dates rather than a repeat, because a repeat can't skip a day that's already done.
     static let horizonDays = 30
     static let eveningHour = 12
+    static let streakTitle = "Don’t lose your streak"
+    static let streakHour = 20
+    static let streakIdentifier = "streak"
+
+    struct StreakAlert: Equatable {
+        let day: String
+        let fire: Date
+        let count: Int
+        var body: String { JournalReminderPlan.streakBody(count) }
+    }
+
+    struct Request: Equatable {
+        let identifier: String
+        let fire: Date
+        let title: String
+        let body: String
+    }
+
+    static func streakBody(_ count: Int) -> String {
+        "Your \(count)-day streak ends at midnight. Check in now to keep it."
+    }
+
+    static func streakAlert(snapshot: JournalSnapshot, now: Date = Date()) -> StreakAlert? {
+        guard let timezone = snapshot.timezone, let zone = TimeZone(identifier: timezone) else { return nil }
+        var day = JournalCoding.day(now, timezone: timezone)
+        for _ in 0..<3 {
+            let streak = JournalStreak(snapshot.completions, today: day)
+            if streak.endsTonight {
+                guard let fire = evening(of: day, in: zone), fire > now else { return nil }
+                return StreakAlert(day: day, fire: fire, count: streak.current)
+            }
+            day = JournalDay.next(day)
+        }
+        return nil
+    }
+
+    private static func evening(of day: String, in zone: TimeZone) -> Date? {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = .gmt
+        var parts = utc.dateComponents([.year, .month, .day], from: JournalDay.date(day))
+        parts.hour = streakHour
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = zone
+        return local.date(from: parts)
+    }
+
+    static func requests(_ settings: JournalReminderSettings, streakEnabled: Bool, snapshot: JournalSnapshot,
+                         now: Date = Date(), calendar: Calendar = .current) -> [Request] {
+        let alert = streakEnabled ? streakAlert(snapshot: snapshot, now: now) : nil
+        var requests = fireDates(settings, snapshot: snapshot, now: now, calendar: calendar)
+            .filter { fire in
+                guard let alert, let timezone = snapshot.timezone, settings.hour >= eveningHour else { return true }
+                return JournalCoding.day(fire, timezone: timezone) != alert.day
+            }
+            .map { Request(identifier: JournalCoding.day($0, timezone: calendar.timeZone.identifier),
+                           fire: $0, title: title, body: body) }
+        if let alert {
+            requests.append(Request(identifier: streakIdentifier, fire: alert.fire, title: streakTitle, body: alert.body))
+        }
+        return requests
+    }
 
     static func fireDates(_ settings: JournalReminderSettings, snapshot: JournalSnapshot, now: Date = Date(),
                           calendar: Calendar = .current) -> [Date] {
@@ -38,6 +99,8 @@ final class JournalReminders: ObservableObject {
     @Published private(set) var settings: JournalReminderSettings
     @Published private(set) var offered: Bool
     @Published private(set) var permissionDenied = false
+    @Published private(set) var streakEnabled: Bool
+    @Published private(set) var notificationsAllowed = false
     private let userID: String
     private let logger = Logger(subsystem: "ConceptualFitness", category: "Journal")
     private var scheduling: Task<Void, Never>?
@@ -45,12 +108,14 @@ final class JournalReminders: ObservableObject {
     private var stopped = false
     private var settingsKey: String { "journalReminder.\(userID)" }
     private var offeredKey: String { "journalReminderOffered.\(userID)" }
+    private var streakOffKey: String { "journalReminderStreakOff.\(userID)" }
 
     init(userID: String) {
         self.userID = userID
         settings = UserDefaults.standard.data(forKey: "journalReminder.\(userID)")
             .flatMap { try? JSONDecoder().decode(JournalReminderSettings.self, from: $0) } ?? JournalReminderSettings()
         offered = UserDefaults.standard.bool(forKey: "journalReminderOffered.\(userID)")
+        streakEnabled = !UserDefaults.standard.bool(forKey: "journalReminderStreakOff.\(userID)")
     }
 
     var shouldOffer: Bool { !offered && !settings.enabled }
@@ -70,7 +135,20 @@ final class JournalReminders: ObservableObject {
         let allowed = (try? await UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound])) ?? false
         permissionDenied = !allowed
+        notificationsAllowed = allowed
         update { $0.enabled = allowed }
+    }
+
+    func setStreakEnabled(_ enabled: Bool) async {
+        if enabled {
+            let allowed = (try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound])) ?? false
+            permissionDenied = !allowed
+            notificationsAllowed = allowed
+        }
+        streakEnabled = enabled
+        UserDefaults.standard.set(!enabled, forKey: streakOffKey)
+        schedule()
     }
 
     func setTime(_ date: Date) {
@@ -84,6 +162,7 @@ final class JournalReminders: ObservableObject {
     func refreshPermission() async {
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         permissionDenied = settings.enabled && status == .denied
+        notificationsAllowed = Self.isAllowed(status)
     }
 
     func refresh(_ snapshot: JournalSnapshot) {
@@ -102,6 +181,10 @@ final class JournalReminders: ObservableObject {
         }
     }
 
+    private static func isAllowed(_ status: UNAuthorizationStatus) -> Bool {
+        status == .authorized || status == .provisional || status == .ephemeral
+    }
+
     private func markOffered() {
         offered = true
         UserDefaults.standard.set(true, forKey: offeredKey)
@@ -116,25 +199,27 @@ final class JournalReminders: ObservableObject {
     private func schedule() {
         guard !stopped, let latest else { return }
         let settings = settings
+        let streakEnabled = streakEnabled
         let prefix = "\(JournalReminderPlan.identifierPrefix)\(userID)."
         scheduling?.cancel()
         scheduling = Task { [logger] in
             let center = UNUserNotificationCenter.current()
             let calendar = Calendar.current
-            let wanted = Dictionary(uniqueKeysWithValues: JournalReminderPlan.fireDates(settings, snapshot: latest).map {
-                ("\(prefix)\(JournalCoding.day($0, timezone: calendar.timeZone.identifier))", $0)
-            })
+            let allowed = Self.isAllowed(await center.notificationSettings().authorizationStatus)
+            let wanted = Dictionary(uniqueKeysWithValues: JournalReminderPlan.requests(
+                settings, streakEnabled: streakEnabled && allowed, snapshot: latest, calendar: calendar
+            ).map { ("\(prefix)\($0.identifier)", $0) })
             let pending = await center.pendingNotificationRequests()
             guard !Task.isCancelled else { return }
             let current = pending.filter { $0.identifier.hasPrefix(prefix) }
             let stale = current.map(\.identifier).filter { wanted[$0] == nil }
             center.removePendingNotificationRequests(withIdentifiers: stale)
-            for (identifier, fire) in wanted {
+            for (identifier, request) in wanted {
                 let content = UNMutableNotificationContent()
-                content.title = JournalReminderPlan.title
-                content.body = JournalReminderPlan.body
+                content.title = request.title
+                content.body = request.body
                 content.sound = .default
-                let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
+                let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: request.fire)
                 do {
                     try await center.add(UNNotificationRequest(
                         identifier: identifier, content: content,
@@ -178,6 +263,9 @@ struct JournalReminderSection: View {
                     get: { reminders.time },
                     set: { reminders.setTime($0) }), displayedComponents: .hourAndMinute)
             }
+            Toggle("Streak reminder", isOn: Binding(
+                get: { reminders.streakEnabled && reminders.notificationsAllowed },
+                set: { enabled in Task { await reminders.setStreakEnabled(enabled) } }))
             if reminders.permissionDenied {
                 Text("Notifications are off for this app. Turn them on in Settings to get reminders.")
                     .font(.footnote)
@@ -188,7 +276,7 @@ struct JournalReminderSection: View {
         } header: {
             Text("Notifications")
         } footer: {
-            Text("Reminders only say “\(JournalReminderPlan.body)” and never name what you track. They skip days you’ve already completed and are set on this device only.")
+            Text("Daily reminders only say “\(JournalReminderPlan.body)” and skip days you’ve already completed. Streak reminders come at 8pm on the last evening you can save your streak, and say how long it is. Neither names what you track, and both are set on this device only.")
         }
         .task { await reminders.refreshPermission() }
     }

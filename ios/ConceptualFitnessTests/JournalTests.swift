@@ -533,6 +533,79 @@ final class JournalReminderPlanTests: XCTestCase {
         XCTAssertTrue(days(morning, JournalSnapshot()).isEmpty)
     }
 
+    private func completed(_ values: String...) -> JournalSnapshot {
+        var value = snapshot()
+        value.completions = values.map { completion($0, first: "\($0)T12:00:00.000Z") }
+        return value
+    }
+
+    private func alertDay(_ value: JournalSnapshot, now: String = "2026-11-03 07:00") -> String? {
+        JournalReminderPlan.streakAlert(snapshot: value, now: londonDate(now))?.day
+    }
+
+    func testStreakAlertFiresOnTheLastEveningYesterdayCanBeSaved() {
+        let alert = JournalReminderPlan.streakAlert(snapshot: completed("2026-10-31", "2026-11-01"),
+                                                    now: londonDate("2026-11-03 07:00"))
+        XCTAssertEqual(alert?.day, "2026-11-03")
+        XCTAssertEqual(alert?.fire, londonDate("2026-11-03 20:00"))
+        XCTAssertEqual(alert?.count, 2)
+        XCTAssertEqual(alert?.body, "Your 2-day streak ends at midnight. Check in now to keep it.")
+    }
+
+    func testStreakAlertWaitsWhileThereIsStillAFullDayLeft() {
+        XCTAssertEqual(alertDay(completed("2026-11-02")), "2026-11-04")
+        XCTAssertEqual(alertDay(completed("2026-11-02", "2026-11-03")), "2026-11-05")
+    }
+
+    func testStreakAlertNeedsAStreakToLose() {
+        XCTAssertNil(alertDay(snapshot()))
+        XCTAssertNil(alertDay(completed("2026-10-20")))
+    }
+
+    func testStreakAlertIsSkippedOnceEightPmHasPassed() {
+        XCTAssertNil(alertDay(completed("2026-11-01"), now: "2026-11-03 20:30"))
+    }
+
+    func testStreakAlertUsesTheProfileTimezoneNotTheDevices() {
+        var value = completed("2026-11-01")
+        value.timezone = "America/New_York"
+        value.completions = [completion("2026-11-01", first: "2026-11-01T17:00:00.000Z", timezone: "America/New_York")]
+        let alert = JournalReminderPlan.streakAlert(snapshot: value, now: londonDate("2026-11-03 12:00"))
+        XCTAssertEqual(alert?.fire, londonDate("2026-11-04 01:00"))
+    }
+
+    func testStreakAlertNeverNamesAnInput() {
+        let text = (JournalReminderPlan.streakTitle + JournalReminderPlan.streakBody(12)).lowercased()
+        for item in testCatalogue.behaviours {
+            XCTAssertFalse(text.contains(item.label.lowercased()))
+        }
+        for category in testCatalogue.categories {
+            XCTAssertFalse(text.contains(category.label.lowercased()))
+        }
+    }
+
+    func testStreakAlertReplacesAnEveningReminderThatSameDay() {
+        let requests = JournalReminderPlan.requests(evening, streakEnabled: true, snapshot: completed("2026-11-01"),
+                                                    now: londonDate("2026-11-03 07:00"), calendar: calendar)
+        XCTAssertTrue(requests.contains { $0.identifier == JournalReminderPlan.streakIdentifier })
+        XCTAssertFalse(requests.contains { $0.identifier == "2026-11-03" })
+        XCTAssertTrue(requests.contains { $0.identifier == "2026-11-04" })
+    }
+
+    func testStreakAlertLeavesAMorningReminderThatSameDay() {
+        let requests = JournalReminderPlan.requests(morning, streakEnabled: true, snapshot: completed("2026-11-01"),
+                                                    now: londonDate("2026-11-03 07:00"), calendar: calendar)
+        XCTAssertTrue(requests.contains { $0.identifier == JournalReminderPlan.streakIdentifier })
+        XCTAssertTrue(requests.contains { $0.identifier == "2026-11-03" })
+    }
+
+    func testTurningTheStreakReminderOffDropsOnlyThatRequest() {
+        let requests = JournalReminderPlan.requests(evening, streakEnabled: false, snapshot: completed("2026-11-01"),
+                                                    now: londonDate("2026-11-03 07:00"), calendar: calendar)
+        XCTAssertFalse(requests.contains { $0.identifier == JournalReminderPlan.streakIdentifier })
+        XCTAssertTrue(requests.contains { $0.identifier == "2026-11-03" })
+    }
+
     func testSettingsDefaultToOffAtNine() {
         let settings = JournalReminderSettings()
         XCTAssertFalse(settings.enabled)
