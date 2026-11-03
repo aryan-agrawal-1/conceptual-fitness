@@ -156,14 +156,9 @@ struct JournalCheckInView: View {
                             .accessibilityAddTraits(.isHeader)
                     }
                     Spacer(minLength: 24)
-                    if reminders.shouldOffer || answeringReminder {
-                        if celebration == nil {
-                            reminderOffer
-                        } else {
-                            reminderOffer
-                                .padding(16)
-                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        }
+                    if offersReminder {
+                        reminderOffer(onFire: celebration != nil)
+                            .padding(.bottom, celebration == nil ? 0 : 150)
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height - 24)
@@ -173,16 +168,19 @@ struct JournalCheckInView: View {
         }
         .background {
             if celebration != nil {
-                JournalFireBackground(lean: 1, reach: 0.5, rises: true).ignoresSafeArea()
+                JournalFireBackground(lean: 1, reach: offersReminder ? 0.24 : 0.5, rises: true).ignoresSafeArea()
             }
         }
     }
 
-    private var reminderOffer: some View {
+    private var offersReminder: Bool { reminders.shouldOffer || answeringReminder }
+
+    private func reminderOffer(onFire: Bool) -> some View {
         VStack(spacing: 14) {
             Text("Want a daily reminder?")
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center)
+                .foregroundStyle(onFire ? .white : .primary)
             let layout = typeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(spacing: 10))
                 : AnyLayout(HStackLayout(spacing: 10))
@@ -195,16 +193,21 @@ struct JournalCheckInView: View {
                     }
                 } label: {
                     Text("Turn on").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(onFire ? JournalFirePalette.deep : .white)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(HealthTheme.color(for: .activity))
-                Button {
+                .tint(onFire ? .white : HealthTheme.color(for: .activity))
+                let decline = Button {
                     reminders.declineOffer()
                     dismiss()
                 } label: {
                     Text("No thanks").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                if onFire {
+                    decline.buttonStyle(.borderedProminent).tint(JournalFirePalette.ember)
+                } else {
+                    decline.buttonStyle(.bordered)
+                }
             }
             .controlSize(.large)
             .disabled(answeringReminder)
