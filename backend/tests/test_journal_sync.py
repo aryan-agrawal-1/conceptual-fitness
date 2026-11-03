@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.main import app
-from app.models import JournalEntry, JournalPreference, JournalState, User, UserProfile
+from app.models import JournalCompletion, JournalEntry, JournalPreference, JournalState, User, UserProfile
 from app.services.account_export import build_account_export
 
 
@@ -229,3 +229,103 @@ def test_inflight_sync_cannot_write_after_deletion_scheduling(session, auth_head
             "entries": [edit(value={"type": "rating", "value": 3})],
         }))
     assert session.scalar(select(JournalEntry)) is None
+
+
+def completion(day="2026-10-24", *, completed=True, first="2026-10-25T08:00:00Z",
+               stamp="2026-10-25T08:00:00Z", mutation_id=None, timezone_name="Europe/London"):
+    return dict(journal_date=day, completed=completed, first_completed_at=first, timezone=timezone_name,
+                edited_at=stamp, mutation_id=mutation_id or str(uuid4()))
+
+
+def test_completion_retries_are_idempotent_and_do_not_invalidate_analysis(session, auth_headers):
+    user, headers = account(session, auth_headers)
+    client = TestClient(app)
+    change = completion()
+    first = client.post("/journal/sync", headers=headers, json={"completions": [change]})
+    assert first.status_code == 200
+    saved = first.json()["acknowledgements"][0]
+    assert saved["kind"] == "completion"
+    assert saved["journal_date"] == "2026-10-24"
+    assert saved["completed"] is True
+    assert saved["timezone"] == "Europe/London"
+    assert client.post("/journal/sync", headers=headers, json={"completions": [change]}).json() == first.json()
+    state = session.get(JournalState, user.id)
+    assert state.revision == 1
+    assert state.analysis_revision == 0
+    assert state.analysis_dirty_from is None
+    feed = client.get("/journal/changes", headers=headers).json()["changes"]
+    assert [row["kind"] for row in feed] == ["completion"]
+
+
+def test_withdrawn_completion_keeps_the_first_completion_in_any_delivery_order(session, auth_headers):
+    _, headers = account(session, auth_headers)
+    client = TestClient(app)
+    earned = completion(first="2026-10-25T08:00:00Z", stamp="2026-10-25T08:00:00Z")
+    withdrawn = completion(completed=False, first="2026-10-25T08:00:00Z", stamp="2026-10-25T09:00:00Z")
+    again = completion(first="2026-10-26T07:00:00Z", stamp="2026-10-26T07:00:00Z",
+                       timezone_name="Asia/Tokyo")
+    results = []
+    for order in ((earned, withdrawn, again), (again, withdrawn, earned)):
+        for change in order:
+            change = {**change, "journal_date": "2026-10-24" if order[0] is earned else "2026-10-23"}
+            result = client.post("/journal/sync", headers=headers, json={"completions": [change]})
+            assert result.status_code == 200
+        results.append(result.json()["acknowledgements"][0])
+    for result in results:
+        assert result["completed"] is True
+        assert result["first_completed_at"].startswith("2026-10-25T08:00:00")
+        assert result["timezone"] == "Europe/London"
+    assert results[0]["mutation_id"] == results[1]["mutation_id"] == again["mutation_id"]
+
+
+def test_late_earlier_completion_is_visible_to_other_devices(session, auth_headers):
+    _, headers = account(session, auth_headers)
+    client = TestClient(app)
+    client.post("/journal/sync", headers=headers, json={"completions": [
+        completion(first="2026-10-26T07:00:00Z", stamp="2026-10-26T07:00:00Z")]})
+    cursor = client.get("/journal/changes", headers=headers).json()["cursor"]
+    # This offline device completed first but edited earlier, so only the first completion changes.
+    client.post("/journal/sync", headers=headers, json={"completions": [
+        completion(completed=False, first="2026-10-25T08:00:00Z", stamp="2026-10-25T09:00:00Z")]})
+    change = client.get(f"/journal/changes?after={cursor}", headers=headers).json()["changes"][0]
+    assert change["completed"] is True
+    assert change["first_completed_at"].startswith("2026-10-25T08:00:00")
+
+
+def test_completion_validation_is_payload_free_and_future_stamps_are_rejected(session, auth_headers, caplog):
+    _, headers = account(session, auth_headers)
+    client = TestClient(app)
+    invalid = client.post("/journal/sync", headers=headers, json={"completions": [
+        completion(timezone_name="Not/AZone")]})
+    assert invalid.status_code == 422
+    assert "Not/AZone" not in invalid.text
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    ahead = client.post("/journal/sync", headers=headers, json={"completions": [completion(first=future)]})
+    assert ahead.status_code == 422
+    assert ahead.json()["detail"]["code"] == "clock_ahead"
+    assert "Not/AZone" not in caplog.text
+
+
+def test_completion_pages_export_and_cascade(session, auth_headers):
+    owner, headers = account(session, auth_headers)
+    client = TestClient(app)
+    changes = [completion(day=f"2026-10-{day}") for day in (21, 22, 23)]
+    assert client.post("/journal/sync", headers=headers, json={"completions": changes}).status_code == 200
+    cursor, seen = 0, []
+    while True:
+        page = client.get(f"/journal/changes?after={cursor}&limit=2", headers=headers).json()
+        seen.extend(page["changes"])
+        cursor = page["cursor"]
+        if not page["has_more"]:
+            break
+    assert sorted(row["journal_date"] for row in seen) == ["2026-10-21", "2026-10-22", "2026-10-23"]
+    with ZipFile(build_account_export(
+        session, user_id=owner.id, categories={"journal"}, local_insights=[],
+        local_journal={"completions": [changes[0]]},
+    )) as archive:
+        tables = json.loads(archive.read("journal.json"))["tables"]
+        assert len(tables["journal_completions"]) == 3
+        assert tables["client_journal_completions"][0]["journal_date"] == "2026-10-21"
+    session.delete(owner)
+    session.commit()
+    assert session.scalar(select(JournalCompletion)) is None
