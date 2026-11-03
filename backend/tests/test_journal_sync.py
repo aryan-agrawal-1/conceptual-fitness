@@ -504,3 +504,22 @@ def test_note_edits_do_not_invalidate_analysis_but_inputs_still_do(session, auth
     state = session.get(JournalState, user.id)
     assert state.analysis_revision == 1
     assert state.analysis_dirty_from == date(2026, 10, 20)
+
+
+def test_ai_consent_is_per_feature_and_never_enables_recording(session, auth_headers):
+    user, headers = account(session, auth_headers)
+    client = TestClient(app)
+    assert client.post("/journal/sync", headers=headers, json={"preferences": [
+        pref("ai_context:unknown:reflection"),
+    ]}).status_code == 422
+    synced = client.post("/journal/sync", headers=headers, json={"preferences": [
+        pref("ai_context:daily_brief:reflection"),
+    ]})
+    assert synced.status_code == 200
+    assert client.post("/journal/sync", headers=headers, json={"entries": [note_edit()]}).status_code == 422
+    saved = {row["key"]: row["value"] for row in client.get("/journal/changes", headers=headers).json()["changes"]}
+    assert saved == {"ai_context:daily_brief:reflection": True}
+    assert session.get(JournalState, user.id).analysis_revision == 0
+    with ZipFile(build_account_export(session, user_id=user.id, categories={"journal"}, local_insights=[])) as archive:
+        exported = json.loads(archive.read("journal.json"))["tables"]["journal_preferences"]
+    assert [row["key"] for row in exported] == ["ai_context:daily_brief:reflection"]

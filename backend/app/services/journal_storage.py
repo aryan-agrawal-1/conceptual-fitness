@@ -20,7 +20,7 @@ from app.journal import JournalModel, ManualJournalResponse
 from app.models import JournalCompletion, JournalEntry, JournalPreference, JournalState, User
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.journal_catalogue import (
-    CATALOGUE_V1, CATALOGUES, SENSITIVE_CATEGORIES, STATISTICAL_BEHAVIOURS,
+    AI_CONSENT_KEYS, CATALOGUE_V1, CATALOGUES, SENSITIVE_CATEGORIES, STATISTICAL_BEHAVIOURS,
     normalize_journal_response,
 )
 
@@ -70,7 +70,7 @@ class PreferenceMutation(JournalMutation):
     @classmethod
     def known_key(cls, value: str) -> str:
         keys = {f"pin:{item.id}" for item in CATALOGUE_V1.behaviours}
-        keys |= {f"opt_in:{item}" for item in SENSITIVE_CATEGORIES}
+        keys |= {f"opt_in:{item}" for item in SENSITIVE_CATEGORIES} | AI_CONSENT_KEYS
         if value not in keys:
             raise ValueError("Unknown journal preference")
         return value
