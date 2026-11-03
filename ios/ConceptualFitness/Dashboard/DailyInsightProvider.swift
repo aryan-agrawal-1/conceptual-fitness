@@ -22,8 +22,8 @@ struct DailyInsightProvider {
             .sorted { ($0.date, $0.slot, $0.kind) < ($1.date, $1.slot, $1.kind) }
     }
 
-    func cachedDailyBriefForCurrentSlot(now: Date = Date()) -> String? {
-        cachedLastText(for: BriefSlot(date: now), kind: .dailyBrief, now: now)
+    func cachedDailyBriefForCurrentSlot(userID: String, now: Date = Date()) -> String? {
+        cachedLastText(userID: userID, for: BriefSlot(date: now), kind: .dailyBrief, now: now)
     }
 
     func dailyBrief(for bundle: DashboardBundle, now: Date = Date()) async -> String? {
@@ -259,7 +259,7 @@ struct DailyInsightProvider {
         else {
             return nil
         }
-        UserDefaults.standard.set(data, forKey: lastCacheKey(for: slot, kind: kind))
+        UserDefaults.standard.set(data, forKey: lastCacheKey(userID: snapshot.userID, for: slot, kind: kind))
         return entry.text
     }
 
@@ -278,20 +278,21 @@ struct DailyInsightProvider {
         )
         guard let data = try? JSONEncoder().encode(entry) else { return }
         UserDefaults.standard.set(data, forKey: cacheKey(for: snapshot, slot: slot, kind: kind))
-        UserDefaults.standard.set(data, forKey: lastCacheKey(for: slot, kind: kind))
+        UserDefaults.standard.set(data, forKey: lastCacheKey(userID: snapshot.userID, for: slot, kind: kind))
     }
 
     private func cacheKey(for snapshot: DashboardSnapshot, slot: BriefSlot, kind: CacheKind) -> String {
         "dailyInsight.v10.\(snapshot.userID).\(snapshot.date).\(slot.rawValue).\(kind.rawValue)"
     }
 
-    private func cachedLastText(for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
-        guard let entry = UserDefaults.standard.data(forKey: lastCacheKey(for: slot, kind: kind)).flatMap({
+    private func cachedLastText(userID: String, for slot: BriefSlot, kind: CacheKind, now: Date) -> String? {
+        guard let entry = UserDefaults.standard.data(forKey: lastCacheKey(userID: userID, for: slot, kind: kind)).flatMap({
             try? JSONDecoder().decode(CachedInsight.self, from: $0)
         }) else {
             return nil
         }
-        guard entry.slot == slot.rawValue,
+        guard entry.userID == userID,
+              entry.slot == slot.rawValue,
               entry.kind == kind.rawValue,
               allowedSnapshotDates(for: slot, now: now).contains(entry.date),
               !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -301,8 +302,8 @@ struct DailyInsightProvider {
         return entry.text
     }
 
-    private func lastCacheKey(for slot: BriefSlot, kind: CacheKind) -> String {
-        "dailyInsight.v10.last.\(slot.rawValue).\(kind.rawValue)"
+    private func lastCacheKey(userID: String, for slot: BriefSlot, kind: CacheKind) -> String {
+        "dailyInsight.v10.last.\(userID).\(slot.rawValue).\(kind.rawValue)"
     }
 
     private func allowedSnapshotDates(for slot: BriefSlot, now: Date, calendar: Calendar = .current) -> Set<String> {

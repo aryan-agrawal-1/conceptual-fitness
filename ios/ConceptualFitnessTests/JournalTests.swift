@@ -598,6 +598,35 @@ final class JournalAIContextTests: XCTestCase {
     }
 }
 
+final class DailyBriefCacheTests: XCTestCase {
+    private let owner = "brief-cache-owner"
+
+    override func tearDown() {
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.contains("brief-cache-") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        super.tearDown()
+    }
+
+    func testTheLastBriefIsOnlyShownToItsOwnAccount() async throws {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let json = """
+        {"snapshot": {"user_id": "\(owner)", "date": "\(formatter.string(from: now))", "scores": {}},
+         "metric_summaries": {}, "recent_workouts": [], "sync_status": []}
+        """
+        let bundle = try JSONDecoder().decode(DashboardBundle.self, from: Data(json.utf8))
+        let provider = DailyInsightProvider()
+        let brief = await provider.dailyBrief(for: bundle, now: now)
+        XCTAssertNotNil(brief)
+        XCTAssertEqual(provider.cachedDailyBriefForCurrentSlot(userID: owner, now: now), brief)
+        XCTAssertNil(provider.cachedDailyBriefForCurrentSlot(userID: "brief-cache-other", now: now))
+    }
+}
+
 final class JournalCodingTests: XCTestCase {
     func testNewerComparesInstantsThenMutationIds() {
         XCTAssertTrue(JournalCoding.newer("2026-11-02T08:00:01Z", "a", than: "2026-11-02T08:00:00Z", "b"))
