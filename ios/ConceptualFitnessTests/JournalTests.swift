@@ -258,6 +258,84 @@ final class JournalStreakTests: XCTestCase {
         XCTAssertEqual(streak.openDays, ["2026-11-02"])
     }
 
+    func testStreakEndsTonightOnlyWhenYesterdayIsItsLastOpenDay() {
+        XCTAssertTrue(JournalStreak(days("2026-11-01"), today: "2026-11-03").endsTonight)
+        XCTAssertFalse(JournalStreak(days("2026-11-01"), today: "2026-11-02").endsTonight)
+        XCTAssertFalse(JournalStreak(days("2026-11-01", "2026-11-02"), today: "2026-11-03").endsTonight)
+        XCTAssertFalse(JournalStreak([], today: "2026-11-03").endsTonight)
+    }
+
+    func testStreakOfOnlyTodayDoesNotEndWhenYesterdayCloses() {
+        XCTAssertFalse(JournalStreak(days("2026-11-03"), today: "2026-11-03").endsTonight)
+        XCTAssertTrue(JournalStreak(days("2026-11-01", "2026-11-03"), today: "2026-11-03").endsTonight)
+    }
+
+    private func summary(_ completions: [JournalCompletionData], entries: [JournalEntryData] = [],
+                         today: String = "2026-11-03", onboardedAt: Date? = nil) -> JournalStreakSummary {
+        var value = snapshot(entries: entries)
+        value.completions = completions
+        return JournalStreakSummary(value, today: today, onboardedAt: onboardedAt)
+    }
+
+    private func answered(_ values: String...) -> [JournalEntryData] { values.flatMap { answeredDay($0) } }
+
+    func testSummaryWithNoHistoryInvitesAStartWithoutUrgency() {
+        let value = summary([], onboardedAt: londonDate("2026-11-03 09:00"))
+        XCTAssertEqual(value.count, 0)
+        XCTAssertEqual(value.message, "Check in to start a new streak.")
+        XCTAssertEqual(value.action?.day, "2026-11-03")
+        XCTAssertEqual(value.action?.title, "Start check-in")
+    }
+
+    func testSummaryAfterAResetIsNeutralAndOffersYesterday() {
+        let value = summary(days("2026-10-20", "2026-10-21"))
+        XCTAssertEqual(value.count, 0)
+        XCTAssertEqual(value.message, "Check in to start a new streak.")
+        XCTAssertEqual(value.action?.day, "2026-11-02")
+        XCTAssertEqual(value.action?.title, "Check in for yesterday")
+    }
+
+    func testSummaryWarnsWhenYesterdayIsTheLastChance() {
+        let value = summary(days("2026-10-31", "2026-11-01"), entries: answeredDay("2026-11-02", count: 2))
+        XCTAssertEqual(value.count, 2)
+        XCTAssertEqual(value.message, "Your 2-day streak ends at midnight. Don’t lose it!")
+        XCTAssertEqual(value.action, .init(day: "2026-11-02", title: "Check in for yesterday", progress: "2 of 5"))
+    }
+
+    func testSummaryNudgesTodayWhenYesterdayIsDone() {
+        let value = summary(days("2026-11-01", "2026-11-02"),
+                            entries: answered("2026-11-02") + answeredDay("2026-11-03", count: 3))
+        XCTAssertEqual(value.count, 2)
+        XCTAssertEqual(value.answeredToday, 3)
+        XCTAssertEqual(value.message, "Don’t lose your 2-day streak. Check in today.")
+        XCTAssertEqual(value.action?.title, "Continue check-in")
+    }
+
+    func testSummaryAsksToCompleteOnceFiveAreAnswered() {
+        let value = summary(days("2026-11-02"), entries: answered("2026-11-02", "2026-11-03"))
+        XCTAssertEqual(value.count, 1)
+        XCTAssertEqual(value.action, .init(day: "2026-11-03", title: "Complete check-in", progress: nil))
+    }
+
+    func testSummaryHasNoActionWhenTodayAndYesterdayAreDone() {
+        let value = summary(days("2026-11-02", "2026-11-03"), entries: answered("2026-11-02", "2026-11-03"))
+        XCTAssertEqual(value.count, 2)
+        XCTAssertEqual(value.message, "You’re on fire. See you tomorrow.")
+        XCTAssertNil(value.action)
+    }
+
+    func testSummaryWithOnlyTodayDoneSaysYesterdayStillCounts() {
+        let value = summary(days("2026-11-03"), entries: answered("2026-11-03"))
+        XCTAssertEqual(value.count, 1)
+        XCTAssertEqual(value.message, "Yesterday still counts until midnight.")
+        XCTAssertEqual(value.action?.day, "2026-11-02")
+    }
+
+    func testSummaryCapsProgressAtTheDailyTarget() {
+        let value = summary([], entries: answeredDay("2026-11-03", count: 6))
+        XCTAssertEqual(value.answeredToday, 5)
+    }
+
     func testPastDayNoteSaysEditsCannotRestoreAStreak() {
         XCTAssertEqual(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02", completion: nil, isCompleted: false),
                        "You’re editing a past day. Completing it now won’t restore a streak.")

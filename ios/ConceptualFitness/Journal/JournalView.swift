@@ -15,7 +15,6 @@ struct JournalView: View {
     @State private var checkIn: JournalCheckInSelection?
     @State private var choosingDate = false
     @State private var othersExpanded: Bool?
-    @Environment(\.dynamicTypeSize) private var typeSize
     private var day: String { selectedDay ?? store.today }
     private var dayIndex: JournalDayIndex { JournalDayIndex(store.snapshot, today: store.today) }
     private var isReady: Bool { store.snapshot.catalogue != nil && store.timezone != nil }
@@ -26,7 +25,7 @@ struct JournalView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if isReady {
-                        checkInCard
+                        streakCard
                         weekStrip
                         dayHeader
                         dayNote
@@ -63,36 +62,14 @@ struct JournalView: View {
         .sheet(item: $checkIn) { JournalCheckInView(store: store, reminders: reminders, day: $0.day) }
         .refreshable { await store.synchronize() }
         .task { await store.synchronize() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            Task { await store.synchronize() }
+        }
     }
 
-    @ViewBuilder private var checkInCard: some View {
-        if JournalCheckIn.isDue(store.snapshot, onboardedAt: onboardedAt) {
-            let yesterday = JournalDay.previous(store.today)
-            Button { checkIn = JournalCheckInSelection(day: yesterday) } label: {
-                let layout = typeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-                    : AnyLayout(HStackLayout())
-                layout {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Check in for yesterday").font(.subheadline.weight(.semibold))
-                        Text("\(JournalDay.longTitle(yesterday)) · \(dayIndex.answerCount(yesterday)) of \(JournalDailyList.dailyTarget)")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 8) {
-                        Text("Start").font(.subheadline.weight(.semibold))
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).accessibilityHidden(true)
-                    }
-                    .foregroundStyle(HealthTheme.color(for: .activity))
-                }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .panelSurface(cornerRadius: 18)
-            .accessibilityIdentifier("journal.checkin.card")
-        }
+    private var streakCard: some View {
+        JournalStreakCard(summary: JournalStreakSummary(store.snapshot, today: store.today, onboardedAt: onboardedAt),
+                          settled: store.hasSettled) { checkIn = JournalCheckInSelection(day: $0) }
     }
 
     private var weekStrip: some View {

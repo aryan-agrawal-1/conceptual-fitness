@@ -6,6 +6,7 @@ import SwiftUI
 final class JournalStore: ObservableObject {
     @Published private(set) var snapshot = JournalSnapshot()
     @Published private(set) var isSyncing = false
+    @Published private(set) var hasSettled = false
     @Published private(set) var message: String?
     @Published private(set) var storageBlocked = false
     private let authStore: AuthStore
@@ -164,7 +165,10 @@ final class JournalStore: ObservableObject {
         guard !storageBlocked else { return }
         guard !isSyncing else { syncAgain = true; return }
         isSyncing = true
-        defer { isSyncing = false }
+        defer {
+            isSyncing = false
+            hasSettled = true
+        }
         do {
             if snapshot.catalogue == nil { try await downloadCatalogue() }
             repeat {
