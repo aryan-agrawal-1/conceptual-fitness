@@ -97,3 +97,17 @@ struct JournalStreakSummary: Equatable {
         }
     }
 }
+
+struct JournalStreakCelebration: Equatable {
+    let from: Int
+    let to: Int
+
+    init?(_ completions: [JournalCompletionData], day: String, today: String) {
+        guard let completion = completions.first(where: { $0.journalDate == day }),
+              !JournalCheckIn.isLate(completion) else { return nil }
+        let current = JournalStreak(completions, today: today).current
+        guard current > 0 else { return nil }
+        to = current
+        from = min(JournalStreak(completions.filter { $0.journalDate != day }, today: today).current, current)
+    }
+}

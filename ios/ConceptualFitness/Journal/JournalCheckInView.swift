@@ -45,6 +45,9 @@ struct JournalCheckInView: View {
     private var logged: Int { JournalDailyList.loggedCount(store.snapshot, day: day) }
     private var completed: Bool { JournalDayIndex(store.snapshot, today: store.today).isCompleted(day) }
     private var screen: JournalCheckInScreen { JournalCheckIn.screen(store.snapshot, day: day) }
+    private var celebration: JournalStreakCelebration? {
+        JournalStreakCelebration(store.snapshot.completions, day: day, today: store.today)
+    }
 
     var body: some View {
         NavigationStack {
@@ -69,7 +72,7 @@ struct JournalCheckInView: View {
             .sensoryFeedback(.success, trigger: completed) { _, isCompleted in isCompleted }
             .task(id: completed) {
                 guard completed, !reminders.shouldOffer else { return }
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                do { try await Task.sleep(for: .seconds(celebration == nil ? 2 : 3)) } catch { return }
                 dismiss()
             }
         }
@@ -138,21 +141,39 @@ struct JournalCheckInView: View {
     }
 
     private var completedPage: some View {
-        GeometryReader { proxy in
+        let celebration = celebration
+        return GeometryReader { proxy in
             ScrollView {
                 VStack(spacing: 20) {
                     Spacer(minLength: 24)
-                    JournalCompleteMark()
-                    Text("Check-in complete")
-                        .font(.title.weight(.bold))
-                        .multilineTextAlignment(.center)
-                        .accessibilityAddTraits(.isHeader)
+                    if let celebration {
+                        JournalStreakMark(celebration: celebration)
+                    } else {
+                        JournalCompleteMark()
+                        Text("Check-in complete")
+                            .font(.title.weight(.bold))
+                            .multilineTextAlignment(.center)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                     Spacer(minLength: 24)
-                    if reminders.shouldOffer || answeringReminder { reminderOffer }
+                    if reminders.shouldOffer || answeringReminder {
+                        if celebration == nil {
+                            reminderOffer
+                        } else {
+                            reminderOffer
+                                .padding(16)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height - 24)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+            }
+        }
+        .background {
+            if celebration != nil {
+                JournalFireBackground(lean: 1, reach: 0.5, rises: true).ignoresSafeArea()
             }
         }
     }
@@ -198,7 +219,8 @@ struct JournalCheckInView: View {
 
     private func complete() {
         guard withAnimation(.snappy, { store.complete(day: day) }) else { return }
-        AccessibilityNotification.Announcement("Check-in complete").post()
+        let streak = celebration.map { " \($0.to) day streak." } ?? ""
+        AccessibilityNotification.Announcement("Check-in complete.\(streak)").post()
     }
 }
 

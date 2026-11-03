@@ -199,3 +199,46 @@ struct JournalStreakCard: View {
         .accessibilityIdentifier("journal.streak.action")
     }
 }
+
+struct JournalStreakMark: View {
+    let celebration: JournalStreakCelebration
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .largeTitle) private var flameSize: CGFloat = 104
+    @ScaledMetric(relativeTo: .largeTitle) private var countSize: CGFloat = 76
+    @State private var shown = false
+    @State private var value: Int?
+
+    private var displayed: Int { value ?? celebration.from }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "flame.fill")
+                .font(.system(size: flameSize))
+                .foregroundStyle(LinearGradient(colors: [JournalFirePalette.gold, .white],
+                                                startPoint: .bottom, endPoint: .top))
+                .symbolEffect(.bounce, value: displayed)
+                .scaleEffect(shown ? 1 : 0.3)
+                .opacity(shown ? 1 : 0)
+            Text("\(displayed)")
+                .font(.system(size: countSize, weight: .heavy, design: .rounded))
+                .contentTransition(.numericText(value: Double(displayed)))
+            Text("day streak").font(.title2.weight(.bold))
+            Text("Check-in complete").font(.subheadline.weight(.semibold)).padding(.top, 4)
+        }
+        .foregroundStyle(.white)
+        .multilineTextAlignment(.center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(celebration.to) day streak. Check-in complete.")
+        .accessibilityAddTraits(.isHeader)
+        .task {
+            guard !reduceMotion else {
+                shown = true
+                value = celebration.to
+                return
+            }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.58)) { shown = true }
+            do { try await Task.sleep(for: .seconds(0.55)) } catch { return }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { value = celebration.to }
+        }
+    }
+}

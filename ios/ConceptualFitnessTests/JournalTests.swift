@@ -336,6 +336,28 @@ final class JournalStreakTests: XCTestCase {
         XCTAssertEqual(value.answeredToday, 5)
     }
 
+    func testCelebrationTicksUpFromTheStreakBeforeThisDay() {
+        let value = JournalStreakCelebration(days("2026-11-01", "2026-11-02", "2026-11-03"), day: "2026-11-03", today: "2026-11-03")
+        XCTAssertEqual(value?.from, 2)
+        XCTAssertEqual(value?.to, 3)
+    }
+
+    func testCelebrationCountsYesterdaysCheckIn() {
+        let value = JournalStreakCelebration(days("2026-11-01", "2026-11-02"), day: "2026-11-02", today: "2026-11-03")
+        XCTAssertEqual(value?.from, 1)
+        XCTAssertEqual(value?.to, 2)
+    }
+
+    func testCelebrationStartsFromZeroOnDayOne() {
+        let value = JournalStreakCelebration(days("2026-11-03"), day: "2026-11-03", today: "2026-11-03")
+        XCTAssertEqual(value?.from, 0)
+        XCTAssertEqual(value?.to, 1)
+    }
+
+    func testLateCheckInHasNoCelebration() {
+        XCTAssertNil(JournalStreakCelebration([late("2026-10-31")], day: "2026-10-31", today: "2026-11-03"))
+    }
+
     func testPastDayNoteSaysEditsCannotRestoreAStreak() {
         XCTAssertEqual(JournalStreak.dayNote(day: "2026-10-30", today: "2026-11-02", completion: nil, isCompleted: false),
                        "You’re editing a past day. Completing it now won’t restore a streak.")
