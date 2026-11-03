@@ -523,3 +523,16 @@ def test_ai_consent_is_per_feature_and_never_enables_recording(session, auth_hea
     with ZipFile(build_account_export(session, user_id=user.id, categories={"journal"}, local_insights=[])) as archive:
         exported = json.loads(archive.read("journal.json"))["tables"]["journal_preferences"]
     assert [row["key"] for row in exported] == ["ai_context:daily_brief:reflection"]
+
+
+@pytest.mark.parametrize(("body", "status"), [
+    ("x" * 2000, 200),
+    ("x" * 2001, 422),
+    ("\U0001F468\u200D\U0001F469\u200D\U0001F467\u200D\U0001F466" * 400, 422),
+])
+def test_note_limit_counts_code_points(session, auth_headers, body, status):
+    _, headers = account(session, auth_headers)
+    response = TestClient(app).post("/journal/sync", headers=headers, json={
+        "entries": [note_edit(body)], "preferences": [pref("opt_in:reflection")],
+    })
+    assert response.status_code == status

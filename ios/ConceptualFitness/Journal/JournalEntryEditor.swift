@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct JournalFieldDraft {
+    static let noteLimit = 2000
+    static func noteLength(_ text: String) -> Int { text.unicodeScalars.count }
+
     var text = ""
     var unit = ""
 
@@ -38,7 +41,7 @@ struct JournalFieldDraft {
             if field.inputType == "time" {
                 return text.range(of: #"^([01][0-9]|2[0-3]):[0-5][0-9]$"#, options: .regularExpression) != nil
             }
-            return text.count <= 2000
+            return JournalFieldDraft.noteLength(text) <= JournalFieldDraft.noteLimit
         case .boolean: return true
         }
     }
@@ -197,7 +200,7 @@ private struct JournalFieldControl: View {
             case "text":
                 TextField(field.label, text: $draft.text, axis: .vertical)
                     .lineLimit(4...10).accessibilityLabel(field.label)
-                Text("\(draft.text.count)/2000 characters").font(.caption).foregroundStyle(.secondary)
+                Text("\(JournalFieldDraft.noteLength(draft.text))/\(JournalFieldDraft.noteLimit) characters").font(.caption).foregroundStyle(.secondary)
             case "time":
                 JournalTimeField(label: field.label, text: $draft.text)
             default:

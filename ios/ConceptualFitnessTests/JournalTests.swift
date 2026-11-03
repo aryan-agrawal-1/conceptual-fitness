@@ -512,6 +512,26 @@ final class JournalDraftTests: XCTestCase {
     }
 }
 
+final class JournalNoteLimitTests: XCTestCase {
+    private let note = JournalFieldData(id: "answer", label: "Daily note", inputType: "text", minimum: nil, maximum: nil,
+                                        units: [], ratingLabels: [])
+
+    private func valid(_ text: String) -> Bool {
+        var draft = JournalFieldDraft(field: note, answer: nil)
+        draft.text = text
+        return draft.valid(for: note, units: [])
+    }
+
+    func testTheLimitCountsWhatTheServerCounts() {
+        XCTAssertTrue(valid(String(repeating: "x", count: 2000)))
+        XCTAssertFalse(valid(String(repeating: "x", count: 2001)))
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"
+        XCTAssertEqual(family.count, 1)
+        XCTAssertEqual(JournalFieldDraft.noteLength(family), 7)
+        XCTAssertFalse(valid(String(repeating: family, count: 400)))
+    }
+}
+
 final class JournalAIContextTests: XCTestCase {
     private let note = JournalAnswerData(type: "text", value: .text("Slept badly"))
     private let recording = "opt_in:reflection"
