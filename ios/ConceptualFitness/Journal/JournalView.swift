@@ -275,7 +275,7 @@ struct JournalPrivacyView: View {
                     .disabled(store.storageBlocked)
                 }
                 Section {
-                    Text("Daily notes are just for you. They aren’t used in patterns or sent to AI.")
+                    Text("Daily notes are just for you. They aren’t used in patterns, and the app’s AI can’t read them.")
                         .font(.footnote).foregroundStyle(.secondary)
                     if let message = store.message { Text(message).font(.footnote) }
                 }

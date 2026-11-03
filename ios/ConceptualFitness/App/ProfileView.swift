@@ -226,7 +226,7 @@ private struct ProfilePrivacyView: View {
         Form {
             Section("Your health data") {
                 Text("Google Health access is read-only. Disconnecting stops future imports; it does not erase records already saved in your account.")
-                Text("Your account stores imported health data, workouts, journal entries, derived scores, and your profile preferences. Daily briefs and unfinished workout drafts may also be stored on this device.")
+                Text("Your account stores imported health data, workouts, journal entries, derived scores, and your profile preferences. Daily briefs and unfinished workout drafts may also be stored on this device. Daily notes sync to your account and are encrypted when stored on the server.")
             }
             Section("Location") {
                 Text("Location supports local weather. You can turn weather off, choose a timezone manually, or change the app’s location permission in iOS Settings.")

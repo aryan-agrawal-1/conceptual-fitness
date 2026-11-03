@@ -113,7 +113,7 @@ struct JournalEntryEditor: View {
                     }.disabled(!allowed)
                 }
                 if item.answer.inputType == "text" {
-                    Section { Text("This note is just for you. It isn’t used in patterns or sent to AI.").font(.footnote).foregroundStyle(.secondary) }
+                    Section { Text("This note is just for you. It isn’t used in patterns, and the app’s AI can’t read it.").font(.footnote).foregroundStyle(.secondary) }
                 }
                 if let saveError {
                     Section { Text(saveError).foregroundStyle(.red).accessibilityIdentifier("journal.saveError") }
