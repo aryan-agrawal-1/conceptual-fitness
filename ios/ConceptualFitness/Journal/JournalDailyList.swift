@@ -124,4 +124,38 @@ enum JournalDay {
         if day == JournalCoding.day(date(today).addingTimeInterval(-86400), timezone: "UTC") { return "Yesterday" }
         return formatter("EEE d MMM").string(from: date(day))
     }
+
+    static func longTitle(_ day: String) -> String { formatter("EEEE d MMMM").string(from: date(day)) }
+    static func dayNumber(_ day: String) -> String { formatter("d").string(from: date(day)) }
+    static func monthTitle(_ day: String) -> String { formatter("MMMM yyyy").string(from: date(day)) }
+    static func previous(_ day: String) -> String { JournalCoding.day(date(day).addingTimeInterval(-86400), timezone: "UTC") }
+    static func next(_ day: String) -> String { JournalCoding.day(date(day).addingTimeInterval(86400), timezone: "UTC") }
+    static func monthStart(_ day: String) -> String { String(day.prefix(8)) + "01" }
+
+    private static var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar
+    }
+
+    static func shiftMonth(_ day: String, by months: Int) -> String {
+        let moved = utcCalendar.date(byAdding: .month, value: months, to: date(monthStart(day))) ?? date(day)
+        return JournalCoding.day(moved, timezone: "UTC")
+    }
+
+    static func weekdaySymbols(firstWeekday: Int) -> [String] {
+        let symbols = formatter("EEEEE").veryShortStandaloneWeekdaySymbols ?? []
+        guard symbols.count == 7 else { return symbols }
+        return Array(symbols[(firstWeekday - 1)...] + symbols[..<(firstWeekday - 1)])
+    }
+
+    // Leading nils line the first of the month up under its weekday.
+    static func monthGrid(_ day: String, firstWeekday: Int) -> [String?] {
+        let calendar = utcCalendar
+        let start = date(monthStart(day))
+        let count = calendar.range(of: .day, in: .month, for: start)?.count ?? 0
+        let blanks = (calendar.component(.weekday, from: start) - firstWeekday + 7) % 7
+        let days = (0..<count).map { JournalCoding.day(start.addingTimeInterval(Double($0) * 86400), timezone: "UTC") as String? }
+        return Array(repeating: nil, count: blanks) + days
+    }
 }

@@ -1,10 +1,15 @@
 import SwiftUI
 import FoundationModels
 import BackgroundTasks
+import UserNotifications
 
 @main
 struct ConceptualFitnessApp: App {
     @StateObject private var authStore = AuthStore()
+
+    init() {
+        UNUserNotificationCenter.current().delegate = JournalNotificationRouter.shared
+    }
 
     var body: some Scene {
         WindowGroup {

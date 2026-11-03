@@ -10,6 +10,7 @@ struct DashboardView: View {
     let firstName: String?
     let weatherEnabled: Bool
     let profileStore: ProfileStore?
+    let journalReminders: JournalReminders?
     private let loadsLiveData: Bool
     private let greetingOverride: String?
 
@@ -33,6 +34,7 @@ struct DashboardView: View {
         firstName: String?,
         weatherEnabled: Bool,
         profileStore: ProfileStore? = nil,
+        journalReminders: JournalReminders? = nil,
         previewLoadState: DashboardLoadState? = nil,
         previewWeather: WeatherData = .fallback,
         greetingOverride: String? = nil
@@ -45,6 +47,7 @@ struct DashboardView: View {
         self.firstName = firstName
         self.weatherEnabled = weatherEnabled
         self.profileStore = profileStore
+        self.journalReminders = journalReminders
         self.loadsLiveData = previewLoadState == nil
         self.greetingOverride = greetingOverride
         _loadState = State(initialValue: previewLoadState ?? .loading)
@@ -84,7 +87,8 @@ struct DashboardView: View {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink {
                     if let profileStore, let authStore = client.authStore, let userID = client.userID {
-                        ProfileView(store: profileStore, coordinator: syncCoordinator, authStore: authStore, userID: userID)
+                        ProfileView(store: profileStore, coordinator: syncCoordinator, authStore: authStore, userID: userID,
+                                    journalReminders: journalReminders)
                     } else {
                         HistoricalBackfillView(coordinator: syncCoordinator, expanded: true)
                             .padding().navigationTitle("Profile")

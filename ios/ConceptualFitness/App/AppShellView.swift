@@ -15,6 +15,9 @@ struct AppShellView: View {
     @StateObject private var syncCoordinator: AppSyncCoordinator
     @StateObject private var profileStore: ProfileStore
     @StateObject private var journalStore: JournalStore
+    @StateObject private var journalReminders: JournalReminders
+    @ObservedObject private var notificationRouter = JournalNotificationRouter.shared
+    @State private var checkIn: JournalCheckInSelection?
 
     private let weatherProvider = WeatherProvider()
     private let locationProvider = LocationProvider()
@@ -25,6 +28,7 @@ struct AppShellView: View {
         self.session = session
         _profileStore = StateObject(wrappedValue: ProfileStore(authStore: authStore))
         _journalStore = StateObject(wrappedValue: JournalStore(authStore: authStore, userID: session.user.id))
+        _journalReminders = StateObject(wrappedValue: JournalReminders(userID: session.user.id))
         #if DEBUG
         _selectedTab = State(
             initialValue: ProcessInfo.processInfo.arguments.contains("-OpenInsightsTab")
@@ -55,7 +59,8 @@ struct AppShellView: View {
                     insightProvider: insightProvider,
                     firstName: session.user.firstName,
                     weatherEnabled: profileStore.profile?.weatherEnabled ?? session.profile.weatherEnabled,
-                    profileStore: profileStore
+                    profileStore: profileStore,
+                    journalReminders: journalReminders
                 )
                 .withAppDestinations(client: appClient)
             }
@@ -70,7 +75,7 @@ struct AppShellView: View {
             .tag(AppTab.fitness)
 
             NavigationStack(path: $insightsPath) {
-                JournalView(store: journalStore)
+                JournalView(store: journalStore, reminders: journalReminders, onboardedAt: onboardedAt)
                 .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.insights.label }
@@ -78,9 +83,14 @@ struct AppShellView: View {
         }
         .tint(HealthTheme.color(for: .activity))
         .environment(\.profileUnits, profileStore.profile?.unitSystem ?? .metric)
+        .sheet(item: $checkIn) {
+            JournalCheckInView(store: journalStore, reminders: journalReminders, day: $0.day)
+        }
         .task { await profileStore.load() }
         .task {
             if UIApplication.shared.applicationState == .active { await journalStore.synchronize() }
+            journalReminders.refresh(journalStore.snapshot)
+            presentCheckInIfNeeded()
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(30)) } catch { return }
                 if UIApplication.shared.applicationState == .active, journalStore.needsRetry {
@@ -88,7 +98,13 @@ struct AppShellView: View {
                 }
             }
         }
-        .onDisappear { journalStore.stop() }
+        .onDisappear {
+            journalStore.stop()
+            journalReminders.stop()
+        }
+        .onChange(of: reminderInputs) { _, _ in journalReminders.refresh(journalStore.snapshot) }
+        .onChange(of: notificationRouter.openRequested) { _, _ in presentCheckInIfNeeded() }
+        .onChange(of: selectedTab) { _, _ in presentCheckInIfNeeded() }
         .onChange(of: profileStore.revision) { _, _ in syncCoordinator.profileDidChange() }
         .task {
             await syncCoordinator.syncIfNeeded()
@@ -99,10 +115,45 @@ struct AppShellView: View {
             guard phase == .active else { return }
             Task {
                 await journalStore.synchronize()
+                journalReminders.refresh(journalStore.snapshot)
+                presentCheckInIfNeeded()
                 await syncCoordinator.checkHistory()
                 await syncCoordinator.syncIfNeeded()
             }
         }
+    }
+
+    private var onboardedAt: Date? {
+        DashboardFormatters.parseBackendDateTime(session.profile.onboardingCompletedAt)
+    }
+
+    // Reminders only need rescheduling when completed days or the timezone change.
+    private var reminderInputs: [String] {
+        journalStore.snapshot.completions.filter(\.completed).map(\.journalDate).sorted()
+            + [journalStore.snapshot.timezone ?? ""]
+    }
+
+    // A workout in progress or an open editor must never be interrupted, so this waits for
+    // the next chance rather than using up the day's prompt.
+    private var isPresentingElsewhere: Bool {
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow)?
+            .rootViewController?.presentedViewController != nil
+    }
+
+    private func presentCheckInIfNeeded() {
+        let snapshot = journalStore.snapshot
+        guard checkIn == nil, snapshot.catalogue != nil, snapshot.timezone != nil, !isPresentingElsewhere else { return }
+        if notificationRouter.openRequested {
+            notificationRouter.openRequested = false
+            checkIn = JournalCheckInSelection(day: JournalCheckIn.reminderTarget(snapshot, today: journalStore.today))
+            return
+        }
+        let key = "journalPrompted.\(session.user.id)"
+        guard JournalCheckIn.shouldPrompt(snapshot, onboardedAt: onboardedAt,
+                                          lastPromptDay: UserDefaults.standard.string(forKey: key)) else { return }
+        UserDefaults.standard.set(journalStore.today, forKey: key)
+        checkIn = JournalCheckInSelection(day: JournalDay.previous(journalStore.today))
     }
 }
 

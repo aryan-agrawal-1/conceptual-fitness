@@ -70,6 +70,249 @@ private func snapshot(entries: [JournalEntryData] = [], settings: [JournalSettin
     return value
 }
 
+private func completion(_ day: String, completed: Bool = true, first: String = "2026-11-02T08:00:00.000Z",
+                        timezone: String = "Europe/London", pending: Bool = false) -> JournalCompletionData {
+    JournalCompletionData(journalDate: day, completed: completed, firstCompletedAt: first, timezone: timezone,
+                          editedAt: first, mutationId: UUID().uuidString.lowercased(), pending: pending)
+}
+
+private func answeredDay(_ day: String, count: Int = 5) -> [JournalEntryData] {
+    ["mood", "stress", "energy", "worked_late", "screen_in_bed", "travel"].prefix(count).map { entry($0, day: day) }
+}
+
+private func londonDate(_ value: String) -> Date {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(identifier: "Europe/London")
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    return formatter.date(from: value)!
+}
+
+final class JournalDaysTests: XCTestCase {
+    private let today = "2026-11-02"
+
+    func testDayStatesAreDistinct() {
+        var value = snapshot(entries: answeredDay("2026-10-30") + answeredDay("2026-10-31", count: 2))
+        value.completions = [completion("2026-10-30")]
+        let index = JournalDayIndex(value, today: today)
+        XCTAssertEqual(index.status("2026-10-30"), .completed)
+        XCTAssertEqual(index.status("2026-10-31"), .incomplete)
+        XCTAssertEqual(index.status("2026-11-01"), .missing)
+        XCTAssertEqual(index.status(today), .notStarted)
+        XCTAssertEqual(index.status("2026-11-03"), .upcoming)
+    }
+
+    func testDaysBeforeFirstUseAreNeutralAndBackfillingMovesTheStart() {
+        let index = JournalDayIndex(snapshot(entries: answeredDay("2026-10-30", count: 1)), today: today)
+        XCTAssertEqual(index.status("2026-10-29"), .notStarted)
+        XCTAssertEqual(index.status("2026-10-31"), .missing)
+        let backfilled = JournalDayIndex(snapshot(entries: answeredDay("2026-10-30", count: 1)
+                                                  + answeredDay("2026-10-20", count: 1)), today: today)
+        XCTAssertEqual(backfilled.status("2026-10-25"), .missing)
+    }
+
+    func testFiveAnswersWithoutTheActionStayIncomplete() {
+        let index = JournalDayIndex(snapshot(entries: answeredDay(today)), today: today)
+        XCTAssertEqual(index.status(today), .incomplete)
+    }
+
+    func testCompletionNeedsFiveEvenWhenAnotherDeviceClearedAnswers() {
+        var value = snapshot(entries: answeredDay(today, count: 4))
+        value.completions = [completion(today)]
+        XCTAssertEqual(JournalDayIndex(value, today: today).status(today), .incomplete)
+    }
+
+    func testWithdrawnCompletionReadsIncomplete() {
+        var value = snapshot(entries: answeredDay(today))
+        value.completions = [completion(today, completed: false)]
+        XCTAssertEqual(JournalDayIndex(value, today: today).status(today), .incomplete)
+    }
+
+    func testDeletedAnswersDoNotCountAsUse() {
+        let index = JournalDayIndex(snapshot(entries: [entry("mood", day: "2026-10-20", deleted: true)]), today: today)
+        XCTAssertEqual(index.status("2026-10-25"), .notStarted)
+    }
+
+    func testTodayAndYesterdayAreNeverLate() {
+        XCTAssertFalse(JournalCheckIn.isLate(completion("2026-11-02", first: "2026-11-02T08:00:00.000Z")))
+        XCTAssertFalse(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-02T08:00:00.000Z")))
+    }
+
+    func testCompletionIsLateOnlyAfterTheFollowingCalendarDay() {
+        XCTAssertFalse(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-02T23:30:00.000Z")))
+        XCTAssertTrue(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-03T00:30:00.000Z")))
+        // The timezone saved with the completion decides, not UTC.
+        XCTAssertFalse(JournalCheckIn.isLate(completion("2026-11-01", first: "2026-11-03T00:30:00.000Z",
+                                                        timezone: "America/New_York")))
+    }
+
+    func testMonthGridLinesUpWeekdaysAndLeapYears() {
+        // 1 November 2026 is a Sunday.
+        XCTAssertEqual(JournalDay.monthGrid("2026-11-15", firstWeekday: 1).prefix(1), ["2026-11-01"])
+        let monday = JournalDay.monthGrid("2026-11-15", firstWeekday: 2)
+        XCTAssertEqual(monday.prefix(6).compactMap { $0 }.count, 0)
+        XCTAssertEqual(monday[6], "2026-11-01")
+        XCTAssertEqual(JournalDay.monthGrid("2028-02-01", firstWeekday: 1).compactMap { $0 }.last, "2028-02-29")
+        XCTAssertEqual(JournalDay.shiftMonth("2026-01-31", by: -1), "2025-12-01")
+        XCTAssertEqual(JournalDay.shiftMonth("2026-12-15", by: 1), "2027-01-01")
+        XCTAssertEqual(JournalDay.weekdaySymbols(firstWeekday: 2).count, 7)
+    }
+}
+
+final class JournalCheckInScreenTests: XCTestCase {
+    private let day = "2026-11-01"
+
+    func testDefaultPinsFillTheScreenWithoutTopUp() {
+        let screen = JournalCheckIn.screen(snapshot(), day: day)
+        XCTAssertEqual(screen.pinned.count, 5)
+        XCTAssertTrue(screen.topUp.isEmpty)
+    }
+
+    func testEveryPinnedInputIsShownWhenMoreThanFive() {
+        let screen = JournalCheckIn.screen(snapshot(settings: [setting("pin:sauna"), setting("pin:travel")]), day: day)
+        XCTAssertEqual(screen.pinned.count, 7)
+        XCTAssertTrue(screen.topUp.isEmpty)
+    }
+
+    func testFewerThanFivePinnedTopsUpWithoutPinning() {
+        let value = snapshot(settings: [setting("pin:mood", false), setting("pin:stress", false)])
+        let screen = JournalCheckIn.screen(value, day: day)
+        XCTAssertEqual(screen.pinned.count, 3)
+        XCTAssertEqual(screen.topUp.count, 2)
+        XCTAssertFalse(screen.topUp.contains { JournalDailyList.isPinned($0, in: value) })
+    }
+
+    func testPrivatePinsCountTowardFiveAndStayGrouped() {
+        let value = snapshot(settings: [setting("pin:mood", false), setting("opt_in:substances")])
+        let screen = JournalCheckIn.screen(value, day: day)
+        XCTAssertEqual(screen.privatePinned.map(\.title), ["Substances"])
+        XCTAssertTrue(screen.topUp.isEmpty)
+    }
+
+    func testTopUpStaysStableWhileAnswering() {
+        let value = snapshot(settings: [setting("pin:mood", false)])
+        let before = JournalCheckIn.screen(value, day: day).topUp.map(\.id)
+        var answered = value
+        answered.entries = before.map { entry($0, day: day) }
+        XCTAssertEqual(JournalCheckIn.screen(answered, day: day).topUp.map(\.id), before)
+    }
+}
+
+final class JournalPromptTests: XCTestCase {
+    private let morning = londonDate("2026-11-02 08:00")
+
+    func testPromptsOnFirstOpenAfterFourWhenYesterdayIsNotDone() {
+        XCTAssertTrue(JournalCheckIn.shouldPrompt(snapshot(), now: morning, lastPromptDay: nil))
+        XCTAssertTrue(JournalCheckIn.shouldPrompt(snapshot(), now: londonDate("2026-11-02 04:00"), lastPromptDay: "2026-11-01"))
+        XCTAssertTrue(JournalCheckIn.shouldPrompt(snapshot(), now: londonDate("2026-11-02 18:00"), lastPromptDay: nil))
+    }
+
+    func testNoPromptBeforeFour() {
+        XCTAssertFalse(JournalCheckIn.shouldPrompt(snapshot(), now: londonDate("2026-11-02 03:59"), lastPromptDay: nil))
+    }
+
+    func testPromptsOnlyOnceADayButTheCheckInStaysDue() {
+        XCTAssertFalse(JournalCheckIn.shouldPrompt(snapshot(), now: morning, lastPromptDay: "2026-11-02"))
+        XCTAssertTrue(JournalCheckIn.isDue(snapshot(), now: morning))
+    }
+
+    func testNoPromptWhenYesterdayIsDoneIncludingSameDayCompletion() {
+        var value = snapshot(entries: answeredDay("2026-11-01"))
+        value.completions = [completion("2026-11-01", first: "2026-11-01T21:00:00.000Z")]
+        XCTAssertFalse(JournalCheckIn.shouldPrompt(value, now: morning, lastPromptDay: nil))
+        XCTAssertFalse(JournalCheckIn.isDue(value, now: morning))
+    }
+
+    func testFiveAnswersWithoutCompletingStillPrompts() {
+        XCTAssertTrue(JournalCheckIn.shouldPrompt(snapshot(entries: answeredDay("2026-11-01")), now: morning, lastPromptDay: nil))
+    }
+
+    func testNoPromptOnTheDayOfOnboardingOrWithoutACatalogue() {
+        XCTAssertFalse(JournalCheckIn.shouldPrompt(snapshot(), now: morning, onboardedAt: londonDate("2026-11-02 07:00"), lastPromptDay: nil))
+        XCTAssertTrue(JournalCheckIn.shouldPrompt(snapshot(), now: morning, onboardedAt: londonDate("2026-11-01 23:00"), lastPromptDay: nil))
+        XCTAssertFalse(JournalCheckIn.shouldPrompt(JournalSnapshot(), now: morning, lastPromptDay: nil))
+    }
+
+    func testBoundaryFollowsProfileTimezoneNotTheDevice() {
+        var value = snapshot()
+        value.timezone = "Asia/Tokyo"
+        // 19:30 in London is already 04:30 the next day in Tokyo.
+        XCTAssertTrue(JournalCheckIn.shouldPrompt(value, now: londonDate("2026-11-02 19:30"), lastPromptDay: "2026-11-02"))
+        XCTAssertFalse(JournalCheckIn.shouldPrompt(value, now: londonDate("2026-11-02 18:30"), lastPromptDay: "2026-11-02"))
+    }
+
+    func testReminderOpensYesterdayUntilItIsDone() {
+        XCTAssertEqual(JournalCheckIn.reminderTarget(snapshot(), today: "2026-11-02"), "2026-11-01")
+        var value = snapshot(entries: answeredDay("2026-11-01"))
+        value.completions = [completion("2026-11-01")]
+        XCTAssertEqual(JournalCheckIn.reminderTarget(value, today: "2026-11-02"), "2026-11-02")
+    }
+}
+
+final class JournalReminderPlanTests: XCTestCase {
+    private var calendar: Calendar {
+        var value = Calendar(identifier: .gregorian)
+        value.timeZone = TimeZone(identifier: "Europe/London")!
+        return value
+    }
+    private let morning = JournalReminderSettings(enabled: true, hour: 8, minute: 0)
+    private let evening = JournalReminderSettings(enabled: true, hour: 21, minute: 30)
+
+    private func days(_ settings: JournalReminderSettings, _ value: JournalSnapshot,
+                      now: String = "2026-11-02 07:00") -> [String] {
+        JournalReminderPlan.fireDates(settings, snapshot: value, now: londonDate(now), calendar: calendar)
+            .map { JournalCoding.day($0, timezone: "Europe/London") }
+    }
+
+    func testContentNeverNamesAnInput() {
+        let text = (JournalReminderPlan.title + JournalReminderPlan.body).lowercased()
+        for item in testCatalogue.behaviours {
+            XCTAssertFalse(text.contains(item.label.lowercased()))
+        }
+        for category in testCatalogue.categories {
+            XCTAssertFalse(text.contains(category.label.lowercased()))
+        }
+    }
+
+    func testOffSchedulesNothingAndOnSchedulesAhead() {
+        XCTAssertTrue(days(JournalReminderSettings(), snapshot()).isEmpty)
+        XCTAssertEqual(days(morning, snapshot()).count, JournalReminderPlan.horizonDays)
+        XCTAssertEqual(days(morning, snapshot()).first, "2026-11-02")
+    }
+
+    func testPastTimeTodayStartsTomorrow() {
+        XCTAssertEqual(days(morning, snapshot(), now: "2026-11-02 09:00").first, "2026-11-03")
+    }
+
+    func testMorningReminderSkipsWhenYesterdayIsDone() {
+        var value = snapshot(entries: answeredDay("2026-11-01"))
+        value.completions = [completion("2026-11-01")]
+        XCTAssertEqual(days(morning, value).first, "2026-11-03")
+    }
+
+    func testEveningReminderStillFiresForEveningLoggers() {
+        var value = snapshot(entries: answeredDay("2026-11-01"))
+        value.completions = [completion("2026-11-01")]
+        XCTAssertEqual(days(evening, value).first, "2026-11-02")
+    }
+
+    func testEveningReminderSkipsWhenTodayIsDone() {
+        var value = snapshot(entries: answeredDay("2026-11-02"))
+        value.completions = [completion("2026-11-02")]
+        XCTAssertEqual(days(evening, value).first, "2026-11-03")
+    }
+
+    func testNothingIsScheduledUntilTheTimezoneIsKnown() {
+        XCTAssertTrue(days(morning, JournalSnapshot()).isEmpty)
+    }
+
+    func testSettingsDefaultToOffAtNine() {
+        let settings = JournalReminderSettings()
+        XCTAssertFalse(settings.enabled)
+        XCTAssertEqual(settings.hour, 9)
+    }
+}
+
 final class JournalDailyListTests: XCTestCase {
     private let day = "2026-11-02"
     private let optIn = setting("opt_in:substances")
@@ -335,7 +578,8 @@ final class FakeJournalServer {
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
         let entries = (body["entries"] as? [[String: Any]] ?? []).map { $0.merging(["kind": "entry"]) { $1 } }
         let settings = (body["preferences"] as? [[String: Any]] ?? []).map { $0.merging(["kind": "preference"]) { $1 } }
-        return try JSONSerialization.data(withJSONObject: ["acknowledgements": entries + settings])
+        let completions = (body["completions"] as? [[String: Any]] ?? []).map { $0.merging(["kind": "completion"]) { $1 } }
+        return try JSONSerialization.data(withJSONObject: ["acknowledgements": entries + settings + completions])
     }
 }
 
@@ -622,6 +866,122 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertEqual(store.snapshot.entries.filter(\.deleted).count, 1)
         XCTAssertEqual(store.pendingCount, 0)
         XCTAssertEqual(uploads, 2)
+    }
+
+    private func answerFive(_ store: JournalStore, day: String = "2026-11-02") {
+        for id in ["mood", "stress", "energy", "worked_late", "screen_in_bed"] {
+            XCTAssertTrue(store.save(response(id, day: day, answer: .init(type: "boolean", value: .boolean(false)))))
+        }
+    }
+
+    func testCompletingNeedsFiveAnswersAndNoCountsAsAnAnswer() async {
+        let store = makeStore()
+        await store.synchronize()
+        XCTAssertFalse(store.complete(day: "2026-11-02"))
+        answerFive(store)
+        XCTAssertTrue(store.complete(day: "2026-11-02"))
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, true)
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.timezone, "Europe/London")
+    }
+
+    func testSkippedAnswersDoNotCountTowardCompletion() async {
+        let store = makeStore()
+        await store.synchronize()
+        for id in ["mood", "stress", "energy", "worked_late", "screen_in_bed"] {
+            XCTAssertTrue(store.save(response(id, day: "2026-11-02", answer: nil, missing: "skipped")))
+        }
+        XCTAssertFalse(store.complete(day: "2026-11-02"))
+    }
+
+    func testDroppingBelowFiveWithdrawsCompletionButKeepsTheFirstTime() async {
+        let store = makeStore()
+        await store.synchronize()
+        answerFive(store)
+        XCTAssertTrue(store.complete(day: "2026-11-02"))
+        let first = store.completion(day: "2026-11-02")?.firstCompletedAt
+        XCTAssertTrue(store.delete("mood", day: "2026-11-02"))
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, false)
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.firstCompletedAt, first)
+        // Reaching five again isn't enough: completing is always explicit.
+        XCTAssertTrue(store.save(response("mood", day: "2026-11-02", answer: .init(type: "boolean", value: .boolean(true)))))
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, false)
+        XCTAssertTrue(store.complete(day: "2026-11-02"))
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, true)
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.firstCompletedAt, first)
+    }
+
+    func testEditsThatKeepFiveLeaveCompletionAlone() async {
+        let store = makeStore()
+        await store.synchronize()
+        answerFive(store)
+        XCTAssertTrue(store.complete(day: "2026-11-02"))
+        let mutation = store.completion(day: "2026-11-02")?.mutationId
+        XCTAssertTrue(store.save(response("mood", day: "2026-11-02", answer: .init(type: "boolean", value: .boolean(true)))))
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.mutationId, mutation)
+    }
+
+    func testCompletionSurvivesRestartAndUploadsOffline() async {
+        let store = makeStore()
+        await store.synchronize()
+        answerFive(store)
+        server.syncError = URLError(.notConnectedToInternet)
+        XCTAssertTrue(store.complete(day: "2026-11-02"))
+        await store.synchronize()
+        XCTAssertTrue(store.needsRetry)
+        let restarted = makeStore()
+        XCTAssertEqual(restarted.completion(day: "2026-11-02")?.pending, true)
+        server.syncError = nil
+        server.requests = []
+        await restarted.synchronize()
+        XCTAssertEqual(restarted.pendingCount, 0)
+        XCTAssertEqual(restarted.completion(day: "2026-11-02")?.pending, false)
+        XCTAssertTrue(server.paths.contains { $0.hasSuffix("journal/sync") })
+    }
+
+    func testRemoteCompletionsMergeAndKeepTheEarliestFirstCompletion() async {
+        let store = makeStore()
+        await store.synchronize()
+        answerFive(store)
+        XCTAssertTrue(store.complete(day: "2026-11-02"))
+        await store.synchronize()
+        let local = store.completion(day: "2026-11-02")
+        // An older edit from another device loses, but its earlier first completion is kept.
+        server.pageChanges = [["kind": "completion", "journal_date": "2026-11-02", "completed": false,
+                               "first_completed_at": "2020-01-01T08:00:00Z", "timezone": "Asia/Tokyo",
+                               "edited_at": "2020-01-01T08:00:00Z",
+                               "mutation_id": "00000000-0000-4000-8000-000000000001", "revision": 9]]
+        server.pageCursor = 9
+        await store.synchronize()
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.completed, true)
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.mutationId, local?.mutationId)
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.firstCompletedAt, "2020-01-01T08:00:00Z")
+        XCTAssertEqual(store.completion(day: "2026-11-02")?.timezone, "Asia/Tokyo")
+    }
+
+    func testFilesSavedBeforeCompletionsStillOpen() throws {
+        var old = snapshot()
+        old.entries = [entry("mood", day: "2026-11-02")]
+        let data = try JournalCoding.encoder().encode(old)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "completions")
+        try JSONSerialization.data(withJSONObject: object).write(to: fileURL)
+        let store = makeStore()
+        XCTAssertFalse(store.storageBlocked)
+        XCTAssertEqual(store.snapshot.entries.count, 1)
+        XCTAssertTrue(store.snapshot.completions.isEmpty)
+    }
+
+    func testPendingCompletionsAreIncludedInExports() throws {
+        var saved = snapshot()
+        saved.completions = [completion("2026-11-02", pending: true), completion("2026-11-01")]
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Journal", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let userID = UUID().uuidString
+        let file = url.appendingPathComponent("\(userID).json")
+        try JournalCoding.encoder().encode(saved).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(try JournalStore.pendingExport(userID: userID).completions.map(\.journalDate), ["2026-11-02"])
     }
 
     func testCorruptFileIsPreservedAndBlocksWrites() async throws {
