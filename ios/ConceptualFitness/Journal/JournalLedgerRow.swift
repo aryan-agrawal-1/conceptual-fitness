@@ -113,7 +113,11 @@ struct JournalLedgerRow: View {
                 store.set("pin:\(behaviour.id)", value: !store.isPinned(behaviour))
             } label: {
                 let pinned = store.isPinned(behaviour)
-                Label(pinned ? "Unpin" : "Pin to daily list", systemImage: pinned ? "pin.slash" : "pin")
+                if JournalDailyList.isPrivate(behaviour, in: store.snapshot) {
+                    Label(pinned ? "Turn off" : "Turn on", systemImage: pinned ? "eye.slash" : "eye")
+                } else {
+                    Label(pinned ? "Unpin" : "Pin to daily list", systemImage: pinned ? "pin.slash" : "pin")
+                }
             }
             Button { store.answer(behaviour, day: day, answer: nil, missingReason: "skipped") } label: {
                 Label("Skip for today", systemImage: "forward")
