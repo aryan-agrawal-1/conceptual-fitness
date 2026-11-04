@@ -26,8 +26,12 @@ enum JournalDailyList {
         (["weight", "nutrition", "health"], ["energy", "mood", "alcohol", "stress"])
     ]
 
+    static func isPrivate(_ behaviour: JournalBehaviourData, in snapshot: JournalSnapshot) -> Bool {
+        snapshot.catalogue?.categories.first { $0.id == behaviour.categoryId }?.requiresOptIn == true
+    }
+
     static func isPinned(_ behaviour: JournalBehaviourData, in snapshot: JournalSnapshot) -> Bool {
-        let isPrivate = snapshot.catalogue?.categories.first { $0.id == behaviour.categoryId }?.requiresOptIn == true
+        let isPrivate = isPrivate(behaviour, in: snapshot)
         let enabled = Set(snapshot.preferences.filter(\.value).map(\.key))
         if isPrivate && !enabled.contains("opt_in:\(behaviour.categoryId)") { return false }
         if let explicit = snapshot.preferences.first(where: { $0.key == "pin:\(behaviour.id)" }) { return explicit.value }
@@ -36,9 +40,7 @@ enum JournalDailyList {
 
     static func sections(_ snapshot: JournalSnapshot, day: String) -> JournalDailySections {
         guard let catalogue = snapshot.catalogue else { return JournalDailySections() }
-        let enabled = Set(snapshot.preferences.filter(\.value).map(\.key))
         let privateCategories = catalogue.categories.filter(\.requiresOptIn)
-        let hidden = Set(privateCategories.filter { !enabled.contains("opt_in:\($0.id)") }.map(\.id))
         let privateIds = Set(privateCategories.map(\.id))
         let pinned = catalogue.behaviours.filter { isPinned($0, in: snapshot) }
 
@@ -49,10 +51,10 @@ enum JournalDailyList {
             let rows = pinned.filter { $0.categoryId == category.id }
             return rows.isEmpty ? nil : .init(id: category.id, title: category.label, behaviours: rows)
         }
-        let rest = catalogue.behaviours.filter { !isPinned($0, in: snapshot) && !hidden.contains($0.categoryId) }
+        let rest = catalogue.behaviours.filter { !isPinned($0, in: snapshot) && !privateIds.contains($0.categoryId) }
         result.others = ranked(rest, snapshot: snapshot, day: day)
         result.turnedOff = catalogue.behaviours.filter { item in
-            hidden.contains(item.categoryId) && snapshot.entries.contains {
+            privateIds.contains(item.categoryId) && !isPinned(item, in: snapshot) && snapshot.entries.contains {
                 $0.behaviourId == item.id && $0.journalDate == day && !$0.deleted
             }
         }

@@ -220,7 +220,7 @@ struct JournalView: View {
             if expanded { panel(sections.others) }
         }
         if !sections.turnedOff.isEmpty {
-            sectionTitle("Saved in categories that are off")
+            sectionTitle("Saved but turned off")
             panel(sections.turnedOff)
         }
     }
@@ -256,14 +256,18 @@ struct JournalPrivacyView: View {
             AppBackground()
             Form {
                 Section {
-                    Text("Turn on what you want to record. Its inputs are pinned to your daily list and shown by name in Insights and your check-in. They stay out of notifications.")
-                    Text("Turning a category off removes its rows and stops new answers. Saved answers stay, so you can review or delete them.")
+                    Text("Turn on what you want to record, then turn off anything that doesn’t apply to you. What’s on is pinned to your daily list and shown by name in Insights and your check-in. It stays out of notifications.")
+                    Text("Turning something off removes its rows and stops new answers. Saved answers stay, so you can review or delete them.")
                 }
                 ForEach(store.snapshot.catalogue?.categories.filter(\.requiresOptIn) ?? []) { category in
-                    Toggle(category.label, isOn: Binding(
-                        get: { store.enabled("opt_in:\(category.id)") },
-                        set: { store.setCategory(category.id, enabled: $0) }))
-                    .disabled(store.storageBlocked)
+                    Section {
+                        Toggle(category.label, isOn: Binding(
+                            get: { store.enabled("opt_in:\(category.id)") },
+                            set: { enabled in withAnimation(.snappy) { store.setCategory(category.id, enabled: enabled) } }))
+                        .font(.body.weight(.semibold))
+                        .disabled(store.storageBlocked)
+                        if store.enabled("opt_in:\(category.id)") { inputToggles(in: category) }
+                    }
                 }
                 Section {
                     Text("Daily notes are just for you. They aren’t used in patterns, and the app’s AI can’t read them.")
@@ -274,6 +278,18 @@ struct JournalPrivacyView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("Private categories")
+    }
+
+    @ViewBuilder private func inputToggles(in category: JournalCategoryData) -> some View {
+        let inputs = store.snapshot.catalogue?.behaviours.filter { $0.categoryId == category.id } ?? []
+        if inputs.count > 1 {
+            ForEach(inputs) { input in
+                Toggle(input.label, isOn: Binding(
+                    get: { store.isPinned(input) },
+                    set: { store.set("pin:\(input.id)", value: $0) }))
+                .disabled(store.storageBlocked)
+            }
+        }
     }
 }
 

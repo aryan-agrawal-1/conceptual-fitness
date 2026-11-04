@@ -131,19 +131,7 @@ final class JournalStore: ObservableObject {
     }
 
     func setCategory(_ category: String, enabled: Bool) {
-        var next = snapshot
-        var keys = ["opt_in:\(category)"]
-        if enabled {
-            let ids = snapshot.catalogue?.behaviours.filter { $0.categoryId == category }.map(\.id) ?? []
-            keys += ids.map { "pin:\($0)" }.filter { key in snapshot.preferences.contains { $0.key == key && !$0.value } }
-        }
-        for key in keys {
-            next.preferences.removeAll { $0.key == key }
-            next.preferences.append(JournalSettingData(key: key, value: key.hasPrefix("opt_in:") ? enabled : true,
-                                                       editedAt: nextStamp(), mutationId: UUID().uuidString.lowercased(),
-                                                       pending: true))
-        }
-        if persist(next) { scheduleSync() }
+        set("opt_in:\(category)", value: enabled)
     }
 
     func restore() {

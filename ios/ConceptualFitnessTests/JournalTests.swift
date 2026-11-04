@@ -648,10 +648,28 @@ final class JournalDailyListTests: XCTestCase {
         XCTAssertEqual(sections(snapshot(settings: [optIn])).privatePinned.first?.behaviours.map(\.id), ["caffeine"])
     }
 
-    func testUnpinnedPrivateInputMovesToOthers() {
+    func testTurnedOffPrivateInputLeavesTheListAndOthers() {
         let result = sections(snapshot(settings: [optIn, setting("pin:caffeine", false)]))
         XCTAssertTrue(result.privatePinned.isEmpty)
-        XCTAssertTrue(result.others.contains { $0.id == "caffeine" })
+        XCTAssertFalse(result.others.contains { $0.id == "caffeine" })
+        XCTAssertTrue(result.turnedOff.isEmpty)
+    }
+
+    func testUnpinnedStandardInputStillMovesToOthers() {
+        let result = sections(snapshot(settings: [setting("pin:stress", false)]))
+        XCTAssertTrue(result.others.contains { $0.id == "stress" })
+    }
+
+    func testAnswersForATurnedOffPrivateInputStayReviewable() {
+        let saved = entry("caffeine", day: day)
+        let result = sections(snapshot(entries: [saved], settings: [optIn, setting("pin:caffeine", false)]))
+        XCTAssertEqual(result.turnedOff.map(\.id), ["caffeine"])
+        XCTAssertTrue(result.privatePinned.isEmpty)
+    }
+
+    func testCheckInNeverOffersATurnedOffPrivateInput() {
+        let value = snapshot(settings: [optIn, setting("pin:caffeine", false), setting("pin:mood", false)])
+        XCTAssertFalse(JournalCheckIn.screen(value, day: day).topUp.contains { $0.id == "caffeine" })
     }
 
     func testAnswersInACategoryThatIsOffStayReviewable() {
@@ -1231,7 +1249,7 @@ final class JournalStoreTests: XCTestCase {
         XCTAssertTrue(store.needsRetry)
     }
 
-    func testTurningACategoryBackOnPinsEverythingAgain() async {
+    func testTurningACategoryBackOnRemembersTurnedOffInputs() async {
         let store = makeStore()
         await store.synchronize()
         store.setCategory("substances", enabled: true)
@@ -1243,6 +1261,8 @@ final class JournalStoreTests: XCTestCase {
         store.setCategory("substances", enabled: false)
         XCTAssertFalse(store.isPinned(caffeine))
         store.setCategory("substances", enabled: true)
+        XCTAssertFalse(store.isPinned(caffeine))
+        store.set("pin:caffeine", value: true)
         XCTAssertTrue(store.isPinned(caffeine))
     }
 
