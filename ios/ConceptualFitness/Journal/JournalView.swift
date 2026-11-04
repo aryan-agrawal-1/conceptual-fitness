@@ -103,14 +103,14 @@ struct JournalView: View {
                     VStack(spacing: 2) {
                         Text(item.letter).font(.caption2.weight(.medium))
                         Text(item.number).font(.system(.subheadline, design: .rounded, weight: .bold))
-                        weekMark(index.status(item.id), selected: selected)
+                        weekMark(index.status(item.id))
                     }
                     .padding(.vertical, 3)
-                    .foregroundStyle(selected ? .white : .primary.opacity(0.75))
+                    .foregroundStyle(.primary.opacity(selected ? 1 : 0.75))
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .background {
                         if selected {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(HealthTheme.color(for: .activity))
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white)
                         } else {
                             RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial)
                         }
@@ -126,11 +126,11 @@ struct JournalView: View {
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
-    @ViewBuilder private func weekMark(_ status: JournalDayStatus, selected: Bool) -> some View {
+    @ViewBuilder private func weekMark(_ status: JournalDayStatus) -> some View {
         Group {
             switch status {
-            case .completed: Circle().fill(selected ? .white : HealthTheme.color(for: .activity))
-            case .incomplete: Circle().strokeBorder(selected ? .white : .orange, lineWidth: 1.5)
+            case .completed: Circle().fill(HealthTheme.color(for: .activity))
+            case .incomplete: Circle().strokeBorder(.orange, lineWidth: 1.5)
             case .missing, .notStarted, .upcoming: Color.clear
             }
         }
