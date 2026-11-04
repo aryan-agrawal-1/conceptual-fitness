@@ -312,14 +312,16 @@ struct JournalStreakHero<Calendar: View>: View {
                 Text("Insights")
                     .font(.system(.title, design: .rounded, weight: .bold))
                     .accessibilityAddTraits(.isHeader)
+                    .fadesNearTop(from: 52, to: 26)
                     .padding(.top, -44)
-                details
+                details.fadesNearTop(from: 105, to: 65)
                 if let action = summary.action {
-                    actionButton(action)
+                    actionButton(action).fadesNearTop(from: 105, to: 65)
                 }
             }
             .foregroundStyle(.white)
             calendar
+                .fadesNearTop(from: 105, to: 65)
                 .padding(.top, 2)
         }
         .padding(.bottom, lit ? 38 : 54)
@@ -493,6 +495,15 @@ struct JournalStreakMark: View {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.58)) { shown = true }
             do { try await Task.sleep(for: .seconds(0.55)) } catch { return }
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { value = celebration.to }
+        }
+    }
+}
+
+private extension View {
+    func fadesNearTop(from start: CGFloat, to end: CGFloat) -> some View {
+        visualEffect { content, proxy in
+            let progress = (proxy.frame(in: .global).minY - end) / (start - end)
+            return content.opacity(min(max(progress, 0), 1))
         }
     }
 }

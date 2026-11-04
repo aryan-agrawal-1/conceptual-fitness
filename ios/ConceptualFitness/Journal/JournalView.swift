@@ -16,14 +16,12 @@ struct JournalView: View {
     @State private var choosingDate = false
     @State private var othersExpanded: Bool?
     @State private var fireBehindToolbar = true
+    @State private var fireBehindScrollEdge = true
     private var day: String { selectedDay ?? store.today }
     private var dayIndex: JournalDayIndex { JournalDayIndex(store.snapshot, today: store.today) }
     private var isReady: Bool { store.snapshot.catalogue != nil && store.timezone != nil }
-    private var toolbarOverFire: Bool {
-        fireBehindToolbar && JournalStreak(store.snapshot.completions, today: store.today).current > 0
-    }
     private var toolbarIconStyle: AnyShapeStyle {
-        toolbarOverFire ? AnyShapeStyle(.white) : AnyShapeStyle(.tint)
+        fireBehindToolbar ? AnyShapeStyle(.white) : AnyShapeStyle(.tint)
     }
 
     var body: some View {
@@ -44,9 +42,7 @@ struct JournalView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
-            .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < 190 } action: {
-                fireBehindToolbar = $1
-            }
+            .modifier(TopScrollEdgeVisibility(hidden: fireBehindScrollEdge))
         }
         .navigationTitle("Insights")
         .navigationBarTitleDisplayMode(.inline)
@@ -55,7 +51,7 @@ struct JournalView: View {
             ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             if isReady {
                 if #available(iOS 26.0, *) {
-                    toolbarButtons.sharedBackgroundVisibility(toolbarOverFire ? .hidden : .automatic)
+                    toolbarButtons.sharedBackgroundVisibility(fireBehindToolbar ? .hidden : .automatic)
                 } else {
                     toolbarButtons
                 }
@@ -94,6 +90,8 @@ struct JournalView: View {
         } calendar: {
             weekStrip
         }
+        .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 162 } action: { fireBehindToolbar = $0 }
+        .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 106 } action: { fireBehindScrollEdge = $0 }
     }
 
     private var weekStrip: some View {
@@ -276,5 +274,17 @@ struct JournalPrivacyView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("Private categories")
+    }
+}
+
+private struct TopScrollEdgeVisibility: ViewModifier {
+    let hidden: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(hidden, for: .top)
+        } else {
+            content
+        }
     }
 }
