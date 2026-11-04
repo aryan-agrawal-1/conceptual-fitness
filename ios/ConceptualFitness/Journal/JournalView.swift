@@ -220,7 +220,7 @@ struct JournalView: View {
             if expanded { panel(sections.others) }
         }
         if !sections.turnedOff.isEmpty {
-            sectionTitle("Saved in categories that are off")
+            sectionTitle("Saved but turned off")
             panel(sections.turnedOff)
         }
     }
