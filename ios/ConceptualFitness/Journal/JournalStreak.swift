@@ -4,6 +4,7 @@ struct JournalStreak: Equatable {
     let current: Int
     let longest: Int
     let openDays: [String]
+    let endsTonight: Bool
 
     init(_ completions: [JournalCompletionData], today: String) {
         let earned = Set(completions.filter { !JournalCheckIn.isLate($0) }.map(\.journalDate))
@@ -29,6 +30,7 @@ struct JournalStreak: Equatable {
         current = count
         longest = max(longestRun, count)
         openDays = [yesterday, today].filter { !earned.contains($0) && !late.contains($0) }
+        endsTonight = openDays.contains(yesterday) && count > (earned.contains(today) ? 1 : 0)
     }
 
     static func dayNote(day: String, today: String, completion: JournalCompletionData?, isCompleted: Bool) -> String? {
@@ -42,5 +44,72 @@ struct JournalStreak: Equatable {
         }
         guard day < JournalDay.previous(today) else { return nil }
         return "You’re editing a past day. Completing it now won’t restore a streak."
+    }
+}
+
+struct JournalStreakSummary: Equatable {
+    struct Action: Equatable {
+        let day: String
+        let title: String
+        let progress: String?
+    }
+
+    let count: Int
+    let headline: String?
+    let message: String
+    let answeredToday: Int
+    let action: Action?
+
+    init(_ snapshot: JournalSnapshot, today: String, onboardedAt: Date? = nil) {
+        let index = JournalDayIndex(snapshot, today: today)
+        let streak = JournalStreak(snapshot.completions, today: today)
+        let yesterday = JournalDay.previous(today)
+        let target = JournalDailyList.dailyTarget
+        let answered = index.answerCount(today)
+        let onboardedToday = snapshot.timezone.flatMap { timezone in
+            onboardedAt.map { JournalCoding.day($0, timezone: timezone) == today }
+        } ?? false
+
+        let action: Action?
+        if !onboardedToday && !index.isCompleted(yesterday) {
+            action = Action(day: yesterday, title: "Check in for yesterday",
+                            progress: "\(index.answerCount(yesterday)) of \(target)")
+        } else if index.isCompleted(today) {
+            action = nil
+        } else {
+            let title = JournalDailyList.reachedTarget(answered) ? "Complete check-in"
+                : answered > 0 ? "Continue check-in" : "Start check-in"
+            action = Action(day: today, title: title, progress: nil)
+        }
+
+        count = streak.current
+        answeredToday = min(answered, target)
+        self.action = action
+        headline = streak.current > 0 ? nil : streak.longest > 0 ? "Light it back up" : "Light your first streak"
+        if streak.endsTonight {
+            message = "Your \(streak.current)-day streak ends at midnight. Don’t lose it!"
+        } else if streak.current == 0 {
+            message = streak.longest > 0 ? "Check in to start a new streak." : "Check in to get your fire going."
+        } else if action?.day == yesterday && streak.openDays.contains(yesterday) {
+            message = "Yesterday still counts until midnight."
+        } else if index.isCompleted(today) {
+            message = "You’re on fire. See you tomorrow."
+        } else {
+            message = "Don’t lose your \(streak.current)-day streak. Check in today."
+        }
+    }
+}
+
+struct JournalStreakCelebration: Equatable {
+    let from: Int
+    let to: Int
+
+    init?(_ completions: [JournalCompletionData], day: String, today: String) {
+        guard let completion = completions.first(where: { $0.journalDate == day }),
+              !JournalCheckIn.isLate(completion) else { return nil }
+        let current = JournalStreak(completions, today: today).current
+        guard current > 0 else { return nil }
+        to = current
+        from = min(JournalStreak(completions.filter { $0.journalDate != day }, today: today).current, current)
     }
 }

@@ -15,10 +15,14 @@ struct JournalView: View {
     @State private var checkIn: JournalCheckInSelection?
     @State private var choosingDate = false
     @State private var othersExpanded: Bool?
-    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var fireBehindToolbar = true
+    @State private var fireBehindScrollEdge = true
     private var day: String { selectedDay ?? store.today }
     private var dayIndex: JournalDayIndex { JournalDayIndex(store.snapshot, today: store.today) }
     private var isReady: Bool { store.snapshot.catalogue != nil && store.timezone != nil }
+    private var toolbarIconStyle: AnyShapeStyle {
+        fireBehindToolbar ? AnyShapeStyle(.white) : AnyShapeStyle(.tint)
+    }
 
     var body: some View {
         ZStack {
@@ -26,8 +30,7 @@ struct JournalView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if isReady {
-                        checkInCard
-                        weekStrip
+                        streakHero
                         dayHeader
                         dayNote
                         syncStatus
@@ -39,17 +42,18 @@ struct JournalView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
+            .modifier(TopScrollEdgeVisibility(hidden: fireBehindScrollEdge))
         }
         .navigationTitle("Insights")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             if isReady {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { choosingDate = true } label: { Image(systemName: "calendar") }
-                        .accessibilityLabel("History")
-                    NavigationLink { JournalPrivacyView(store: store) } label: {
-                        Image(systemName: "lock")
-                    }
-                    .accessibilityLabel("Private categories")
+                if #available(iOS 26.0, *) {
+                    toolbarButtons.sharedBackgroundVisibility(fireBehindToolbar ? .hidden : .automatic)
+                } else {
+                    toolbarButtons
                 }
             }
         }
@@ -63,54 +67,52 @@ struct JournalView: View {
         .sheet(item: $checkIn) { JournalCheckInView(store: store, reminders: reminders, day: $0.day) }
         .refreshable { await store.synchronize() }
         .task { await store.synchronize() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            Task { await store.synchronize() }
+        }
     }
 
-    @ViewBuilder private var checkInCard: some View {
-        if JournalCheckIn.isDue(store.snapshot, onboardedAt: onboardedAt) {
-            let yesterday = JournalDay.previous(store.today)
-            Button { checkIn = JournalCheckInSelection(day: yesterday) } label: {
-                let layout = typeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-                    : AnyLayout(HStackLayout())
-                layout {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Check in for yesterday").font(.subheadline.weight(.semibold))
-                        Text("\(JournalDay.longTitle(yesterday)) · \(dayIndex.answerCount(yesterday)) of \(JournalDailyList.dailyTarget)")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 8) {
-                        Text("Start").font(.subheadline.weight(.semibold))
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).accessibilityHidden(true)
-                    }
-                    .foregroundStyle(HealthTheme.color(for: .activity))
-                }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+    private var toolbarButtons: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button { choosingDate = true } label: { Image(systemName: "calendar").foregroundStyle(toolbarIconStyle) }
+                .accessibilityLabel("History")
+            NavigationLink { JournalPrivacyView(store: store) } label: {
+                Image(systemName: "lock").foregroundStyle(toolbarIconStyle)
             }
-            .buttonStyle(.plain)
-            .panelSurface(cornerRadius: 18)
-            .accessibilityIdentifier("journal.checkin.card")
+            .accessibilityLabel("Private categories")
         }
+    }
+
+    private var streakHero: some View {
+        JournalStreakHero(summary: JournalStreakSummary(store.snapshot, today: store.today, onboardedAt: onboardedAt),
+                          settled: store.hasSettled) {
+            checkIn = JournalCheckInSelection(day: $0)
+        } calendar: {
+            weekStrip
+        }
+        .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 162 } action: { fireBehindToolbar = $0 }
+        .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 106 } action: { fireBehindScrollEdge = $0 }
     }
 
     private var weekStrip: some View {
         let index = dayIndex
-        return HStack(spacing: 2) {
+        return HStack(spacing: 4) {
             ForEach(JournalDay.week(endingOn: store.today)) { item in
                 let selected = item.id == day
                 Button { selectedDay = item.id; othersExpanded = nil } label: {
                     VStack(spacing: 2) {
                         Text(item.letter).font(.caption2.weight(.medium))
                         Text(item.number).font(.system(.subheadline, design: .rounded, weight: .bold))
-                        weekMark(index.status(item.id), selected: selected)
+                        weekMark(index.status(item.id))
                     }
-                    .foregroundStyle(selected ? .white : .primary.opacity(0.75))
+                    .padding(.vertical, 3)
+                    .foregroundStyle(.primary.opacity(selected ? 1 : 0.75))
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .background {
                         if selected {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(HealthTheme.color(for: .activity))
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white)
+                        } else {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial)
                         }
                     }
                     .contentShape(Rectangle())
@@ -124,11 +126,11 @@ struct JournalView: View {
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
-    @ViewBuilder private func weekMark(_ status: JournalDayStatus, selected: Bool) -> some View {
+    @ViewBuilder private func weekMark(_ status: JournalDayStatus) -> some View {
         Group {
             switch status {
-            case .completed: Circle().fill(selected ? .white : HealthTheme.color(for: .activity))
-            case .incomplete: Circle().strokeBorder(selected ? .white : .orange, lineWidth: 1.5)
+            case .completed: Circle().fill(HealthTheme.color(for: .activity))
+            case .incomplete: Circle().strokeBorder(.orange, lineWidth: 1.5)
             case .missing, .notStarted, .upcoming: Color.clear
             }
         }
@@ -272,5 +274,17 @@ struct JournalPrivacyView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("Private categories")
+    }
+}
+
+private struct TopScrollEdgeVisibility: ViewModifier {
+    let hidden: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(hidden, for: .top)
+        } else {
+            content
+        }
     }
 }

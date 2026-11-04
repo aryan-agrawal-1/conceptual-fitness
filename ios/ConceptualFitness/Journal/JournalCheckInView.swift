@@ -45,6 +45,9 @@ struct JournalCheckInView: View {
     private var logged: Int { JournalDailyList.loggedCount(store.snapshot, day: day) }
     private var completed: Bool { JournalDayIndex(store.snapshot, today: store.today).isCompleted(day) }
     private var screen: JournalCheckInScreen { JournalCheckIn.screen(store.snapshot, day: day) }
+    private var celebration: JournalStreakCelebration? {
+        JournalStreakCelebration(store.snapshot.completions, day: day, today: store.today)
+    }
 
     var body: some View {
         NavigationStack {
@@ -69,7 +72,7 @@ struct JournalCheckInView: View {
             .sensoryFeedback(.success, trigger: completed) { _, isCompleted in isCompleted }
             .task(id: completed) {
                 guard completed, !reminders.shouldOffer else { return }
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                do { try await Task.sleep(for: .seconds(celebration == nil ? 2 : 3)) } catch { return }
                 dismiss()
             }
         }
@@ -138,30 +141,46 @@ struct JournalCheckInView: View {
     }
 
     private var completedPage: some View {
-        GeometryReader { proxy in
+        let celebration = celebration
+        return GeometryReader { proxy in
             ScrollView {
                 VStack(spacing: 20) {
                     Spacer(minLength: 24)
-                    JournalCompleteMark()
-                    Text("Check-in complete")
-                        .font(.title.weight(.bold))
-                        .multilineTextAlignment(.center)
-                        .accessibilityAddTraits(.isHeader)
+                    if let celebration {
+                        JournalStreakMark(celebration: celebration)
+                    } else {
+                        JournalCompleteMark()
+                        Text("Check-in complete")
+                            .font(.title.weight(.bold))
+                            .multilineTextAlignment(.center)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                     Spacer(minLength: 24)
-                    if reminders.shouldOffer || answeringReminder { reminderOffer }
+                    if offersReminder {
+                        reminderOffer(onFire: celebration != nil)
+                            .padding(.bottom, celebration == nil ? 0 : 150)
+                    }
                 }
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height - 24)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
             }
         }
+        .background {
+            if celebration != nil {
+                JournalFireBackground(lean: 1, reach: offersReminder ? 0.24 : 0.5, rises: true).ignoresSafeArea()
+            }
+        }
     }
 
-    private var reminderOffer: some View {
+    private var offersReminder: Bool { reminders.shouldOffer || answeringReminder }
+
+    private func reminderOffer(onFire: Bool) -> some View {
         VStack(spacing: 14) {
             Text("Want a daily reminder?")
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center)
+                .foregroundStyle(onFire ? .white : .primary)
             let layout = typeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(spacing: 10))
                 : AnyLayout(HStackLayout(spacing: 10))
@@ -174,16 +193,21 @@ struct JournalCheckInView: View {
                     }
                 } label: {
                     Text("Turn on").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(onFire ? JournalFirePalette.deep : .white)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(HealthTheme.color(for: .activity))
-                Button {
+                .tint(onFire ? .white : HealthTheme.color(for: .activity))
+                let decline = Button {
                     reminders.declineOffer()
                     dismiss()
                 } label: {
                     Text("No thanks").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                if onFire {
+                    decline.buttonStyle(.borderedProminent).tint(JournalFirePalette.ember)
+                } else {
+                    decline.buttonStyle(.bordered)
+                }
             }
             .controlSize(.large)
             .disabled(answeringReminder)
@@ -198,7 +222,8 @@ struct JournalCheckInView: View {
 
     private func complete() {
         guard withAnimation(.snappy, { store.complete(day: day) }) else { return }
-        AccessibilityNotification.Announcement("Check-in complete").post()
+        let streak = celebration.map { " \($0.to) day streak." } ?? ""
+        AccessibilityNotification.Announcement("Check-in complete.\(streak)").post()
     }
 }
 
