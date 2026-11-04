@@ -282,7 +282,8 @@ final class JournalStreakTests: XCTestCase {
     func testSummaryWithNoHistoryInvitesAStartWithoutUrgency() {
         let value = summary([], onboardedAt: londonDate("2026-11-03 09:00"))
         XCTAssertEqual(value.count, 0)
-        XCTAssertEqual(value.message, "Check in to start a new streak.")
+        XCTAssertEqual(value.headline, "Light your first streak")
+        XCTAssertEqual(value.message, "Check in to get your fire going.")
         XCTAssertEqual(value.action?.day, "2026-11-03")
         XCTAssertEqual(value.action?.title, "Start check-in")
     }
@@ -290,6 +291,7 @@ final class JournalStreakTests: XCTestCase {
     func testSummaryAfterAResetIsNeutralAndOffersYesterday() {
         let value = summary(days("2026-10-20", "2026-10-21"))
         XCTAssertEqual(value.count, 0)
+        XCTAssertEqual(value.headline, "Light it back up")
         XCTAssertEqual(value.message, "Check in to start a new streak.")
         XCTAssertEqual(value.action?.day, "2026-11-02")
         XCTAssertEqual(value.action?.title, "Check in for yesterday")

@@ -55,6 +55,7 @@ struct JournalStreakSummary: Equatable {
     }
 
     let count: Int
+    let headline: String?
     let message: String
     let answeredToday: Int
     let action: Action?
@@ -84,10 +85,11 @@ struct JournalStreakSummary: Equatable {
         count = streak.current
         answeredToday = min(answered, target)
         self.action = action
+        headline = streak.current > 0 ? nil : streak.longest > 0 ? "Light it back up" : "Light your first streak"
         if streak.endsTonight {
             message = "Your \(streak.current)-day streak ends at midnight. Don’t lose it!"
         } else if streak.current == 0 {
-            message = "Check in to start a new streak."
+            message = streak.longest > 0 ? "Check in to start a new streak." : "Check in to get your fire going."
         } else if action?.day == yesterday && streak.openDays.contains(yesterday) {
             message = "Yesterday still counts until midnight."
         } else if index.isCompleted(today) {
