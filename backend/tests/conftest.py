@@ -73,6 +73,16 @@ def database() -> Generator[None, None, None]:
     Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture(autouse=True)
+def queued_analyses(monkeypatch) -> list:
+    from app.api.routes import journal as journal_routes
+
+    queued = []
+    monkeypatch.setattr(journal_routes, "enqueue_behaviour_analysis",
+                        lambda user_id, trigger: queued.append((user_id, trigger)) or True)
+    return queued
+
+
 @pytest.fixture
 def session() -> Generator:
     with SessionLocal() as db:

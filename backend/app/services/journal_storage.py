@@ -26,6 +26,14 @@ from app.services.journal_catalogue import (
 
 
 CLOCK_AHEAD = "clock_ahead"
+PRIVATE_STATISTICAL_INPUTS = tuple(
+    item for item in CATALOGUE_V1.behaviours
+    if item.category_id in SENSITIVE_CATEGORIES and item.id in STATISTICAL_BEHAVIOURS
+)
+PRIVATE_INPUT_KEYS = frozenset(
+    {f"opt_in:{item.category_id}" for item in PRIVATE_STATISTICAL_INPUTS}
+    | {f"pin:{item.id}" for item in PRIVATE_STATISTICAL_INPUTS}
+)
 
 
 class JournalMutation(JournalModel):
@@ -184,6 +192,7 @@ def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
         state = JournalState(user_id=user_id, revision=0, analysis_revision=0)
         session.add(state)
     acknowledgements = []
+    inputs_toggled = False
     for mutation in sorted(payload.preferences, key=lambda item: (item.edited_at, item.mutation_id)):
         row = session.scalar(select(JournalPreference).where(
             JournalPreference.user_id == user_id, JournalPreference.key == mutation.key,
@@ -192,6 +201,9 @@ def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
             state.revision += 1
             if row is None:
                 row = JournalPreference(user_id=user_id, key=mutation.key)
+            inputs_toggled = inputs_toggled or (
+                row.value != mutation.value and mutation.key in PRIVATE_INPUT_KEYS
+            )
             row.value = mutation.value
             row.edited_at, row.mutation_id = mutation.edited_at, mutation.mutation_id
             row.revision = state.revision
@@ -231,6 +243,8 @@ def apply_sync(session: Session, user_id: str, payload: JournalSync) -> dict:
         acknowledgements.append(entry_payload(row))
     for mutation in sorted(payload.completions, key=lambda item: (item.edited_at, item.mutation_id)):
         acknowledgements.append(apply_completion(session, state, user_id, mutation))
+    if inputs_toggled and not changed_days:
+        state.analysis_revision += 1
     if changed_days:
         state.analysis_revision += 1
         state.analysis_dirty_from = min(changed_days | (
