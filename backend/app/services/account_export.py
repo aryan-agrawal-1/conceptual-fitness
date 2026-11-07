@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
 from app.models import (
+    BehaviourAnalysisResult,
+    BehaviourAnalysisRun,
     DailyBaseline,
     DailyContext,
     DailyScore,
@@ -219,7 +221,8 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
     if category == "derived_insights":
         return tuple(
             TableExport(model, by_user(model))
-            for model in (DailySummary, DailyBaseline, DailyScore, StrainTarget)
+            for model in (DailySummary, DailyBaseline, DailyScore, StrainTarget,
+                          BehaviourAnalysisRun, BehaviourAnalysisResult)
         )
     return (
         *(TableExport(model, by_user(model)) for model in (
