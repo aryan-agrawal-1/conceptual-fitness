@@ -867,6 +867,62 @@ class StrainTarget(Base):
     )
 
 
+class BehaviourAnalysisRun(Base):
+    __tablename__ = "behaviour_analysis_runs"
+    __table_args__ = (
+        Index("ix_behaviour_analysis_runs_user_started", "user_id", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    algorithm_version: Mapped[str] = mapped_column(String(40))
+    map_version: Mapped[str] = mapped_column(String(40))
+    catalogue_version: Mapped[int] = mapped_column(Integer)
+    trigger: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24), default="running")
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    window_start: Mapped[date] = mapped_column(Date)
+    window_end: Mapped[date] = mapped_column(Date)
+    tracking_day: Mapped[int] = mapped_column(Integer, default=0)
+    checkpoint_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    analysis_revision: Mapped[int] = mapped_column(Integer, default=0)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BehaviourAnalysisResult(Base):
+    __tablename__ = "behaviour_analysis_results"
+    __table_args__ = (
+        Index("ix_behaviour_analysis_results_run", "run_id"),
+        Index("ix_behaviour_analysis_results_user_pair", "user_id", "pair_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("behaviour_analysis_runs.id", ondelete="CASCADE"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    pair_id: Mapped[str] = mapped_column(String(120))
+    input_id: Mapped[str] = mapped_column(String(80))
+    outcome_id: Mapped[str] = mapped_column(String(80))
+    lag_days: Mapped[int] = mapped_column(Integer)
+    tier: Mapped[str] = mapped_column(String(24))
+    stratum: Mapped[str] = mapped_column(String(24), default="all")
+    stage: Mapped[str] = mapped_column(String(32))
+    suppression_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    held_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    coding: Mapped[str] = mapped_column(String(24))
+    exposed_days: Mapped[int] = mapped_column(Integer, default=0)
+    comparison_days: Mapped[int] = mapped_column(Integer, default=0)
+    estimates: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    p_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    q_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    checks: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    labels: Mapped[list[str]] = mapped_column(JSON, default=list)
+    included_dates: Mapped[list[str]] = mapped_column(JSON, default=list)
+    excluded_days: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class DailyContext(Base):
     __tablename__ = "daily_contexts"
     __table_args__ = (
