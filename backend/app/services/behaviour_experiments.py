@@ -30,7 +30,7 @@ ONE_PERSON_TEXT = "This is one person's result over a short period. It is not pr
 
 
 @dataclass(frozen=True)
-class TestableBehaviour:
+class ExperimentBehaviour:
     id: str
     input_id: str
     title: str
@@ -39,10 +39,10 @@ class TestableBehaviour:
 
 
 TESTABLE_BEHAVIOURS = (
-    TestableBehaviour("caffeine_before_2pm", "caffeine", "No caffeine after 2pm",
+    ExperimentBehaviour("caffeine_before_2pm", "caffeine", "No caffeine after 2pm",
                       "Experiment day: no caffeine after 2pm", latest_use=time(14)),
-    TestableBehaviour("alcohol_free", "alcohol", "Alcohol-free days", "Experiment day: no alcohol"),
-    TestableBehaviour("no_screens_in_bed", "screen_in_bed", "No screens in bed",
+    ExperimentBehaviour("alcohol_free", "alcohol", "Alcohol-free days", "Experiment day: no alcohol"),
+    ExperimentBehaviour("no_screens_in_bed", "screen_in_bed", "No screens in bed",
                       "Experiment day: no screens in bed"),
 )
 TESTABLE_BY_INPUT = {item.input_id: item for item in TESTABLE_BEHAVIOURS}
