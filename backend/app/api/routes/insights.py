@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -11,8 +11,12 @@ from app.models import (
     BehaviourAnalysisResult, BehaviourAnalysisRun, BehaviourPatternView, JournalPreference, JournalState,
 )
 from app.services.behaviour_analysis import latest_runs
+from app.services.behaviour_experiments import (
+    ExperimentError, active_experiment, describe, mark_testable, start_experiment, stop_experiment,
+)
 from app.services.behaviour_presentation import FINDING_STATES, present
 from app.services.behaviour_series import turned_off_inputs
+from app.services.health_dates import get_or_create_profile, local_date_for_profile
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +31,14 @@ class PatternKey(BaseModel):
 
 class SeenPatterns(BaseModel):
     patterns: list[PatternKey] = Field(max_length=500)
+
+
+class StartExperiment(BaseModel):
+    pair_id: str = Field(max_length=120)
+    stratum: str = Field(default="all", max_length=24)
+
+
+EXPERIMENT_ERROR_STATUS = dict(not_testable=409, experiment_active=409, no_active_experiment=404)
 
 
 def hidden_inputs(session, user_id):
@@ -62,7 +74,7 @@ def get_patterns(session: DbSession, user: CurrentUser) -> dict:
         return dict(status=status, run=None, stories=[], new_findings=0)
     state = session.get(JournalState, user.id)
     hidden = hidden_inputs(session, user.id)
-    presented = present(visible_rows(session, run, hidden), run, views_for(session, user.id), hidden)
+    presented = mark_testable(present(visible_rows(session, run, hidden), run, views_for(session, user.id), hidden))
     logger.info("Behaviour patterns served stories=%d new=%d", len(presented["stories"]),
                 presented["new_findings"])
     return dict(
@@ -106,3 +118,51 @@ def mark_patterns_seen(payload: SeenPatterns, session: DbSession, user: CurrentU
     session.commit()
     logger.info("Behaviour patterns marked seen recorded=%d", recorded)
     return dict(recorded=recorded)
+
+
+def local_today(session, user_id):
+    return local_date_for_profile(get_or_create_profile(session, user_id))
+
+
+def shown_finding(session, user_id, pair_id, stratum):
+    run, _ = latest_runs(session, user_id)
+    if run is None:
+        return None
+    hidden = hidden_inputs(session, user_id)
+    presented = present(visible_rows(session, run, hidden), run, views_for(session, user_id), hidden)
+    return next((finding for story in presented["stories"] for finding in story["findings"]
+                 if finding["pair_id"] == pair_id and finding["stratum"] == stratum), None)
+
+
+def experiment_failure(error, action):
+    logger.warning("Behaviour experiment %s refused reason=%s", action, error.code)
+    return HTTPException(EXPERIMENT_ERROR_STATUS[error.code], dict(code=error.code))
+
+
+@router.get("/experiment")
+def get_experiment(session: DbSession, user: CurrentUser) -> dict:
+    today = local_today(session, user.id)
+    return dict(experiment=describe(session, active_experiment(session, user.id, today), today))
+
+
+@router.post("/experiment")
+def post_experiment(payload: StartExperiment, session: DbSession, user: CurrentUser) -> dict:
+    today = local_today(session, user.id)
+    finding = shown_finding(session, user.id, payload.pair_id, payload.stratum)
+    try:
+        if finding is None:
+            raise ExperimentError("not_testable")
+        experiment = start_experiment(session, user.id, finding, today)
+    except ExperimentError as error:
+        raise experiment_failure(error, "start") from error
+    return dict(experiment=describe(session, experiment, today))
+
+
+@router.post("/experiment/stop")
+def post_experiment_stop(session: DbSession, user: CurrentUser) -> dict:
+    today = local_today(session, user.id)
+    try:
+        experiment = stop_experiment(session, user.id, today)
+    except ExperimentError as error:
+        raise experiment_failure(error, "stop") from error
+    return dict(experiment=describe(session, experiment, today))
