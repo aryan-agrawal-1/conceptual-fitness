@@ -41,8 +41,10 @@ def test_early_signal_reads_as_an_association_with_a_shrunk_range():
     assert result["effects"][0]["low"] < result["effects"][0]["value"] < result["effects"][0]["high"] < 0
     assert "the two days before" in result["adjustments"] and "sick days left out" in result["adjustments"]
     assert any(text.startswith("Exploratory") for text in result["limitations"])
-    assert result["needs"] == "A firmer result needs at least 18 days on each side (6 more on the smaller side)."
+    assert result["needs"] == "A firmer result needs more days of data."
     assert result["unseen"] is True
+    worked_late = finding(row(input_id="worked_late"))
+    assert worked_late["needs"] == "A firmer result needs at least 18 days on each side (6 more on the smaller side)."
 
 
 def test_no_finding_text_uses_causal_wording():
@@ -67,7 +69,9 @@ def test_no_link_is_neutral_only_when_the_whole_range_is_inside_the_band():
     assert neutral["summary"] == "No link larger than 15 min was seen between nicotine and sleep."
     unclear = finding(row(stage="no_link", estimates=[estimate("yes", 10.0, 20.0)]))
     assert unclear["state"] == "inconclusive"
-    assert unclear["needs"] == "More days on both sides would narrow the range."
+    assert unclear["needs"] == "More days would narrow the range."
+    other = finding(row(input_id="travel", stage="no_link", estimates=[estimate("yes", 10.0, 20.0)]))
+    assert other["needs"] == "More days on both sides would narrow the range."
 
 
 def test_dose_effects_use_a_readable_step_and_flag_unclear_shape():
@@ -77,27 +81,99 @@ def test_dose_effects_use_a_readable_step_and_flag_unclear_shape():
     assert "Stronger at higher amounts is assumed; the exact shape is unclear." in result["limitations"]
 
 
-def test_beneficial_looking_alcohol_results_are_held_without_numbers():
-    result = finding(row(input_id="alcohol", coding="alcohol_bands", labels=["favourable_needs_review"],
-                         estimates=[estimate("units_3_plus", 30.0, 6.0)]))
-    assert (result["state"], result["held_reason"]) == ("held", "favourable_needs_review")
-    assert result["effects"] == [] and "30" not in result["summary"]
+def favourable_alcohol(review):
+    checks = dict(model=dict(columns=["intercept", "units_3_plus", "journal_weekend_night"]))
+    if review is not None:
+        checks["favourable_review"] = review
+    return row(input_id="alcohol", coding="alcohol_bands", labels=["favourable_needs_review"],
+               estimates=[estimate("units_3_plus", 30.0, 6.0)], checks=checks)
+
+
+def test_beneficial_looking_alcohol_results_are_held_without_numbers_until_checked():
+    result = finding(favourable_alcohol(None))
+    assert (result["state"], result["held_reason"]) == ("held", "favourable_checks_failed")
+    assert result["effects"] == [] and result["impact"] is None and "30" not in result["summary"]
+    assert result["summary"] == "This result is not shown because the checks could not be run on your data yet."
+    failed = finding(favourable_alcohol(dict(passed=False, failed=["before_exposure", "sick_days"])))
+    assert failed["state"] == "held" and failed["effects"] == []
+    assert failed["summary"] == ("This result is not shown because the difference was already there before you "
+                                 "drank and it changed when sick days were counted.")
     worse = finding(row(input_id="alcohol", coding="alcohol_bands", labels=["favourable_needs_review"],
                         estimates=[estimate("units_3_plus", -30.0, 6.0)]))
     assert worse["state"] == "early_signal"
     assert "after 3 or more units than on days without alcohol" in worse["summary"]
 
 
-def test_held_medication_results_show_no_numbers():
-    result = finding(row(input_id="usual_medication", held_reason="awaiting_safety_wording"))
+def test_beneficial_looking_alcohol_that_passes_the_checks_is_shown_with_the_reviewed_wording():
+    story = present([favourable_alcohol(dict(passed=True, failed=[], weekend_adjusted=True))],
+                    RUN, {}, frozenset())["stories"][0]
+    result = story["findings"][0]
+    assert result["state"] == "early_signal" and result["effects"]
+    assert any(text.startswith("People often drink on days that are already going well") for text in
+               result["limitations"])
+    assert story["safety_note"] == ("This is an observation from your own logs, not medical advice. "
+                                    "It is not a reason to drink, smoke or use more.")
+
+
+def test_held_results_show_no_numbers():
+    result = finding(row(input_id="usual_medication", held_reason="awaiting_review"))
     assert result["state"] == "held" and result["effects"] == [] and result["unseen"] is False
+    assert result["summary"] == "This result is not shown yet."
+
+
+def test_medication_results_are_shown_with_wording_that_never_suggests_changing_treatment():
+    story = present([row(input_id="usual_medication", estimates=[estimate("yes", 25.0, 6.0)])],
+                    RUN, {}, frozenset())["stories"][0]
+    result = story["findings"][0]
+    assert result["state"] == "early_signal" and result["effects"]
+    assert "Do not start, stop or change a medication or supplement" in story["safety_note"]
+    assert "Only whether you took it is recorded, not what it was or how much." in result["limitations"]
+    flat = finding(row(input_id="supplements", stage="suppressed", suppression_reason="insufficient_variation",
+                       estimates=[]))
+    assert flat["needs"] == "Your answers barely changed, so there is nothing to compare yet."
+    short = finding(row(input_id="usual_medication", stage="counts",
+                        suppression_reason="exposure_days_below_minimum", exposed_days=3, estimates=[]))
+    assert "without" not in short["needs"] and "more days with your usual medication" not in short["needs"]
+
+
+def test_every_sensitive_category_gets_a_fixed_note_and_others_get_none():
+    notes = {input_id: present([row(input_id=input_id)], RUN, {}, frozenset())["stories"][0]["safety_note"]
+             for input_id in ("headache", "mood", "menstrual_cramps", "cannabis", "supplements", "worked_late")}
+    assert notes["headache"].endswith("If you feel seriously unwell, contact a doctor or emergency services.")
+    assert "not a mental health assessment" in notes["mood"]
+    assert "Cycle-related changes" in notes["menstrual_cramps"]
+    assert "not a reason to drink, smoke or use more" in notes["cannabis"]
+    assert "pharmacist" in notes["supplements"]
+    assert notes["worked_late"] is None
+    assert all(note.startswith("This is an observation from your own logs, not medical advice.")
+               for note in notes.values() if note)
+    mood_link = present([row(input_id="screen_in_bed", outcome_id="mood_next",
+                             estimates=[estimate("yes", -0.8, 0.2, prior=1.0)])], RUN, {}, frozenset())
+    assert "not a mental health assessment" in mood_link["stories"][0]["safety_note"]
+    assert mood_link["general_note"] == "Patterns are observations from your own data, not medical advice."
+
+
+def test_sensitive_text_never_recommends_starting_stopping_or_changing():
+    advice = re.compile(r"\b(try|consider|should|skip|stop taking|start taking|take more|take less|"
+                        r"cut down|increase|reduce)\b", re.IGNORECASE)
+    states = [dict(), dict(stage="possible", exposed_days=30), dict(stage="no_link", estimates=[estimate("yes", 10.0, 20.0)]),
+              dict(stage="counts", suppression_reason="exposure_days_below_minimum", exposed_days=3, estimates=[]),
+              dict(stage="suppressed", suppression_reason="insufficient_variation", estimates=[]),
+              dict(stage="suppressed", suppression_reason="overlaps_with:caffeine", estimates=[])]
+    for input_id in ("usual_medication", "supplements", "pain", "fever", "mood", "menstrual_bleeding",
+                     "nicotine", "alcohol"):
+        for fields in states:
+            story = present([row(input_id=input_id, **fields)], RUN, {}, frozenset())["stories"][0]
+            texts = [story["safety_note"] or "", *(item["summary"] for item in story["findings"]),
+                     *(item["needs"] or "" for item in story["findings"])]
+            assert not any(advice.search(text) for text in texts), (input_id, fields, texts)
 
 
 def test_collecting_states_say_what_is_needed():
-    short = finding(row(stage="counts", suppression_reason="exposure_days_below_minimum",
+    short = finding(row(input_id="worked_late", stage="counts", suppression_reason="exposure_days_below_minimum",
                         exposed_days=4, comparison_days=8, estimates=[]))
     assert short["state"] == "collecting"
-    assert short["needs"] == "Needs 6 more days with nicotine and 2 more days without, each with sleep data."
+    assert short["needs"] == "Needs 6 more days you worked late and 2 more other days, each with sleep data."
     never = finding(row(stage="counts", suppression_reason="outcome_days_below_minimum", estimates=[],
                         exposed_days=0, comparison_days=0, included_dates=[],
                         excluded_days=[{"reason": "input_not_answered", "date": "x"}]))

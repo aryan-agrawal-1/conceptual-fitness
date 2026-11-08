@@ -113,14 +113,19 @@ def test_patterns_endpoint_states_holds_and_hides_turned_off_inputs(session, aut
     client = TestClient(app)
     assert client.get("/insights/patterns").status_code == 401
     assert client.get("/insights/patterns", headers=headers).json() == dict(
-        status="not_started", run=None, stories=[], new_findings=0)
+        status="not_started", run=None, stories=[], new_findings=0,
+        general_note="Patterns are observations from your own data, not medical advice.")
     seed(session, user)
     run_analysis(session, user.id, trigger="edit", today=TODAY)
     body = client.get("/insights/patterns", headers=headers).json()
     assert body["status"] == "ready" and body["run"]["current"] is True
     assert body["run"]["next_checkpoint_day"] == 60
     medication = next(item for item in findings(body) if item["pair_id"] == "usual_medication:rhr:d1")
-    assert medication["state"] == "held" and medication["effects"] == []
+    assert medication["state"] != "held"
+    medication_story = next(story for story in body["stories"] if story["input_id"] == "usual_medication")
+    assert "Do not start, stop or change a medication" in medication_story["safety_note"]
+    assert body["run"]["algorithm_version"] == "behaviour_engine_v3"
+    assert body["run"]["safety_version"] == "behaviour_safety_v1"
     alcohol = next(story for story in body["stories"] if story["input_id"] == "alcohol")
     assert alcohol["state"] in ("early_signal", "possible") and alcohol["unseen"] is True
     assert body["new_findings"] >= 1

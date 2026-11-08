@@ -12,6 +12,7 @@ from app.models import (
 )
 from app.services.behaviour_analysis import latest_runs
 from app.services.behaviour_presentation import FINDING_STATES, present
+from app.services.behaviour_safety import GENERAL_NOTE
 from app.services.behaviour_series import turned_off_inputs
 
 
@@ -59,7 +60,7 @@ def get_patterns(session: DbSession, user: CurrentUser) -> dict:
         status = "failed" if latest_attempt is not None and latest_attempt.status == "failed" else "not_started"
         if latest_attempt is not None and latest_attempt.status == "running":
             status = "running"
-        return dict(status=status, run=None, stories=[], new_findings=0)
+        return dict(status=status, run=None, stories=[], new_findings=0, general_note=GENERAL_NOTE)
     state = session.get(JournalState, user.id)
     hidden = hidden_inputs(session, user.id)
     presented = present(visible_rows(session, run, hidden), run, views_for(session, user.id), hidden)
@@ -69,7 +70,7 @@ def get_patterns(session: DbSession, user: CurrentUser) -> dict:
         status="ready",
         run=dict(
             id=run.id, algorithm_version=run.algorithm_version, map_version=run.map_version,
-            presentation_version=presented["version"],
+            presentation_version=presented["version"], safety_version=presented["safety_version"],
             window_start=run.window_start, window_end=run.window_end,
             tracking_day=run.tracking_day, checkpoint_day=run.checkpoint_day,
             next_checkpoint_day=presented["next_checkpoint_day"],
@@ -79,6 +80,7 @@ def get_patterns(session: DbSession, user: CurrentUser) -> dict:
         ),
         stories=presented["stories"],
         new_findings=presented["new_findings"],
+        general_note=presented["general_note"],
     )
 
 
