@@ -14,6 +14,7 @@ from app.services.behaviour_presentation import (
     BETTER_DIRECTION, FINDING_STATES, NEUTRAL_BANDS, OUTCOME_NOUNS, OUTCOME_SUBJECTS, UNIT_TEXT, direction_word,
     number,
 )
+from app.services.behaviour_safety import note_for
 from app.services.behaviour_series import detail_value, load_user_data, outcome_for, sick_days
 
 
@@ -210,7 +211,7 @@ def result_for(experiment, values, adherence):
     outcome_id = experiment.outcome_id
     noun = OUTCOME_NOUNS[outcome_id]
     unit = UNIT_TEXT.get(BEHAVIOUR_MAP_V1.outcome(outcome_id).unit, "")
-    notes = [ONE_PERSON_TEXT,
+    notes = [*filter(None, [note_for(experiment.input_id)]), ONE_PERSON_TEXT,
              f"The first {WASHOUT_DAYS} days of each week, sick days and days without {noun} data were left out."]
     if adherence["followed_days"] < adherence["change_days"]:
         notes.append("Change days where the change was not logged were still counted as change days, "

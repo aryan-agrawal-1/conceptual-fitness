@@ -187,6 +187,7 @@ def test_completed_experiment_compares_change_and_usual_days(session) -> None:
     assert round(result["difference"], 1) == -5.0 and result["benefit"] == "helps"
     assert result["summary"] == "Overnight resting heart rate was about 5 bpm lower on change days than on usual days."
     assert any("one person's result" in note for note in result["notes"])
+    assert result["notes"][0].endswith("It is not a reason to drink, smoke or use more.")
     assert body["adherence"]["change_days"] == 14 and body["adherence"]["logged_days"] == 14
     assert body["adherence"]["followed_days"] < 14
     assert result["adherence_text"].startswith("You logged doing the change on ")
