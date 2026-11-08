@@ -6,7 +6,7 @@ Schema version `1.0` supports:
 
 - `health_and_workouts.json`: imported source records, normalized health measurements and rollups, sleep, workouts, workout provenance, exercises, sets, favorites, routines, and match decisions.
 - `journal.json`: user-entered daily context and journal/tag records.
-- `derived_insights.json`: summaries, personal baselines, scores with algorithm versions and inputs, strain targets, behaviour pattern runs and results with their algorithm and map versions, and daily briefs cached on the exporting device.
+- `derived_insights.json`: summaries, personal baselines, scores with algorithm versions and inputs, strain targets, behaviour pattern runs and results with their algorithm and map versions, when each pattern was first shown, and daily briefs cached on the exporting device.
 - `personalization.json`: account identity, profile and preferences, safe Google Health connection metadata, and import coverage/provenance.
 
 Every category file has this shape:

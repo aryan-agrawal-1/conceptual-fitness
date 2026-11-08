@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
-from app.models import BehaviourAnalysisResult, BehaviourAnalysisRun, JournalState
+from app.models import BehaviourAnalysisResult, BehaviourAnalysisRun, BehaviourPatternView, JournalState
 from app.services.behaviour_map import BEHAVIOUR_MAP_V1, BehaviourMap, Pair, tested_pairs
 from app.services.behaviour_series import (
     RATING_OUTCOMES, TRAINING_INPUTS, Exposure, UserData, exposure_for, load_user_data,
@@ -22,7 +22,7 @@ from app.services.health_dates import get_or_create_profile, local_date_for_prof
 
 logger = logging.getLogger(__name__)
 
-ALGORITHM_VERSION = "behaviour_engine_v1"
+ALGORITHM_VERSION = "behaviour_engine_v2"
 WINDOW_DAYS = 90
 CHECKPOINT_DAYS = 30
 CONSISTENT_DAYS = 90
@@ -257,6 +257,7 @@ def analyse_pair(context: Context, pair: Pair, stratum: str, window_end: date,
         result.stage, result.suppression_reason = "suppressed", str(error)
         return result
     outcome_sd = float(np.std(design.outcome)) or 1.0
+    outcome_mean = float(np.mean(design.outcome))
     for index, name in zip(design.tested, (design.columns[item] for item in design.tested)):
         position = design.tested.index(index)
         column = np.array([line[index] for line in design.matrix])
@@ -266,6 +267,7 @@ def analyse_pair(context: Context, pair: Pair, stratum: str, window_end: date,
         result.estimates.append(dict(
             term=name, estimate=estimate, standard_error=error,
             interval=list(fit.intervals[position]), shrunk=shrink(estimate, error, prior),
+            prior_sd=prior, exposure_sd=float(column.std()), outcome_mean=outcome_mean,
             unit=context.mapping.outcome(pair.outcome_id).unit,
         ))
     result.p_value, result.tested = fit.p_value, True
@@ -351,9 +353,20 @@ def build_context(data: UserData, mapping: BehaviourMap) -> Context:
     )
 
 
+def capped_after_seen(result: PairResult, stage: str, seen_stage: str | None) -> str:
+    if seen_stage not in STAGE_ORDER or stage not in STAGE_ORDER:
+        return stage
+    if STAGE_ORDER.index(stage) > STAGE_ORDER.index(seen_stage):
+        result.labels = sorted(set(result.labels) | {"capped_after_seen"})
+        return seen_stage
+    return stage
+
+
 def analyse(data: UserData, *, tracking_day: int, checkpoint: bool,
             previous: dict[tuple[str, str], dict], earlier: dict[tuple[str, str], dict],
-            mapping: BehaviourMap = BEHAVIOUR_MAP_V1) -> list[PairResult]:
+            mapping: BehaviourMap = BEHAVIOUR_MAP_V1,
+            seen: dict[tuple[str, str], str] | None = None) -> list[PairResult]:
+    seen = seen or {}
     context = build_context(data, mapping)
     overlap = overlaps(context)
     results = []
@@ -367,7 +380,8 @@ def analyse(data: UserData, *, tracking_day: int, checkpoint: bool,
     for result in results:
         if not result.tested:
             continue
-        fresh = assign_stage(result, tracking_day, earlier.get(result.key))
+        fresh = capped_after_seen(result, assign_stage(result, tracking_day, earlier.get(result.key)),
+                                  seen.get(result.key))
         if checkpoint:
             result.stage = fresh
         else:
@@ -399,6 +413,13 @@ def stage_lookup(session: Session, run: BehaviourAnalysisRun | None) -> dict[tup
         for row in session.scalars(select(BehaviourAnalysisResult).where(
             BehaviourAnalysisResult.run_id == run.id,
         ))
+    }
+
+
+def seen_stages(session: Session, user_id: str) -> dict[tuple[str, str], str]:
+    return {
+        (row.pair_id, row.stratum): row.stage_when_seen
+        for row in session.scalars(select(BehaviourPatternView).where(BehaviourPatternView.user_id == user_id))
     }
 
 
@@ -442,6 +463,7 @@ def run_analysis(session: Session, user_id: str, *, trigger: str, today: date | 
         results = analyse(
             data, tracking_day=tracking_day, checkpoint=is_checkpoint,
             previous=stage_lookup(session, last_checkpoint), earlier=earlier,
+            seen=seen_stages(session, user_id),
         )
     except Exception:
         run.status, run.error_code, run.completed_at = "failed", "analysis_error", utcnow()
