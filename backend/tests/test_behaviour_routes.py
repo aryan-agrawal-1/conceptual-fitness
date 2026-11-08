@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from app.main import app
 from app.models import (
-    BehaviourAnalysisResult, BehaviourAnalysisRun, DailySummary, JournalEntry, JournalPreference,
+    BehaviourAnalysisResult, BehaviourAnalysisRun, BehaviourPatternView, DailySummary, JournalEntry, JournalPreference,
     JournalState, SleepSession, User, UserProfile,
 )
 from app.services.account_export import category_specs
@@ -103,25 +103,65 @@ def test_refresh_schedule_follows_edits_weeks_and_checkpoints(session) -> None:
     assert needs_run(session, user.id, TODAY) == "edit"
 
 
+def findings(body: dict) -> list[dict]:
+    return [finding for story in body["stories"] for finding in story["findings"]]
+
+
 def test_patterns_endpoint_states_holds_and_hides_turned_off_inputs(session, auth_headers) -> None:
     user = owner(session)
     headers = auth_headers(user)
     client = TestClient(app)
     assert client.get("/insights/patterns").status_code == 401
     assert client.get("/insights/patterns", headers=headers).json() == dict(
-        status="not_started", run=None, results=[])
+        status="not_started", run=None, stories=[], new_findings=0)
     seed(session, user)
     run_analysis(session, user.id, trigger="edit", today=TODAY)
     body = client.get("/insights/patterns", headers=headers).json()
     assert body["status"] == "ready" and body["run"]["current"] is True
-    medication = next(item for item in body["results"] if item["pair_id"] == "usual_medication:rhr:d1")
-    assert medication["stage"] == "held" and medication["estimates"] == []
-    assert any(item["input_id"] == "alcohol" for item in body["results"])
+    assert body["run"]["next_checkpoint_day"] == 60
+    medication = next(item for item in findings(body) if item["pair_id"] == "usual_medication:rhr:d1")
+    assert medication["state"] == "held" and medication["effects"] == []
+    alcohol = next(story for story in body["stories"] if story["input_id"] == "alcohol")
+    assert alcohol["state"] in ("early_signal", "possible") and alcohol["unseen"] is True
+    assert body["new_findings"] >= 1
     session.add(JournalPreference(user_id=user.id, key="pin:alcohol", value=False,
                                   edited_at=datetime.now(UTC), mutation_id=str(uuid4()), revision=2))
     session.commit()
     body = client.get("/insights/patterns", headers=headers).json()
-    assert not any(item["input_id"] == "alcohol" for item in body["results"])
+    assert not any(story["input_id"] == "alcohol" for story in body["stories"])
+    assert "alcohol" not in str(body).lower()
+
+
+def test_seen_patterns_are_recorded_once_and_only_for_findings(session, auth_headers) -> None:
+    user = owner(session)
+    headers = auth_headers(user)
+    client = TestClient(app)
+    assert client.post("/insights/patterns/seen", headers=headers, json={"patterns": []}).json() == dict(recorded=0)
+    seed(session, user)
+    run_analysis(session, user.id, trigger="edit", today=TODAY)
+    body = client.get("/insights/patterns", headers=headers).json()
+    keys = [dict(pair_id=item["pair_id"], stratum=item["stratum"]) for item in findings(body)]
+    shown = [item for item in findings(body) if item["unseen"]]
+    first = client.post("/insights/patterns/seen", headers=headers, json={"patterns": keys}).json()
+    assert first == dict(recorded=len(shown))
+    assert client.post("/insights/patterns/seen", headers=headers, json={"patterns": keys}).json() == dict(recorded=0)
+    body = client.get("/insights/patterns", headers=headers).json()
+    assert body["new_findings"] == 0 and not any(item["unseen"] for item in findings(body))
+    views = session.scalars(select(BehaviourPatternView)).all()
+    assert {view.pair_id for view in views} == {item["pair_id"] for item in shown}
+
+
+def test_confidence_does_not_rise_after_a_pattern_was_seen(session) -> None:
+    user = owner(session)
+    seed(session, user, days=75)
+    session.add(BehaviourPatternView(user_id=user.id, pair_id="alcohol:rhr:d1", stratum="all",
+                                     stage_when_seen="preliminary", checkpoint_day=30))
+    session.commit()
+    run = run_analysis(session, user.id, trigger="edit", today=TODAY)
+    stored = session.scalars(select(BehaviourAnalysisResult).where(
+        BehaviourAnalysisResult.run_id == run.id, BehaviourAnalysisResult.pair_id == "alcohol:rhr:d1",
+    )).one()
+    assert stored.stage == "preliminary" and "capped_after_seen" in stored.labels
 
 
 def test_failed_runs_are_recorded_without_losing_the_last_good_result(session, auth_headers, monkeypatch) -> None:
@@ -180,8 +220,11 @@ def test_results_are_exported_and_erased_with_the_account(session) -> None:
     seed(session, user)
     run_analysis(session, user.id, trigger="edit", today=TODAY)
     models = {spec.model for spec in category_specs("derived_insights")}
-    assert {BehaviourAnalysisRun, BehaviourAnalysisResult} <= models
+    assert {BehaviourAnalysisRun, BehaviourAnalysisResult, BehaviourPatternView} <= models
+    session.add(BehaviourPatternView(user_id=user.id, pair_id="alcohol:rhr:d1", stage_when_seen="possible"))
+    session.commit()
     session.delete(session.get(User, user.id))
     session.commit()
     assert session.scalar(select(func.count()).select_from(BehaviourAnalysisResult)) == 0
     assert session.scalar(select(func.count()).select_from(BehaviourAnalysisRun)) == 0
+    assert session.scalar(select(func.count()).select_from(BehaviourPatternView)) == 0
