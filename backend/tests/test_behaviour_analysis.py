@@ -81,8 +81,7 @@ def test_every_journal_input_is_mapped_and_blocked_pairs_are_never_tested() -> N
     assert not tested & blocked
     assert all(("readiness" != outcome or item not in FORMULA_INPUTS) for item, outcome in tested)
     assert all(outcome != "sleep_score" for _, outcome in tested)
-    assert {item.id for item in BEHAVIOUR_MAP_V1.inputs if item.held_reason} == {
-        "usual_medication", "supplements"}
+    assert not any(item.held_reason for item in BEHAVIOUR_MAP_V1.inputs)
     assert not {item for item, _ in tested} & {"feeling_unwell", "fever", "daily_note"}
     assert len({pair.id for pair in BEHAVIOUR_MAP_V1.pairs}) == len(BEHAVIOUR_MAP_V1.pairs)
 
@@ -295,9 +294,9 @@ def test_too_few_days_show_counts_and_early_results_need_the_stricter_bar() -> N
     assert result.suppression_reason == "exposure_days_below_minimum"
 
 
-def test_medication_results_are_calculated_but_held() -> None:
+def test_medication_results_are_calculated_and_not_held() -> None:
     fixture = Fixture(seed=16)
     for day in fixture.data.days():
         fixture.answer(day, "usual_medication", fixture.rng.random() < 0.6)
     result = results_for(fixture.finish())[("usual_medication:rhr:d1", "all")]
-    assert result.tested and result.held_reason == "awaiting_safety_wording"
+    assert result.tested and result.held_reason is None
