@@ -26,11 +26,12 @@ final class PatternsTests: XCTestCase {
     }
 
     private func story(_ input: String, state: String, findings: [String], unseen: Bool = false,
-                       neverLogged: Bool = false) -> String {
+                       neverLogged: Bool = false, safetyNote: String = "null") -> String {
         """
         {"id": "\(input):all", "input_id": "\(input)", "stratum": "all", "title": "\(input.capitalized)",
          "tier": "main", "state": "\(state)", "state_label": "Label", "headline": "Headline",
-         "findings": [\(findings.joined(separator: ","))], "unseen": \(unseen), "never_logged": \(neverLogged)}
+         "findings": [\(findings.joined(separator: ","))], "unseen": \(unseen), "never_logged": \(neverLogged),
+         "safety_note": \(safetyNote)}
         """
     }
 
@@ -66,6 +67,24 @@ final class PatternsTests: XCTestCase {
         XCTAssertEqual(sections.checked.map(\.inputId), ["caffeine"])
         XCTAssertEqual(sections.waiting.map(\.inputId), ["sauna"])
         XCTAssertEqual(sections.notLogged.map(\.inputId), ["nicotine"])
+    }
+
+    func testSafetyNotesDecodeAndStayOptional() throws {
+        let note = "This is an observation from your own logs, not medical advice."
+        let data = Data("""
+        {"status": "not_started", "run": null, "stories": [], "new_findings": 0,
+         "general_note": "Patterns are observations from your own data, not medical advice."}
+        """.utf8)
+        let empty = try JournalCoding.decoder().decode(PatternsResponse.self, from: data)
+        XCTAssertEqual(empty.generalNote, "Patterns are observations from your own data, not medical advice.")
+        let response = try JournalCoding.decoder().decode(PatternsResponse.self, from: payload([
+            story("usual_medication", state: "possible", findings: [finding("usual_medication:rhr:d1", state: "possible")],
+                  safetyNote: "\"\(note)\""),
+            story("sauna", state: "collecting", findings: [finding("sauna:rhr:d1", state: "collecting")]),
+        ]))
+        XCTAssertEqual(response.stories[0].safetyNote, note)
+        XCTAssertNil(response.stories[1].safetyNote)
+        XCTAssertNil(response.generalNote)
     }
 
     func testEveryBackendStateDecodes() throws {

@@ -169,7 +169,8 @@ struct PatternsView: View {
                     Task { await store.load() }
                 }
             }
-            board(PatternBoard(response.stories, group: selectedGroup.wrappedValue), run: run)
+            board(PatternBoard(response.stories, group: selectedGroup.wrappedValue), run: run,
+                  note: response.generalNote)
             library(response.stories)
         } else if let response = store.response {
             if response.status == "failed" {
@@ -195,7 +196,7 @@ struct PatternsView: View {
             .accessibilityIdentifier("patterns.retry")
     }
 
-    @ViewBuilder private func board(_ board: PatternBoard, run: PatternRun) -> some View {
+    @ViewBuilder private func board(_ board: PatternBoard, run: PatternRun, note: String?) -> some View {
         if board.cards.isEmpty && board.neutral.isEmpty {
             Text("No links with \(board.group.noun) yet. The next check is on day \(run.nextCheckpointDay).")
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -224,7 +225,8 @@ struct PatternsView: View {
                 .panelSurface(cornerRadius: 22)
             }
         }
-        Text("Associations in your own data, not proof of cause. Tap a row for the details.")
+        Text([note, "Associations in your own data, not proof of cause. Tap a row for the details."]
+            .compactMap { $0 }.joined(separator: " "))
             .font(.caption).foregroundStyle(.secondary)
             .padding(.horizontal, 4)
     }
@@ -680,6 +682,9 @@ struct PatternStoryView: View {
                         .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 150 } action: {
                             heroBehindToolbar = $0
                         }
+                    if let note = story.safetyNote {
+                        PatternSafetyNote(text: note)
+                    }
                     ForEach(groups, id: \.0) { group, findings in
                         VStack(alignment: .leading, spacing: 16) {
                             Text(group.title).font(.headline).accessibilityAddTraits(.isHeader)
@@ -720,6 +725,27 @@ struct PatternStoryView: View {
         .padding(.top, 8)
         .padding(.bottom, PatternsSky.bottomFade - 8)
         .background { PatternsSky(group: group ?? lead.group).padding(.horizontal, -16) }
+    }
+}
+
+struct PatternSafetyNote: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(HealthTheme.color(for: .activity))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 22)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Safety note. \(text)")
+        .accessibilityIdentifier("patterns.safetyNote")
     }
 }
 
