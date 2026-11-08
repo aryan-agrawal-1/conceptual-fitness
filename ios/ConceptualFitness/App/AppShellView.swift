@@ -16,6 +16,7 @@ struct AppShellView: View {
     @StateObject private var profileStore: ProfileStore
     @StateObject private var journalStore: JournalStore
     @StateObject private var journalReminders: JournalReminders
+    @StateObject private var patternsStore: PatternsStore
     @ObservedObject private var notificationRouter = JournalNotificationRouter.shared
     @State private var checkIn: JournalCheckInSelection?
 
@@ -29,6 +30,7 @@ struct AppShellView: View {
         _profileStore = StateObject(wrappedValue: ProfileStore(authStore: authStore))
         _journalStore = StateObject(wrappedValue: JournalStore(authStore: authStore, userID: session.user.id))
         _journalReminders = StateObject(wrappedValue: JournalReminders(userID: session.user.id))
+        _patternsStore = StateObject(wrappedValue: PatternsStore(authStore: authStore))
         #if DEBUG
         _selectedTab = State(
             initialValue: ProcessInfo.processInfo.arguments.contains("-OpenInsightsTab")
@@ -75,7 +77,8 @@ struct AppShellView: View {
             .tag(AppTab.fitness)
 
             NavigationStack(path: $insightsPath) {
-                JournalView(store: journalStore, reminders: journalReminders, onboardedAt: onboardedAt)
+                InsightsView(journal: journalStore, reminders: journalReminders, patterns: patternsStore,
+                             onboardedAt: onboardedAt)
                 .withAppDestinations(client: appClient)
             }
             .tabItem { AppTab.insights.label }

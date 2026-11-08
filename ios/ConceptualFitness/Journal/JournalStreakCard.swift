@@ -309,19 +309,15 @@ struct JournalStreakHero<Calendar: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Insights")
-                    .font(.system(.title, design: .rounded, weight: .bold))
-                    .accessibilityAddTraits(.isHeader)
-                    .fadesNearTop(from: 52, to: 26)
-                    .padding(.top, -44)
-                details.fadesNearTop(from: 105, to: 65)
+                details.fadesNearTop(from: 122, to: 96)
+                    .padding(.top, 10)
                 if let action = summary.action {
-                    actionButton(action).fadesNearTop(from: 105, to: 65)
+                    actionButton(action).fadesNearTop(from: 122, to: 96)
                 }
             }
             .foregroundStyle(.white)
             calendar
-                .fadesNearTop(from: 105, to: 65)
+                .fadesNearTop(from: 122, to: 96)
                 .padding(.top, 2)
         }
         .padding(.bottom, lit ? 38 : 54)
@@ -499,7 +495,7 @@ struct JournalStreakMark: View {
     }
 }
 
-private extension View {
+extension View {
     func fadesNearTop(from start: CGFloat, to end: CGFloat) -> some View {
         visualEffect { content, proxy in
             let progress = (proxy.frame(in: .global).minY - end) / (start - end)
