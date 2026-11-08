@@ -169,6 +169,7 @@ struct PatternsView: View {
                     Task { await store.load() }
                 }
             }
+            ExperimentSummaryCard()
             board(PatternBoard(response.stories, group: selectedGroup.wrappedValue), run: run)
             library(response.stories)
         } else if let response = store.response {
@@ -680,6 +681,7 @@ struct PatternStoryView: View {
                         .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 150 } action: {
                             heroBehindToolbar = $0
                         }
+                    ExperimentTestSection(story: story)
                     ForEach(groups, id: \.0) { group, findings in
                         VStack(alignment: .leading, spacing: 16) {
                             Text(group.title).font(.headline).accessibilityAddTraits(.isHeader)
