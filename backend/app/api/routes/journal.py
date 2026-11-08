@@ -10,8 +10,9 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DbSession
 from app.db.sealed_json import JournalTextUnavailable
 from app.journal import JournalCatalogue
-from app.models import JournalEntry
+from app.models import JournalEntry, JournalState
 from app.services.journal_catalogue import CATALOGUES
+from app.tasks.behaviour_analysis import enqueue_behaviour_analysis
 from app.services.journal_storage import (
     CLOCK_AHEAD, JournalAccountUnavailable, JournalSync, apply_sync, changes, entry_payload,
 )
@@ -59,7 +60,12 @@ def get_catalogue(user: CurrentUser, version: int = Query(default=1, ge=1)) -> J
 @router.post("/sync")
 def synchronize(payload: JournalSync, session: DbSession, user: CurrentUser) -> dict:
     try:
-        return apply_sync(session, user.id, payload)
+        state = session.get(JournalState, user.id)
+        before = state.analysis_revision if state else 0
+        result = apply_sync(session, user.id, payload)
+        if result["analysis_revision"] != before:
+            enqueue_behaviour_analysis(user.id, "edit")
+        return result
     except JournalAccountUnavailable:
         session.rollback()
         raise
