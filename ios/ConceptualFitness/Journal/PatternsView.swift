@@ -169,6 +169,7 @@ struct PatternsView: View {
                     Task { await store.load() }
                 }
             }
+            ExperimentSummaryCard()
             board(PatternBoard(response.stories, group: selectedGroup.wrappedValue), run: run,
                   note: response.generalNote)
             library(response.stories)
@@ -685,6 +686,7 @@ struct PatternStoryView: View {
                     if let note = story.safetyNote {
                         PatternSafetyNote(text: note)
                     }
+                    ExperimentTestSection(story: story)
                     ForEach(groups, id: \.0) { group, findings in
                         VStack(alignment: .leading, spacing: 16) {
                             Text(group.title).font(.headline).accessibilityAddTraits(.isHeader)

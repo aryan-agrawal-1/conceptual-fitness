@@ -938,6 +938,27 @@ class BehaviourPatternView(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class BehaviourExperiment(Base):
+    __tablename__ = "behaviour_experiments"
+    __table_args__ = (
+        Index("ix_behaviour_experiments_user_started", "user_id", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    behaviour_id: Mapped[str] = mapped_column(String(40))
+    input_id: Mapped[str] = mapped_column(String(80))
+    pair_id: Mapped[str] = mapped_column(String(120))
+    outcome_id: Mapped[str] = mapped_column(String(80))
+    stratum: Mapped[str] = mapped_column(String(24), default="all")
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class DailyContext(Base):
     __tablename__ = "daily_contexts"
     __table_args__ = (

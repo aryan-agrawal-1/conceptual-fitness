@@ -75,6 +75,7 @@
 		010000000000000000000035 /* AnatomeMuscleMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000038 /* AnatomeMuscleMapView.swift */; };
 		010000000000000000000036 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000039 /* WebKit.framework */; };
 		01000000000000000000F001 /* JournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000F001 /* JournalTests.swift */; };
+		01000000000000000E0E0E04 /* ExperimentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000E0E0E04 /* ExperimentTests.swift */; };
 		0100000000000000000AF001 /* PatternsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000AF001 /* PatternsTests.swift */; };
 		01000000000000000000004D /* JournalLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004D /* JournalLedgerRow.swift */; };
 		01000000000000000000004E /* JournalCheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004E /* JournalCheckIn.swift */; };
@@ -82,6 +83,9 @@
 		010000000000000000000F01 /* JournalStreakCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000F01 /* JournalStreakCard.swift */; };
 		0100000000000000000A0F04 /* PatternsHero.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000A0F04 /* PatternsHero.swift */; };
 		0100000000000000000A0F03 /* PatternsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000A0F03 /* PatternsView.swift */; };
+		01000000000000000E0E0E01 /* ExperimentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000E0E0E01 /* ExperimentModels.swift */; };
+		01000000000000000E0E0E02 /* ExperimentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000E0E0E02 /* ExperimentStore.swift */; };
+		01000000000000000E0E0E03 /* ExperimentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000E0E0E03 /* ExperimentViews.swift */; };
 		0100000000000000000A0F02 /* PatternsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000A0F02 /* PatternsStore.swift */; };
 		0100000000000000000A0F01 /* PatternsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000A0F01 /* PatternsModels.swift */; };
 		01000000000000000000004F /* JournalCheckInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004F /* JournalCheckInView.swift */; };
@@ -162,6 +166,7 @@
 		020000000000000000000038 /* AnatomeMuscleMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnatomeMuscleMapView.swift; sourceTree = "<group>"; };
 		020000000000000000000039 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		02000000000000000000F001 /* JournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalTests.swift; sourceTree = "<group>"; };
+		02000000000000000E0E0E04 /* ExperimentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperimentTests.swift; sourceTree = "<group>"; };
 		0200000000000000000AF001 /* PatternsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatternsTests.swift; sourceTree = "<group>"; };
 		02000000000000000000F002 /* ConceptualFitnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConceptualFitnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		02000000000000000000004D /* JournalLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalLedgerRow.swift; sourceTree = "<group>"; };
@@ -170,6 +175,9 @@
 		020000000000000000000F01 /* JournalStreakCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalStreakCard.swift; sourceTree = "<group>"; };
 		0200000000000000000A0F04 /* PatternsHero.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/PatternsHero.swift; sourceTree = "<group>"; };
 		0200000000000000000A0F03 /* PatternsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/PatternsView.swift; sourceTree = "<group>"; };
+		02000000000000000E0E0E01 /* ExperimentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/ExperimentModels.swift; sourceTree = "<group>"; };
+		02000000000000000E0E0E02 /* ExperimentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/ExperimentStore.swift; sourceTree = "<group>"; };
+		02000000000000000E0E0E03 /* ExperimentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/ExperimentViews.swift; sourceTree = "<group>"; };
 		0200000000000000000A0F02 /* PatternsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/PatternsStore.swift; sourceTree = "<group>"; };
 		0200000000000000000A0F01 /* PatternsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/PatternsModels.swift; sourceTree = "<group>"; };
 		02000000000000000000004F /* JournalCheckInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalCheckInView.swift; sourceTree = "<group>"; };
@@ -225,6 +233,9 @@
 				0200000000000000000A0F04 /* PatternsHero.swift */,
 				0200000000000000000A0F03 /* PatternsView.swift */,
 				0200000000000000000A0F02 /* PatternsStore.swift */,
+				02000000000000000E0E0E03 /* ExperimentViews.swift */,
+				02000000000000000E0E0E02 /* ExperimentStore.swift */,
+				02000000000000000E0E0E01 /* ExperimentModels.swift */,
 				0200000000000000000A0F01 /* PatternsModels.swift */,
 				02000000000000000000004F /* JournalCheckInView.swift */,
 				020000000000000000000050 /* JournalCalendarView.swift */,
@@ -367,6 +378,7 @@
 			children = (
 				02000000000000000000F001 /* JournalTests.swift */,
 				0200000000000000000AF001 /* PatternsTests.swift */,
+				02000000000000000E0E0E04 /* ExperimentTests.swift */,
 			);
 			path = ConceptualFitnessTests;
 			sourceTree = "<group>";
@@ -482,6 +494,9 @@
 				0100000000000000000A0F04 /* PatternsHero.swift in Sources */,
 				0100000000000000000A0F03 /* PatternsView.swift in Sources */,
 				0100000000000000000A0F02 /* PatternsStore.swift in Sources */,
+				01000000000000000E0E0E03 /* ExperimentViews.swift in Sources */,
+				01000000000000000E0E0E02 /* ExperimentStore.swift in Sources */,
+				01000000000000000E0E0E01 /* ExperimentModels.swift in Sources */,
 				0100000000000000000A0F01 /* PatternsModels.swift in Sources */,
 				01000000000000000000004F /* JournalCheckInView.swift in Sources */,
 				010000000000000000000050 /* JournalCalendarView.swift in Sources */,
@@ -553,6 +568,7 @@
 			files = (
 				01000000000000000000F001 /* JournalTests.swift in Sources */,
 				0100000000000000000AF001 /* PatternsTests.swift in Sources */,
+				01000000000000000E0E0E04 /* ExperimentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

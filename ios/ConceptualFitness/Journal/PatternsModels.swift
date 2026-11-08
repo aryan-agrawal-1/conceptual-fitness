@@ -84,6 +84,7 @@ struct PatternFinding: Decodable, Equatable, Identifiable {
     let limitations: [String]
     let unseen: Bool
     let neverLogged: Bool
+    let testable: Bool?
 
     var id: String { "\(pairId)/\(stratum)" }
 }

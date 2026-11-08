@@ -41,6 +41,7 @@ struct JournalCheckInView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selection: JournalEditorSelection?
     @State private var answeringReminder = false
+    @EnvironmentObject private var experiments: ExperimentStore
 
     private var logged: Int { JournalDailyList.loggedCount(store.snapshot, day: day) }
     private var completed: Bool { JournalDayIndex(store.snapshot, today: store.today).isCompleted(day) }
@@ -106,7 +107,12 @@ struct JournalCheckInView: View {
 
     private var rows: some View {
         VStack(alignment: .leading, spacing: 12) {
-            let screen = screen
+            let experiment = ExperimentPin.behaviour(experiments.experiment, snapshot: store.snapshot, day: day)
+            let screen = experiment.map { ExperimentPin.screen(screen, removing: $0.behaviour.id) } ?? screen
+            if let experiment {
+                ExperimentCheckInPin(plan: experiment.plan)
+                panel([experiment.behaviour])
+            }
             if !screen.pinned.isEmpty { panel(screen.pinned) }
             ForEach(screen.privatePinned) { section in
                 JournalSectionTitle(title: section.title)
