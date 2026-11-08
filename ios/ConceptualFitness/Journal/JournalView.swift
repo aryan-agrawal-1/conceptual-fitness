@@ -10,6 +10,8 @@ struct JournalView: View {
     @ObservedObject var store: JournalStore
     @ObservedObject var reminders: JournalReminders
     var onboardedAt: Date?
+    @Binding var segment: InsightsSegment
+    @ObservedObject var patterns: PatternsStore
     @State private var selectedDay: String?
     @State private var selection: JournalEditorSelection?
     @State private var checkIn: JournalCheckInSelection?
@@ -31,6 +33,9 @@ struct JournalView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if isReady {
                         streakHero
+                        if patterns.newFindings > 0 {
+                            PatternsBanner(count: patterns.newFindings) { segment = .patterns }
+                        }
                         dayHeader
                         dayNote
                         syncStatus
@@ -44,11 +49,8 @@ struct JournalView: View {
             }
             .modifier(TopScrollEdgeVisibility(hidden: fireBehindScrollEdge))
         }
-        .navigationTitle("Insights")
-        .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
             if isReady {
                 if #available(iOS 26.0, *) {
                     toolbarButtons.sharedBackgroundVisibility(fireBehindToolbar ? .hidden : .automatic)

@@ -923,6 +923,21 @@ class BehaviourAnalysisResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class BehaviourPatternView(Base):
+    __tablename__ = "behaviour_pattern_views"
+    __table_args__ = (
+        UniqueConstraint("user_id", "pair_id", "stratum", name="uq_behaviour_pattern_views_pair"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    pair_id: Mapped[str] = mapped_column(String(120))
+    stratum: Mapped[str] = mapped_column(String(24), default="all")
+    stage_when_seen: Mapped[str] = mapped_column(String(32))
+    checkpoint_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class DailyContext(Base):
     __tablename__ = "daily_contexts"
     __table_args__ = (
