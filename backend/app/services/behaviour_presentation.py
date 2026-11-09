@@ -9,9 +9,13 @@ from app.services.behaviour_analysis import (
     CHECKPOINT_DAYS, FINDING_DAYS, MIN_OUTCOME_DAYS, MIN_RECENT_OUTCOME_DAYS, PRELIMINARY_DAYS, RECENT_DAYS,
 )
 from app.services.behaviour_map import BEHAVIOUR_MAP_V1, OUTCOMES
+from app.services.behaviour_safety import (
+    FAVOURABLE_LIMITATIONS, GENERAL_NOTE, MEDICATION_LIMITATION, MENTAL_HEALTH_OUTCOMES, SAFETY_VERSION,
+    SENSITIVE_INPUTS, category_for, held_back_text, note_for,
+)
 
 
-PRESENTATION_VERSION = "behaviour_presentation_v2"
+PRESENTATION_VERSION = "behaviour_presentation_v3"
 FINDING_STATES = ("early_signal", "possible", "consistent")
 STATE_PRIORITY = ("consistent", "possible", "early_signal", "inconclusive", "neutral", "overlapping",
                   "insufficient_variation", "collecting", "held")
@@ -186,9 +190,17 @@ def impact_for(row, state, effects):
     return dict(
         percent=effect["percent"], low=effect["percent_low"], high=effect["percent_high"],
         caption=BAND_CAPTIONS.get(effect["term"]) or effect["per"] or None,
-        benefit="none" if state == "neutral" else ("helps" if benefit > 0 else "hurts"),
+        benefit=benefit_label(row, state, benefit),
         better=BETTER_DIRECTION.get(row.outcome_id, 1),
     )
+
+
+def benefit_label(row, state, benefit):
+    if state == "neutral":
+        return "none"
+    if category_for(row.input_id) == "medication":
+        return "unrated"
+    return "helps" if benefit > 0 else "hurts"
 
 
 def direction_word(outcome_id, value):
@@ -266,8 +278,18 @@ def state_for(row, effects):
     if state is None:
         return "collecting", None
     if "favourable_needs_review" in row.labels and looks_favourable(row, effects):
-        return "held", "favourable_needs_review"
+        if not favourable_review_for(row).get("passed"):
+            return "held", "favourable_checks_failed"
     return state, None
+
+
+def favourable_review_for(row):
+    return (row.checks or {}).get("favourable_review") or {}
+
+
+def shown_favourable(row, state, effects):
+    return (state in FINDING_STATES and "favourable_needs_review" in row.labels
+            and looks_favourable(row, effects))
 
 
 def outcome_day_counts(row, window_end):
@@ -280,10 +302,28 @@ def never_answered(row):
     return not row.included_dates and all(item["reason"] == "input_not_answered" for item in row.excluded_days)
 
 
+def sensitive_needs(row, state, next_checkpoint):
+    if state == "collecting" and row.stage == "awaiting_checkpoint":
+        return f"Your first result for this appears at the day {next_checkpoint} check."
+    if state == "collecting":
+        return "Needs more days with both an answer and a reading before a comparison can be made."
+    if state == "insufficient_variation":
+        return "Your answers barely changed, so there is nothing to compare yet."
+    if state == "overlapping":
+        return "These are usually logged on the same days, so they can't be told apart yet."
+    if state == "inconclusive":
+        return "More days would narrow the range."
+    if state in ("early_signal", "possible") and min(row.exposed_days, row.comparison_days) < FINDING_DAYS:
+        return "A firmer result needs more days of data."
+    return None
+
+
 def needs_for(row, state, words, run, next_checkpoint):
     noun = OUTCOME_NOUNS[row.outcome_id]
     if state == "collecting" and never_answered(row):
         return f"Log {words.label.lower()} in your journal to start comparing it with {noun}."
+    if row.input_id in SENSITIVE_INPUTS:
+        return sensitive_needs(row, state, next_checkpoint)
     if state == "collecting" and row.stage == "awaiting_checkpoint":
         return f"Your first result for this appears at the day {next_checkpoint} check."
     if state == "collecting" and row.suppression_reason == "exposure_days_below_minimum":
@@ -314,10 +354,10 @@ def needs_for(row, state, words, run, next_checkpoint):
 
 def summary_for(row, state, held_reason, words, effects, hidden):
     noun = OUTCOME_NOUNS[row.outcome_id]
-    if state == "held" and held_reason == "favourable_needs_review":
-        return "This result needs an extra safety review before it can be shown."
+    if state == "held" and held_reason == "favourable_checks_failed":
+        return held_back_text(row.input_id, favourable_review_for(row).get("failed") or ["unavailable"])
     if state == "held":
-        return "Results for medication and supplements will appear once their safety wording is ready."
+        return "This result is not shown yet."
     if state == "collecting":
         return f"Still collecting days to compare {words.label.lower()} with {noun}."
     if state == "insufficient_variation":
@@ -347,6 +387,10 @@ def adjustments_for(row):
 def limitations_for(row, state, words, effects, seen_at, hidden):
     noun = OUTCOME_NOUNS[row.outcome_id]
     items = ["This is an association in your own data. It does not show that one causes the other."]
+    if shown_favourable(row, state, effects) and row.input_id in FAVOURABLE_LIMITATIONS:
+        items.append(FAVOURABLE_LIMITATIONS[row.input_id])
+    if category_for(row.input_id) == "medication":
+        items.append(MEDICATION_LIMITATION)
     if row.tier == "exploratory":
         items.append("Exploratory: there is little published research on this link, so treat it with extra care.")
     if state == "early_signal":
@@ -437,9 +481,13 @@ def present(rows, run, views, hidden):
             state=best["state"], state_label=best["state_label"], headline=best["summary"],
             findings=findings, unseen=any(finding["unseen"] for finding in findings),
             never_logged=all(finding["never_logged"] for finding in findings),
+            safety_note=note_for(input_id, [finding["outcome_id"] for finding in findings
+                                            if finding["state"] in FINDING_STATES
+                                            and finding["outcome_id"] in MENTAL_HEALTH_OUTCOMES]),
         ))
     stories.sort(key=lambda story: (STATE_PRIORITY.index(story["state"]), story["title"]))
     return dict(
-        version=PRESENTATION_VERSION, next_checkpoint_day=upcoming,
+        version=PRESENTATION_VERSION, safety_version=SAFETY_VERSION, general_note=GENERAL_NOTE,
+        next_checkpoint_day=upcoming,
         new_findings=sum(story["unseen"] for story in stories), stories=stories,
     )

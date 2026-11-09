@@ -81,8 +81,8 @@ def test_every_journal_input_is_mapped_and_blocked_pairs_are_never_tested() -> N
     assert not tested & blocked
     assert all(("readiness" != outcome or item not in FORMULA_INPUTS) for item, outcome in tested)
     assert all(outcome != "sleep_score" for _, outcome in tested)
-    assert {item.id for item in BEHAVIOUR_MAP_V1.inputs if item.held_reason} == {
-        "usual_medication", "supplements"}
+    assert not any(item.held_reason for item in BEHAVIOUR_MAP_V1.inputs)
+    assert {item.id for item in BEHAVIOUR_MAP_V1.inputs if item.favourable_review} == {"alcohol", "nicotine"}
     assert not {item for item, _ in tested} & {"feeling_unwell", "fever", "daily_note"}
     assert len({pair.id for pair in BEHAVIOUR_MAP_V1.pairs}) == len(BEHAVIOUR_MAP_V1.pairs)
 
@@ -295,9 +295,37 @@ def test_too_few_days_show_counts_and_early_results_need_the_stricter_bar() -> N
     assert result.suppression_reason == "exposure_days_below_minimum"
 
 
-def test_medication_results_are_calculated_but_held() -> None:
+def test_medication_results_are_calculated_and_not_held() -> None:
     fixture = Fixture(seed=16)
     for day in fixture.data.days():
         fixture.answer(day, "usual_medication", fixture.rng.random() < 0.6)
     result = results_for(fixture.finish())[("usual_medication:rhr:d1", "all")]
-    assert result.tested and result.held_reason == "awaiting_safety_wording"
+    assert result.tested and result.held_reason is None
+    assert "favourable_review" not in result.checks
+
+
+def nicotine_fixture(seed: int, already_higher: bool) -> UserData:
+    fixture = Fixture(seed=seed)
+    for day in fixture.data.days():
+        used = fixture.rng.random() < 0.4
+        fixture.answer(day, "nicotine", used)
+        if used:
+            fixture.hrv[day + timedelta(days=1)] += 12
+            if already_higher:
+                fixture.hrv[day] += 12
+    return fixture.finish()
+
+
+def test_favourable_looking_nicotine_passes_the_extra_checks_when_nothing_came_before() -> None:
+    result = results_for(nicotine_fixture(31, already_higher=False))[("nicotine:hrv:d1", "all")]
+    assert term(result, "yes")["estimate"] > 0
+    review = result.checks["favourable_review"]
+    assert review == dict(passed=True, failed=[], weekend_adjusted=True)
+    assert result.checks["before_exposure"]["status"] == "fitted"
+
+
+def test_favourable_looking_nicotine_fails_when_the_outcome_was_already_higher_before() -> None:
+    result = results_for(nicotine_fixture(32, already_higher=True))[("nicotine:hrv:d1", "all")]
+    assert term(result, "yes")["estimate"] > 0
+    review = result.checks["favourable_review"]
+    assert review["passed"] is False and "before_exposure" in review["failed"]

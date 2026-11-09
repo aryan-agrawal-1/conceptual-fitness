@@ -22,7 +22,7 @@ from app.services.health_dates import get_or_create_profile, local_date_for_prof
 
 logger = logging.getLogger(__name__)
 
-ALGORITHM_VERSION = "behaviour_engine_v2"
+ALGORITHM_VERSION = "behaviour_engine_v3"
 WINDOW_DAYS = 90
 CHECKPOINT_DAYS = 30
 CONSISTENT_DAYS = 90
@@ -283,8 +283,38 @@ def analyse_pair(context: Context, pair: Pair, stratum: str, window_end: date,
             result.labels.append("may_run_both_ways")
     for lag in pair.sensitivity_lags:
         result.checks[f"d{lag}_sensitivity"] = alternative(context, pair, stratum, lag)
+    if definition.favourable_review:
+        before = result.checks.get("reverse") or alternative(context, pair, stratum, 0, reverse=True)
+        result.checks["before_exposure"] = before
+        result.checks["favourable_review"] = favourable_review(design, fit, before,
+                                                               result.checks["without_sick_day_removal"])
     result.labels = sorted(set(result.labels))
     return result
+
+
+def stable_against(fit, other):
+    if other.get("status") != "fitted" or len(other["estimates"]) != len(fit.estimates):
+        return None
+    return all(np.sign(main) == np.sign(value) and abs(main - value) <= 1.96 * error
+               for main, value, error in zip(fit.estimates, other["estimates"], fit.standard_errors))
+
+
+def favourable_review(design, fit, before, without_sick):
+    failed = []
+    if before.get("status") != "fitted" or before.get("p_value") is None:
+        failed.append("unavailable")
+    elif before["p_value"] < REVERSE_CHECK_P:
+        failed.append("before_exposure")
+    stable = stable_against(fit, without_sick)
+    if stable is None:
+        failed.append("unavailable")
+    elif not stable:
+        failed.append("sick_days")
+    weekend_adjusted = "journal_weekend_night" in design.columns or len(
+        {day.weekday() in (4, 5) for day in design.days}) < 2
+    if not weekend_adjusted:
+        failed.append("weekend")
+    return dict(passed=not failed, failed=sorted(set(failed)), weekend_adjusted=weekend_adjusted)
 
 
 def alternative(context: Context, pair: Pair, stratum: str, lag: int, **options) -> dict:

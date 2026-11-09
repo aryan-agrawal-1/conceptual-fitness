@@ -34,6 +34,7 @@ struct PatternsResponse: Decodable, Equatable {
     let run: PatternRun?
     let stories: [PatternStory]
     let newFindings: Int
+    var generalNote: String? = nil
 }
 
 struct PatternRun: Decodable, Equatable {
@@ -60,6 +61,7 @@ struct PatternStory: Decodable, Equatable, Identifiable {
     let findings: [PatternFinding]
     let unseen: Bool
     let neverLogged: Bool
+    var safetyNote: String? = nil
 }
 
 struct PatternFinding: Decodable, Equatable, Identifiable {
@@ -82,6 +84,7 @@ struct PatternFinding: Decodable, Equatable, Identifiable {
     let limitations: [String]
     let unseen: Bool
     let neverLogged: Bool
+    let testable: Bool?
 
     var id: String { "\(pairId)/\(stratum)" }
 }
@@ -132,6 +135,7 @@ struct PatternImpact: Decodable, Equatable {
 
     var helps: Bool { benefit == "helps" }
     var isNeutral: Bool { benefit == "none" }
+    var isUnrated: Bool { benefit == "unrated" }
 
     func scaled(_ value: Double) -> Double { value * Double(better) }
 

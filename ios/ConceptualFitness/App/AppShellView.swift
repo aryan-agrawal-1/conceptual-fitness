@@ -17,6 +17,7 @@ struct AppShellView: View {
     @StateObject private var journalStore: JournalStore
     @StateObject private var journalReminders: JournalReminders
     @StateObject private var patternsStore: PatternsStore
+    @StateObject private var experimentStore: ExperimentStore
     @ObservedObject private var notificationRouter = JournalNotificationRouter.shared
     @State private var checkIn: JournalCheckInSelection?
 
@@ -31,6 +32,7 @@ struct AppShellView: View {
         _journalStore = StateObject(wrappedValue: JournalStore(authStore: authStore, userID: session.user.id))
         _journalReminders = StateObject(wrappedValue: JournalReminders(userID: session.user.id))
         _patternsStore = StateObject(wrappedValue: PatternsStore(authStore: authStore))
+        _experimentStore = StateObject(wrappedValue: ExperimentStore(authStore: authStore))
         #if DEBUG
         _selectedTab = State(
             initialValue: ProcessInfo.processInfo.arguments.contains("-OpenInsightsTab")
@@ -89,6 +91,8 @@ struct AppShellView: View {
         .sheet(item: $checkIn) {
             JournalCheckInView(store: journalStore, reminders: journalReminders, day: $0.day)
         }
+        .environmentObject(experimentStore)
+        .task { await experimentStore.load() }
         .task { await profileStore.load() }
         .task {
             if UIApplication.shared.applicationState == .active { await journalStore.synchronize() }

@@ -15,6 +15,7 @@ from app.core.security import utcnow
 from app.models import (
     BehaviourAnalysisResult,
     BehaviourAnalysisRun,
+    BehaviourExperiment,
     BehaviourPatternView,
     DailyBaseline,
     DailyContext,
@@ -223,7 +224,7 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
         return tuple(
             TableExport(model, by_user(model))
             for model in (DailySummary, DailyBaseline, DailyScore, StrainTarget,
-                          BehaviourAnalysisRun, BehaviourAnalysisResult, BehaviourPatternView)
+                          BehaviourAnalysisRun, BehaviourAnalysisResult, BehaviourPatternView, BehaviourExperiment)
         )
     return (
         *(TableExport(model, by_user(model)) for model in (
