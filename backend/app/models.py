@@ -400,6 +400,7 @@ class MetricSample(Base):
     unit: Mapped[str] = mapped_column(String(32))
     source_platform: Mapped[str | None] = mapped_column(String(80), nullable=True)
     source_device: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    measurement_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 class MetricInterval(Base):
@@ -788,6 +789,9 @@ class DailySummary(Base):
     distance_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
     resting_heart_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     heart_rate_variability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heart_rate_variability_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    hrv_rmssd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hrv_sdnn: Mapped[float | None] = mapped_column(Float, nullable=True)
     oxygen_saturation: Mapped[float | None] = mapped_column(Float, nullable=True)
     respiratory_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     sleep_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)

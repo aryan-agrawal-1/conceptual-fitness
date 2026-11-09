@@ -60,7 +60,8 @@ def seed(session, user: User, days: int = 45) -> None:
         ))
         session.add(DailySummary(user_id=user.id, summary_date=wake,
                                  resting_heart_rate=55 + rng.normal(0, 1.5) + (3 if drank else 0),
-                                 heart_rate_variability=60 + rng.normal(0, 5)))
+                                 heart_rate_variability=(hrv := 60 + rng.normal(0, 5)),
+                                 heart_rate_variability_type="rmssd", hrv_rmssd=hrv))
     session.add(JournalPreference(user_id=user.id, key="opt_in:substances", value=True,
                                   edited_at=datetime.now(UTC), mutation_id=str(uuid4()), revision=1))
     session.add(JournalPreference(user_id=user.id, key="opt_in:medication_supplements", value=True,

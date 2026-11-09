@@ -59,7 +59,8 @@ def night(session, user, day, rhr) -> None:
         minutes_asleep=420, minutes_in_sleep_period=480, is_main_sleep=True,
     ))
     session.add(DailySummary(user_id=user.id, summary_date=wake, resting_heart_rate=rhr,
-                             heart_rate_variability=60))
+                             heart_rate_variability=60, heart_rate_variability_type="rmssd",
+                             hrv_rmssd=60))
 
 
 def seed_history(session, user, days=45) -> None:

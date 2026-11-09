@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models import DailyScore, DailySummary, JournalEntry, JournalPreference, SleepSession, Workout
 from app.services.behaviour_map import BehaviourMap, InputDefinition, Pair
 from app.services.health_dates import get_or_create_profile, timezone_for_profile
+from app.services.hrv import hrv_value_of_type
 from app.services.journal_catalogue import CATALOGUE_V1, SENSITIVE_CATEGORIES
 from app.services.score_helpers import READINESS_SCORE_VERSION, STRAIN_LOAD_VERSION
 from app.services.strain_scores import _is_strength_workout
@@ -150,13 +151,16 @@ def load_user_data(session: Session, user_id: str, start: date, end: date) -> Us
             minutes=float(sleep.minutes_asleep) if sleep.minutes_asleep is not None else None,
             efficiency=efficiency,
         )
-    for summary in session.scalars(select(DailySummary).where(
+    summaries = session.scalars(select(DailySummary).where(
         DailySummary.user_id == user_id, DailySummary.summary_date.between(lookback, lookahead),
-    )):
+    ).order_by(DailySummary.summary_date)).all()
+    hrv_type = next((item.heart_rate_variability_type for item in reversed(summaries)
+                     if item.heart_rate_variability_type), None)
+    for summary in summaries:
         if summary.resting_heart_rate is not None:
             data.rhr[summary.summary_date] = float(summary.resting_heart_rate)
-        if summary.heart_rate_variability is not None:
-            data.hrv[summary.summary_date] = float(summary.heart_rate_variability)
+        if (hrv := hrv_value_of_type(summary, hrv_type)) is not None:
+            data.hrv[summary.summary_date] = float(hrv)
         if summary.steps is not None:
             data.steps[summary.summary_date] = float(summary.steps)
     for score in session.scalars(select(DailyScore).where(

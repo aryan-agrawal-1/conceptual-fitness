@@ -123,6 +123,8 @@ def _add_summary(
             distance_meters=5200,
             resting_heart_rate=rhr,
             heart_rate_variability=hrv,
+            heart_rate_variability_type="rmssd",
+            hrv_rmssd=hrv,
             oxygen_saturation=97,
             respiratory_rate=14.5,
             sleep_minutes=sleep_minutes,
