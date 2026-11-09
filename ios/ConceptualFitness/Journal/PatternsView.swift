@@ -292,6 +292,7 @@ private struct PatternsScrollEdge: ViewModifier {
 extension PatternImpact {
     var tint: Color {
         if isNeutral { return HealthTheme.color(for: .neutral) }
+        if isUnrated { return Color.secondary }
         return helps ? Self.helpsTint : Self.hurtsTint
     }
 
@@ -378,8 +379,13 @@ struct PatternImpactCardView: View {
     private func accessibilityText(_ row: PatternImpactRow) -> String {
         let size = Int(abs(row.impact.percent).rounded())
         let change = row.impact.isNeutral ? "no clear change"
-            : "\(size) percent \(row.impact.percent < 0 ? "lower" : "higher") than usual, \(row.impact.helps ? "better" : "worse")"
+            : "\(size) percent \(row.impact.percent < 0 ? "lower" : "higher") than usual\(verdict(row.impact))"
         return "\(row.finding.outcomeShortLabel), \(change)"
+    }
+
+    private func verdict(_ impact: PatternImpact) -> String {
+        if impact.isUnrated { return "" }
+        return impact.helps ? ", better" : ", worse"
     }
 }
 

@@ -190,9 +190,17 @@ def impact_for(row, state, effects):
     return dict(
         percent=effect["percent"], low=effect["percent_low"], high=effect["percent_high"],
         caption=BAND_CAPTIONS.get(effect["term"]) or effect["per"] or None,
-        benefit="none" if state == "neutral" else ("helps" if benefit > 0 else "hurts"),
+        benefit=benefit_label(row, state, benefit),
         better=BETTER_DIRECTION.get(row.outcome_id, 1),
     )
+
+
+def benefit_label(row, state, benefit):
+    if state == "neutral":
+        return "none"
+    if category_for(row.input_id) == "medication":
+        return "unrated"
+    return "helps" if benefit > 0 else "hurts"
 
 
 def direction_word(outcome_id, value):

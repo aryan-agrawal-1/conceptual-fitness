@@ -135,6 +135,7 @@ struct PatternImpact: Decodable, Equatable {
 
     var helps: Bool { benefit == "helps" }
     var isNeutral: Bool { benefit == "none" }
+    var isUnrated: Bool { benefit == "unrated" }
 
     func scaled(_ value: Double) -> Double { value * Double(better) }
 

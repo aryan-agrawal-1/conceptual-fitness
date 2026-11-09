@@ -122,10 +122,11 @@ def test_held_results_show_no_numbers():
 
 
 def test_medication_results_are_shown_with_wording_that_never_suggests_changing_treatment():
-    story = present([row(input_id="usual_medication", estimates=[estimate("yes", 25.0, 6.0)])],
-                    RUN, {}, frozenset())["stories"][0]
+    taken = row(input_id="usual_medication", estimates=[estimate("yes", 25.0, 6.0, outcome_mean=420.0)])
+    story = present([taken], RUN, {}, frozenset())["stories"][0]
     result = story["findings"][0]
     assert result["state"] == "early_signal" and result["effects"]
+    assert result["impact"]["benefit"] == "unrated"
     assert "Do not start, stop or change a medication or supplement" in story["safety_note"]
     assert "Only whether you took it is recorded, not what it was or how much." in result["limitations"]
     flat = finding(row(input_id="supplements", stage="suppressed", suppression_reason="insufficient_variation",
