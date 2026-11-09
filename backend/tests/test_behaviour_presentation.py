@@ -111,8 +111,7 @@ def test_beneficial_looking_alcohol_that_passes_the_checks_is_shown_with_the_rev
     assert result["state"] == "early_signal" and result["effects"]
     assert any(text.startswith("People often drink on days that are already going well") for text in
                result["limitations"])
-    assert story["safety_note"] == ("This is an observation from your own logs, not medical advice. "
-                                    "It is not a reason to drink, smoke or use more.")
+    assert story["safety_note"] == "This is an observation from your own logs, not medical advice."
 
 
 def test_held_results_show_no_numbers():
@@ -143,7 +142,7 @@ def test_every_sensitive_category_gets_a_fixed_note_and_others_get_none():
     assert notes["headache"].endswith("If you feel seriously unwell, contact a doctor or emergency services.")
     assert "not a mental health assessment" in notes["mood"]
     assert "Cycle-related changes" in notes["menstrual_cramps"]
-    assert "not a reason to drink, smoke or use more" in notes["cannabis"]
+    assert notes["cannabis"] == "This is an observation from your own logs, not medical advice."
     assert "pharmacist" in notes["supplements"]
     assert notes["worked_late"] is None
     assert all(note.startswith("This is an observation from your own logs, not medical advice.")

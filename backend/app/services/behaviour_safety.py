@@ -22,7 +22,7 @@ SAFETY_NOTES = dict(
                   "your daily life, talk to a doctor.",
     reproductive=f"{NOT_ADVICE} Cycle-related changes vary between people and from month to month. "
                  "Talk to a doctor about any symptoms that worry you.",
-    substance=f"{NOT_ADVICE} It is not a reason to drink, smoke or use more.",
+    substance=NOT_ADVICE,
 )
 SUBSTANCE_NOUNS = dict(alcohol="drank", nicotine="used nicotine")
 FAVOURABLE_LIMITATIONS = dict(
