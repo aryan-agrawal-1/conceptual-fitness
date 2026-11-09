@@ -45,7 +45,7 @@ struct AppShellView: View {
         _syncCoordinator = StateObject(
             wrappedValue: AppSyncCoordinator(
                 client: DashboardAPIClient(authStore: authStore),
-                initialLastSyncAt: session.googleHealth.lastSyncAt
+                initialLastSyncAt: session.healthConnection.lastSyncAt
             )
         )
     }
@@ -168,7 +168,8 @@ struct AppShellView: View {
 extension AuthSession {
     static let preview = AuthSession(
         user: AuthUser(id: "preview", email: "preview@example.com", firstName: "Aryan", lastName: nil),
-        googleHealth: GoogleHealthStatus(
+        healthConnection: HealthConnectionStatus(
+            provider: "google_health",
             status: .connected,
             connectedAt: "2026-06-22T08:00:00Z",
             lastSyncAt: "2026-06-22T18:42:00Z",

@@ -77,6 +77,7 @@
 		01000000000000000000F001 /* JournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000F001 /* JournalTests.swift */; };
 		01000000000000000E0E0E04 /* ExperimentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000E0E0E04 /* ExperimentTests.swift */; };
 		0100000000000000000AF001 /* PatternsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000AF001 /* PatternsTests.swift */; };
+		0100000000000000000AF003 /* AuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000AF003 /* AuthTests.swift */; };
 		01000000000000000000004D /* JournalLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004D /* JournalLedgerRow.swift */; };
 		01000000000000000000004E /* JournalCheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004E /* JournalCheckIn.swift */; };
 		01000000000000000000007F /* JournalStreak.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000007F /* JournalStreak.swift */; };
@@ -168,6 +169,7 @@
 		02000000000000000000F001 /* JournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalTests.swift; sourceTree = "<group>"; };
 		02000000000000000E0E0E04 /* ExperimentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperimentTests.swift; sourceTree = "<group>"; };
 		0200000000000000000AF001 /* PatternsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatternsTests.swift; sourceTree = "<group>"; };
+		0200000000000000000AF003 /* AuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTests.swift; sourceTree = "<group>"; };
 		02000000000000000000F002 /* ConceptualFitnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConceptualFitnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		02000000000000000000004D /* JournalLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalLedgerRow.swift; sourceTree = "<group>"; };
 		02000000000000000000004E /* JournalCheckIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalCheckIn.swift; sourceTree = "<group>"; };
@@ -378,6 +380,7 @@
 			children = (
 				02000000000000000000F001 /* JournalTests.swift */,
 				0200000000000000000AF001 /* PatternsTests.swift */,
+				0200000000000000000AF003 /* AuthTests.swift */,
 				02000000000000000E0E0E04 /* ExperimentTests.swift */,
 			);
 			path = ConceptualFitnessTests;
@@ -568,6 +571,7 @@
 			files = (
 				01000000000000000000F001 /* JournalTests.swift in Sources */,
 				0100000000000000000AF001 /* PatternsTests.swift in Sources */,
+				0100000000000000000AF003 /* AuthTests.swift in Sources */,
 				01000000000000000E0E0E04 /* ExperimentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
