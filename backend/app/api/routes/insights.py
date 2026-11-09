@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -12,7 +12,8 @@ from app.models import (
 )
 from app.services.behaviour_analysis import latest_runs
 from app.services.behaviour_experiments import (
-    ExperimentError, active_experiment, describe, mark_testable, start_experiment, stop_experiment,
+    ExperimentError, active_experiment, describe, mark_testable, restartable, setup_for, start_experiment,
+    stop_experiment,
 )
 from app.services.behaviour_presentation import FINDING_STATES, present
 from app.services.behaviour_safety import GENERAL_NOTE
@@ -37,9 +38,13 @@ class SeenPatterns(BaseModel):
 class StartExperiment(BaseModel):
     pair_id: str = Field(max_length=120)
     stratum: str = Field(default="all", max_length=24)
+    behaviour_id: str | None = Field(default=None, max_length=40)
 
 
-EXPERIMENT_ERROR_STATUS = dict(not_testable=409, experiment_active=409, no_active_experiment=404)
+EXPERIMENT_ERROR_STATUS = dict(
+    not_testable=409, experiment_active=409, no_active_experiment=404, change_not_available=409,
+    nothing_to_restart=404,
+)
 
 
 def hidden_inputs(session, user_id):
@@ -147,6 +152,19 @@ def get_experiment(session: DbSession, user: CurrentUser) -> dict:
     return dict(experiment=describe(session, active_experiment(session, user.id, today), today))
 
 
+@router.get("/experiment/setup")
+def get_experiment_setup(session: DbSession, user: CurrentUser, pair_id: str = Query(max_length=120),
+                         stratum: str = Query(default="all", max_length=24)) -> dict:
+    today = local_today(session, user.id)
+    finding = shown_finding(session, user.id, pair_id, stratum)
+    try:
+        if finding is None:
+            raise ExperimentError("not_testable")
+        return dict(setup=setup_for(session, user.id, finding, today))
+    except ExperimentError as error:
+        raise experiment_failure(error, "setup") from error
+
+
 @router.post("/experiment")
 def post_experiment(payload: StartExperiment, session: DbSession, user: CurrentUser) -> dict:
     today = local_today(session, user.id)
@@ -154,9 +172,23 @@ def post_experiment(payload: StartExperiment, session: DbSession, user: CurrentU
     try:
         if finding is None:
             raise ExperimentError("not_testable")
-        experiment = start_experiment(session, user.id, finding, today)
+        experiment = start_experiment(session, user.id, finding, today, payload.behaviour_id)
     except ExperimentError as error:
         raise experiment_failure(error, "start") from error
+    return dict(experiment=describe(session, experiment, today))
+
+
+@router.post("/experiment/restart")
+def post_experiment_restart(session: DbSession, user: CurrentUser) -> dict:
+    today = local_today(session, user.id)
+    try:
+        previous = restartable(session, user.id, today)
+        finding = shown_finding(session, user.id, previous.pair_id, previous.stratum)
+        if finding is None:
+            raise ExperimentError("not_testable")
+        experiment = start_experiment(session, user.id, finding, today, previous.behaviour_id, restart=True)
+    except ExperimentError as error:
+        raise experiment_failure(error, "restart") from error
     return dict(experiment=describe(session, experiment, today))
 
 

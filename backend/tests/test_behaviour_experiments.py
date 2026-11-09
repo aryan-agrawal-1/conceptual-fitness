@@ -15,8 +15,10 @@ from app.models import (
 from app.services.account_export import category_specs
 from app.services.behaviour_analysis import run_analysis
 from app.services.behaviour_experiments import (
-    TESTABLE_BEHAVIOURS, ExperimentBehaviour, active_experiment, describe, followed_change, schedule,
+    TESTABLE_BEHAVIOURS, TESTABLE_BY_ID, ExperimentBehaviour, active_experiment, describe, first_slip,
+    followed_by_day, followed_change, options_for, schedule, usual_for,
 )
+from app.services.behaviour_series import load_user_data
 from app.services.behaviour_series import Answer
 
 
@@ -74,6 +76,10 @@ def seed_history(session, user, days=45) -> None:
     session.commit()
 
 
+def drinks(units):
+    return {"amount": {"type": "quantity", "value": units * 10.0, "unit": "mL_ethanol"}}
+
+
 def experiment_for(session, user, start, pair_id="alcohol:rhr:d1", behaviour="alcohol_free",
                    input_id="alcohol") -> BehaviourExperiment:
     experiment = BehaviourExperiment(
@@ -102,7 +108,7 @@ def test_only_reviewed_habit_reductions_are_testable() -> None:
     forbidden = {"nicotine", "cannabis", "other_substances", "usual_medication", "supplements",
                  "menstrual_bleeding", "menstrual_cramps", "fever", "feeling_unwell", "headache", "pain"}
     assert not inputs & forbidden
-    assert all(item.change_text.startswith("Experiment day: no ") for item in TESTABLE_BEHAVIOURS)
+    assert all(item.change_text.startswith("Change week: no ") for item in TESTABLE_BEHAVIOURS)
 
 
 def test_caffeine_change_counts_only_when_finished_before_two() -> None:
@@ -112,7 +118,7 @@ def test_caffeine_change_counts_only_when_finished_before_two() -> None:
     late = Answer(1.0, {"last_use": {"type": "time", "value": "16:00"}}, stamp)
     assert followed_change(behaviour, early) is True
     assert followed_change(behaviour, late) is False
-    assert followed_change(behaviour, Answer(1.0, {}, stamp)) is False
+    assert followed_change(behaviour, Answer(1.0, {}, stamp)) is None
     assert followed_change(behaviour, Answer(0.0, {}, stamp)) is True
     assert followed_change(behaviour, None) is None
 
@@ -145,10 +151,10 @@ def test_start_and_stop_an_experiment(session, auth_headers) -> None:
     started = client.post("/insights/experiment", headers=headers, json=dict(pair_id="alcohol:rhr:d1"))
     assert started.status_code == 200
     experiment = started.json()["experiment"]
-    assert experiment["status"] == "active" and experiment["title"] == "Alcohol-free days"
+    assert experiment["status"] == "active" and experiment["title"] == "Alcohol-free weeks"
     assert len(experiment["days"]) == 28 and experiment["result"] is None
-    assert experiment["days"][0]["plan"] == "Experiment day: no alcohol"
-    assert experiment["days"][7]["plan"] == "Usual day: do what you normally do"
+    assert experiment["days"][0]["plan"] == "Change week: no alcohol"
+    assert experiment["days"][7]["plan"] == "Usual week: do what you normally do"
     again = client.post("/insights/experiment", headers=headers, json=dict(pair_id="alcohol:rhr:d1"))
     assert again.status_code == 409 and again.json()["detail"]["code"] == "experiment_active"
     current = client.get("/insights/experiment", headers=headers).json()["experiment"]
@@ -163,7 +169,7 @@ def test_today_plan_follows_the_schedule(session) -> None:
     experiment = experiment_for(session, user, TODAY - timedelta(days=8))
     body = describe(session, experiment, TODAY)
     assert body["today"]["kind"] == "usual" and body["today"]["washout"] is True
-    assert body["today"]["plan"] == "Usual day: do what you normally do"
+    assert body["today"]["plan"] == "Usual week: do what you normally do"
     assert body["today"]["day_number"] == 9
 
 
@@ -174,8 +180,8 @@ def test_completed_experiment_compares_change_and_usual_days(session) -> None:
     for item in schedule(experiment):
         day = item["date"]
         change = item["kind"] == "change"
-        if change:
-            session.add(entry(user, day, "alcohol", day.day % 5 == 0))
+        if change and day.day % 5:
+            session.add(entry(user, day, "alcohol", False))
         night(session, user, day, 52.0 if change else 57.0)
     session.commit()
     current = active_experiment(session, user.id, TODAY)
@@ -185,12 +191,12 @@ def test_completed_experiment_compares_change_and_usual_days(session) -> None:
     assert result["status"] == "ready"
     assert (result["change_days"], result["usual_days"]) == (10, 10)
     assert round(result["difference"], 1) == -5.0 and result["benefit"] == "helps"
-    assert result["summary"] == "Overnight resting heart rate was about 5 bpm lower on change days than on usual days."
+    assert result["summary"] == "Overnight resting heart rate was about 5 bpm lower in change weeks than in usual weeks."
     assert any("one person's result" in note for note in result["notes"])
-    assert result["notes"][0].endswith("It is not a reason to drink, smoke or use more.")
-    assert body["adherence"]["change_days"] == 14 and body["adherence"]["logged_days"] == 14
-    assert body["adherence"]["followed_days"] < 14
-    assert result["adherence_text"].startswith("You logged doing the change on ")
+    assert result["notes"][0] == "This is an observation from your own logs, not medical advice."
+    assert body["adherence"]["change_days"] == 14 and body["adherence"]["logged_days"] < 14
+    assert body["adherence"]["followed_days"] == body["adherence"]["logged_days"]
+    assert result["adherence_text"].startswith("You logged sticking to the change on ")
     assert body["today"] is None
 
 
@@ -222,3 +228,123 @@ def test_experiments_are_exported_and_erased_with_the_account(session) -> None:
     session.delete(session.get(User, user.id))
     session.commit()
     assert session.scalar(select(func.count()).select_from(BehaviourExperiment)) == 0
+
+
+def test_alcohol_budgets_add_up_across_each_change_week(session) -> None:
+    user = owner(session)
+    experiment = experiment_for(session, user, TODAY - timedelta(days=20), behaviour="alcohol_week_4")
+    start = experiment.start_date
+    for offset, units in ((0, 2), (3, 2), (5, None), (14, 3), (16, 2)):
+        session.add(entry(user, start + timedelta(days=offset), "alcohol", True, drinks(units) if units else {}))
+    session.add(entry(user, start + timedelta(days=1), "alcohol", False))
+    session.add(entry(user, start + timedelta(days=8), "alcohol", True, drinks(9)))
+    session.commit()
+    budget = TESTABLE_BY_ID["alcohol_week_4"]
+    data = load_user_data(session, user.id, start, TODAY)
+    followed = followed_by_day(budget, experiment, data, TODAY)
+    assert followed[start] is True and followed[start + timedelta(days=3)] is True
+    assert followed[start + timedelta(days=1)] is True and followed[start + timedelta(days=5)] is None
+    assert start + timedelta(days=8) not in followed
+    assert followed[start + timedelta(days=14)] is True and followed[start + timedelta(days=16)] is False
+    assert first_slip(session, experiment, TODAY) == start + timedelta(days=16)
+
+
+def test_usual_week_comes_from_the_last_four_weeks_of_logs(session) -> None:
+    user = owner(session)
+    for offset in range(1, 29):
+        day = TODAY - timedelta(days=offset)
+        drank = offset % 2 == 0
+        session.add(entry(user, day, "alcohol", drank, drinks(3) if drank else None))
+        if offset <= 14:
+            session.add(entry(user, day, "caffeine", True, {"last_use": {"type": "time", "value": "13:00"}}))
+    session.add(entry(user, TODAY - timedelta(days=40), "alcohol", True, drinks(9)))
+    session.commit()
+    alcohol = usual_for(session, user.id, "alcohol", TODAY)
+    assert (alcohol["logged_days"], alcohol["used_days"], alcohol["typical_units"]) == (28, 14, 3.0)
+    assert alcohol["lines"] == ["You drank about 4 days a week.", "Averaging around 10 units per week in total."]
+    assert [item.id for item in options_for("alcohol", alcohol)] == ["alcohol_free", "alcohol_week_7",
+                                                                    "alcohol_week_10"]
+    caffeine = usual_for(session, user.id, "caffeine", TODAY)
+    assert caffeine["lines"][1] == "Your last caffeine was usually around 1pm."
+    assert [item.id for item in options_for("caffeine", caffeine)] == ["caffeine_free", "caffeine_before_noon"]
+    screens = usual_for(session, user.id, "screen_in_bed", TODAY)
+    assert screens["logged_days"] == 0 and "no usual to show yet" in screens["lines"][0]
+    assert [item.id for item in options_for("screen_in_bed", screens)] == ["no_screens_in_bed"]
+
+
+def test_only_reductions_are_offered_as_changes() -> None:
+    for item in TESTABLE_BEHAVIOURS:
+        assert item.change_text.startswith("Change week: no ")
+        assert "change day" not in item.detail.lower()
+    assert all(item.weekly_units is None or item.weekly_units <= 14 for item in TESTABLE_BEHAVIOURS)
+    heavy = dict(weekly_units=30.0, typical_units=6.0, typical_last_use=None)
+    assert [item.id for item in options_for("alcohol", heavy)] == ["alcohol_free", "alcohol_week_10",
+                                                                  "alcohol_week_14"]
+    light = dict(weekly_units=3.0, typical_units=3.0, typical_last_use=None)
+    assert [item.id for item in options_for("alcohol", light)] == ["alcohol_free"]
+
+
+def test_setup_and_start_with_a_chosen_change(session, auth_headers) -> None:
+    user = owner(session)
+    headers = auth_headers(user)
+    client = TestClient(app)
+    seed_history(session, user)
+    run_analysis(session, user.id, trigger="edit", today=TODAY)
+    setup = client.get("/insights/experiment/setup", headers=headers,
+                       params=dict(pair_id="alcohol:rhr:d1")).json()["setup"]
+    offered = [option["id"] for option in setup["options"]]
+    assert offered[0] == "alcohol_free" and len(offered) == 3
+    assert all(TESTABLE_BY_ID[item].weekly_units < setup["usual"]["weekly_units"] for item in offered[1:])
+    assert setup["usual"]["typical_units"] == 4.0
+    assert setup["safety_note"] == "This is an observation from your own logs, not medical advice."
+    tomorrow = (datetime.now(UTC).date() + timedelta(days=1)).isoformat()
+    assert setup["start_date"] == tomorrow and setup["weeks"] == 4
+    refused = client.get("/insights/experiment/setup", headers=headers,
+                         params=dict(pair_id="usual_medication:rhr:d1"))
+    assert refused.status_code == 409
+    wrong = client.post("/insights/experiment", headers=headers,
+                        json=dict(pair_id="alcohol:rhr:d1",
+                                  behaviour_id=next(f"alcohol_week_{units}" for units in (4, 7, 10, 14)
+                                                    if f"alcohol_week_{units}" not in offered)))
+    assert wrong.status_code == 409 and wrong.json()["detail"]["code"] == "change_not_available"
+    other = client.post("/insights/experiment", headers=headers,
+                        json=dict(pair_id="alcohol:rhr:d1", behaviour_id="caffeine_free"))
+    assert other.json()["detail"]["code"] == "change_not_available"
+    started = client.post("/insights/experiment", headers=headers,
+                          json=dict(pair_id="alcohol:rhr:d1", behaviour_id=offered[1])).json()["experiment"]
+    units = int(TESTABLE_BY_ID[offered[1]].weekly_units)
+    assert started["behaviour_id"] == offered[1] and started["title"] == f"Up to {units} units a week"
+    assert started["days"][0]["plan"] == f"Change week: no more than {units} units of alcohol this week"
+    assert started["off_track"] is None
+
+
+def test_going_over_the_plan_in_a_change_week_ends_the_experiment_and_it_can_restart(session, auth_headers) -> None:
+    user = owner(session)
+    headers = auth_headers(user)
+    client = TestClient(app)
+    seed_history(session, user)
+    session.query(JournalEntry).filter(JournalEntry.journal_date >= TODAY - timedelta(days=10)).delete()
+    session.commit()
+    run_analysis(session, user.id, trigger="edit", today=TODAY)
+    start = TODAY - timedelta(days=9)
+    experiment_for(session, user, start, behaviour="alcohol_week_4")
+    session.add(entry(user, start, "alcohol", True, drinks(2)))
+    session.add(entry(user, start + timedelta(days=1), "alcohol", True, {}))
+    session.add(entry(user, start + timedelta(days=7), "alcohol", True, drinks(6)))
+    session.commit()
+    assert client.get("/insights/experiment", headers=headers).json()["experiment"]["status"] == "active"
+    assert client.post("/insights/experiment/restart", headers=headers).status_code == 404
+    session.add(entry(user, start + timedelta(days=2), "alcohol", True, drinks(3)))
+    session.commit()
+    ended = client.get("/insights/experiment", headers=headers).json()["experiment"]
+    assert ended["status"] == "off_track" and ended["today"] is None and ended["result"] is None
+    slip = start + timedelta(days=2)
+    assert ended["off_track"]["date"] == slip.isoformat()
+    assert ended["off_track"]["summary"] == (
+        f"On {slip.strftime('%A')} {slip.day} {slip.strftime('%B')}, in a change week, you logged more than 4 "
+        "units of alcohol for the week, so this experiment has ended.")
+    restarted = client.post("/insights/experiment/restart", headers=headers).json()["experiment"]
+    assert restarted["status"] == "active" and restarted["behaviour_id"] == "alcohol_week_4"
+    assert restarted["start_date"] == (datetime.now(UTC).date() + timedelta(days=1)).isoformat()
+    again = client.post("/insights/experiment/restart", headers=headers)
+    assert again.status_code == 404 and again.json()["detail"]["code"] == "nothing_to_restart"
