@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    GoogleAccount,
+    HealthConnection,
     RawHealthRecord,
     Workout,
     WorkoutExercise,
@@ -84,7 +84,7 @@ def find_workout_matches(
 def normalize_provider_workout(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     raw_record: RawHealthRecord,
     payload: dict[str, Any],
     start_time: datetime,

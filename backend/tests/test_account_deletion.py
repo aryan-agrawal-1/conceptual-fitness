@@ -16,7 +16,7 @@ from app.models import (
     AppSession,
     ConnectionStatus,
     DailySummary,
-    GoogleAccount,
+    HealthConnection,
     MetricSample,
     RawHealthRecord,
     SensitiveActionGrant,
@@ -41,7 +41,7 @@ from app.services.device_keys import recovery_transcript
 from app.services.sensitive_actions import (
     create_sensitive_action_challenge,
 )
-from app.services.sync import sync_google_account_range
+from app.services.sync import sync_google_health_range
 
 
 DEVICE_ID = f"deletion-test-device-{uuid4()}"
@@ -86,7 +86,7 @@ def test_schedule_revokes_access_and_can_recover_during_grace_period(session) ->
     user = User()
     session.add(user)
     session.flush()
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=user.id,
         status=ConnectionStatus.connected,
         encrypted_refresh_token=encrypt_secret("provider-token"),
@@ -177,7 +177,7 @@ def test_deletion_routes_revoke_old_access_and_issue_only_a_fresh_recovery_sessi
     user = User(email="delete@example.com")
     session.add(user)
     session.flush()
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=user.id,
         status=ConnectionStatus.connected,
         encrypted_refresh_token=encrypt_secret("provider-token"),
@@ -349,7 +349,7 @@ async def test_in_flight_sync_cannot_reconnect_a_pending_account(session) -> Non
     user = User()
     session.add(user)
     session.flush()
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=user.id,
         status=ConnectionStatus.connected,
         encrypted_refresh_token=encrypt_secret("provider-token"),
@@ -359,7 +359,7 @@ async def test_in_flight_sync_cannot_reconnect_a_pending_account(session) -> Non
     client = DeletingDuringRefreshClient(session, user)
 
     with pytest.raises(RuntimeError, match="not connected"):
-        await sync_google_account_range(
+        await sync_google_health_range(
             session,
             account=account,
             start=now.date(),
@@ -387,7 +387,7 @@ async def test_due_purge_revokes_provider_and_cascades_current_user_data() -> No
     user = User(deletion_requested_at=now - DELETION_GRACE_PERIOD, deletion_scheduled_for=now)
     session.add(user)
     session.flush()
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=user.id,
         status=ConnectionStatus.disconnected,
         encrypted_refresh_token=encrypt_secret("provider-token"),
@@ -396,7 +396,7 @@ async def test_due_purge_revokes_provider_and_cascades_current_user_data() -> No
     session.flush()
     raw = RawHealthRecord(
         user_id=user.id,
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="heart-rate",
         source_record_id="source",
         raw_json={},
@@ -430,7 +430,7 @@ async def test_due_purge_revokes_provider_and_cascades_current_user_data() -> No
     assert result == {"purged": 1, "failed": 0, "revocation_failed": 0}
     assert client.revoked == ["provider-token"]
     assert session.get(User, user.id) is None
-    for model in (UserProfile, GoogleAccount, RawHealthRecord, MetricSample, Workout, DailySummary):
+    for model in (UserProfile, HealthConnection, RawHealthRecord, MetricSample, Workout, DailySummary):
         assert session.scalar(select(model).limit(1)) is None
     session.close()
 
@@ -441,7 +441,7 @@ async def test_provider_failure_does_not_delay_local_erasure(session) -> None:
     user = User(deletion_requested_at=now - DELETION_GRACE_PERIOD, deletion_scheduled_for=now)
     session.add(user)
     session.flush()
-    session.add(GoogleAccount(
+    session.add(HealthConnection(
         user_id=user.id,
         status=ConnectionStatus.disconnected,
         encrypted_refresh_token=encrypt_secret("provider-token"),

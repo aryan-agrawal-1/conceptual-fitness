@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.security import utcnow
 from app.google_health.data_types import DATA_TYPE_SPECS, DataTypeSpec
 from app.models import (
-    GoogleAccount,
+    HealthConnection,
     MetricInterval,
     MetricSample,
     RawHealthRecord,
@@ -37,7 +37,7 @@ BULK_MEASUREMENT_DATA_TYPES = {
 def upsert_raw_and_normalized(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     data_type: str,
     data_point: dict[str, Any],
 ) -> RawHealthRecord:
@@ -61,7 +61,7 @@ def upsert_raw_and_normalized(
     if raw_record is None:
         raw_record = RawHealthRecord(
             user_id=account.user_id,
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type=data_type,
             source_record_id=source_record_id,
             raw_json=data_point,
@@ -123,14 +123,14 @@ def _normalized_exists(session: Session, raw_record_id: str, *, storage: str) ->
 def _find_raw_record(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     data_type: str,
     source_record_id: str,
     legacy_source_record_id: str,
 ) -> RawHealthRecord | None:
     raw_record = session.scalar(
         select(RawHealthRecord).where(
-            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.connection_id == account.id,
             RawHealthRecord.data_type == data_type,
             RawHealthRecord.source_record_id == source_record_id,
         )
@@ -139,7 +139,7 @@ def _find_raw_record(
         return raw_record
     return session.scalar(
         select(RawHealthRecord).where(
-            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.connection_id == account.id,
             RawHealthRecord.data_type == data_type,
             RawHealthRecord.source_record_id == legacy_source_record_id,
         )
@@ -162,7 +162,7 @@ def high_volume_records_for_points(
 def upsert_measurement_points_fast(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     data_type: str,
     points: list[dict[str, Any]],
 ) -> int:
@@ -203,7 +203,7 @@ def upsert_measurement_points_fast(
         raw_rows[source_record_id] = {
             "id": new_uuid(),
             "user_id": account.user_id,
-            "google_account_id": account.id,
+            "connection_id": account.id,
             "data_type": data_type,
             "source_record_id": source_record_id,
             "source_platform": source.get("platform"),
@@ -256,7 +256,7 @@ def upsert_measurement_points_fast(
 def _changed_raw_rows(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     data_type: str,
     rows_by_source: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
@@ -268,7 +268,7 @@ def _changed_raw_rows(
                 RawHealthRecord.id,
                 RawHealthRecord.content_hash,
             ).where(
-                RawHealthRecord.google_account_id == account.id,
+                RawHealthRecord.connection_id == account.id,
                 RawHealthRecord.data_type == data_type,
                 RawHealthRecord.source_record_id.in_(rows_by_source),
             )
@@ -308,7 +308,7 @@ def _bulk_upsert_raw_rows(session: Session, rows_by_source: dict[str, dict[str, 
 
 
 def _measurement_row(
-    account: GoogleAccount,
+    account: HealthConnection,
     spec: DataTypeSpec,
     payload: dict[str, Any],
     civil_date: date | None,
@@ -474,7 +474,7 @@ def _replace_normalized_many(
 
 def _normalize_interval(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     raw_record: RawHealthRecord,
     spec: DataTypeSpec,
     payload: dict[str, Any],
@@ -510,7 +510,7 @@ def _normalize_interval_value(spec: DataTypeSpec, payload: dict[str, Any], value
 
 def _normalize_sample(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     raw_record: RawHealthRecord,
     spec: DataTypeSpec,
     payload: dict[str, Any],
@@ -553,7 +553,7 @@ def _metric_numeric_value(spec: DataTypeSpec, payload: dict[str, Any]) -> float 
     return _extract_numeric_value(payload)
 
 
-def _sleep_wake_date(session: Session, account: GoogleAccount, payload: dict[str, Any]) -> date | None:
+def _sleep_wake_date(session: Session, account: HealthConnection, payload: dict[str, Any]) -> date | None:
     interval = payload.get("interval") or {}
     civil_end = _parse_civil_date(interval.get("civilEndTime"))
     if civil_end is not None:
@@ -572,7 +572,7 @@ def _sleep_wake_date(session: Session, account: GoogleAccount, payload: dict[str
 
 def _normalize_sleep(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     raw_record: RawHealthRecord,
     payload: dict[str, Any],
 ) -> None:
@@ -600,7 +600,7 @@ def _normalize_sleep(
 
 def _normalize_workout(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     raw_record: RawHealthRecord,
     payload: dict[str, Any],
 ) -> None:

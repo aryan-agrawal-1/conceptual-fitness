@@ -11,13 +11,15 @@ from app.models import (
     AppAuthCode,
     AppSession,
     ConnectionStatus,
-    GoogleAccount,
+    HealthConnection,
     OAuthState,
+    SignInIdentity,
     User,
 )
 from app.services.app_auth import create_app_auth_code, device_id_digest
 from app.services.device_keys import auth_code_transcript, sensitive_action_transcript
-from app.services.oauth import create_authorization_url
+from app.services.oauth import CONNECT_HEALTH, create_authorization_url
+from tests.oauth_fakes import FakeGoogleClient, state_from
 
 
 DEVICE_ID = f"test-device-{uuid4()}"
@@ -62,10 +64,10 @@ def test_normal_start_allows_unbound_simulator_session(session) -> None:
 def test_exchange_refresh_me_and_logout_flow(session) -> None:
     user = _user(session)
     session.add(
-        GoogleAccount(
+        HealthConnection(
             user_id=user.id,
-            health_user_id="health-id",
-            legacy_user_id="legacy-id",
+            external_user_id="health-id",
+            external_legacy_user_id="legacy-id",
             status=ConnectionStatus.connected,
             granted_scopes=[],
         )
@@ -93,7 +95,8 @@ def test_exchange_refresh_me_and_logout_flow(session) -> None:
     assert me.json()["user"]["id"] == user.id
     assert me.json()["user"]["first_name"] is None
     assert me.json()["profile"]["onboarding_completed_at"] is None
-    assert me.json()["google_health"]["status"] == "connected"
+    assert me.json()["health_connection"]["status"] == "connected"
+    assert me.json()["health_connection"]["provider"] == "google_health"
 
     updated_me = client.patch(
         "/auth/me",
@@ -233,17 +236,17 @@ def test_connections_are_scoped_to_current_user(session, auth_headers) -> None:
     other = _user(session, "two@example.com")
     session.add_all(
         [
-            GoogleAccount(
+            HealthConnection(
                 user_id=user.id,
-                health_user_id="health-one",
-                legacy_user_id="legacy-one",
+                external_user_id="health-one",
+                external_legacy_user_id="legacy-one",
                 status=ConnectionStatus.connected,
                 granted_scopes=[],
             ),
-            GoogleAccount(
+            HealthConnection(
                 user_id=other.id,
-                health_user_id="health-two",
-                legacy_user_id="legacy-two",
+                external_user_id="health-two",
+                external_legacy_user_id="legacy-two",
                 status=ConnectionStatus.connected,
                 granted_scopes=[],
             ),
@@ -256,5 +259,98 @@ def test_connections_are_scoped_to_current_user(session, auth_headers) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert len(payload) == 1
-    assert payload[0]["health_user_id_present"] is True
+    assert payload[0]["external_user_id_present"] is True
     assert "user_id" not in payload[0]
+
+
+def _signed_in_client(session) -> tuple[TestClient, User]:
+    user = _user(session)
+    session.add(SignInIdentity(user_id=user.id, provider="google", subject="google-sub"))
+    session.commit()
+    code = create_app_auth_code(session, user_id=user.id, device_id_hash=device_id_digest(DEVICE_ID))
+    client = TestClient(app)
+    tokens = client.post("/auth/exchange", json={"code": code, "device_id": DEVICE_ID}).json()
+    client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
+    return client, user
+
+
+def _callback(monkeypatch, state: str, google_client: FakeGoogleClient, queued: list | None = None):
+    monkeypatch.setattr("app.services.oauth.GoogleHealthClient", lambda settings=None: google_client)
+    monkeypatch.setattr(
+        "app.api.routes.auth.enqueue_initial_backfill",
+        lambda connection_id: queued.append(connection_id) or True if queued is not None else False,
+    )
+    return TestClient(app).get(
+        "/auth/google/callback", params={"code": "auth-code", "state": state}, follow_redirects=False
+    )
+
+
+def test_me_reports_no_health_connection_after_sign_in_only(session) -> None:
+    client, _ = _signed_in_client(session)
+
+    health = client.get("/auth/me").json()["health_connection"]
+
+    assert health == {
+        "provider": None,
+        "status": "disconnected",
+        "connected_at": None,
+        "last_sync_at": None,
+        "last_error": None,
+    }
+
+
+def test_sign_in_callback_issues_an_app_code(session, monkeypatch) -> None:
+    state = state_from(create_authorization_url(session, device_id=DEVICE_ID))
+
+    response = _callback(monkeypatch, state, FakeGoogleClient())
+
+    location = response.headers["location"]
+    assert location.startswith("healthapp://auth/callback?status=signed_in&code=")
+    assert session.scalar(select(AppAuthCode)) is not None
+    assert session.scalar(select(HealthConnection)) is None
+
+
+def test_connect_start_url_requires_sign_in(session) -> None:
+    response = TestClient(app).get("/connections/google-health/start-url", params={"device_id": DEVICE_ID})
+
+    assert response.status_code == 401
+
+
+def test_connect_start_url_binds_state_to_the_signed_in_user(session) -> None:
+    client, user = _signed_in_client(session)
+
+    response = client.get("/connections/google-health/start-url", params={"device_id": DEVICE_ID})
+
+    assert response.status_code == 200
+    assert "googlehealth" in response.json()["authorization_url"]
+    state = session.scalar(select(OAuthState).where(OAuthState.purpose == CONNECT_HEALTH))
+    assert state.user_id == user.id
+
+
+def test_connect_callback_creates_connection_and_queues_backfill(session, monkeypatch) -> None:
+    client, user = _signed_in_client(session)
+    url = client.get("/connections/google-health/start-url", params={"device_id": DEVICE_ID}).json()
+    queued: list[str] = []
+
+    response = _callback(monkeypatch, state_from(url["authorization_url"]), FakeGoogleClient(), queued)
+
+    connection = session.scalar(select(HealthConnection))
+    assert response.headers["location"] == "healthapp://auth/callback?status=health_connected_queued"
+    assert "code=" not in response.headers["location"]
+    assert connection.user_id == user.id
+    assert queued == [connection.id]
+    assert client.get("/auth/me").json()["health_connection"]["status"] == "connected"
+
+
+def test_connect_callback_reports_health_account_in_use(session, monkeypatch) -> None:
+    owner = _user(session, "owner@example.com")
+    session.add(
+        HealthConnection(user_id=owner.id, external_user_id="google-health-id", status=ConnectionStatus.connected)
+    )
+    session.commit()
+    client, _ = _signed_in_client(session)
+    url = client.get("/connections/google-health/start-url", params={"device_id": DEVICE_ID}).json()
+
+    response = _callback(monkeypatch, state_from(url["authorization_url"]), FakeGoogleClient())
+
+    assert response.headers["location"] == "healthapp://auth/callback?status=error&reason=health_account_in_use"

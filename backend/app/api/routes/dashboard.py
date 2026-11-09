@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.api.routes.metrics import dashboard_metric_summaries, _workout_summary_payload
-from app.models import DailyScore, DailySummary, GoogleAccount, StrainTarget, SyncCursor, Workout
+from app.models import DailyScore, DailySummary, HealthConnection, StrainTarget, SyncCursor, Workout
 from app.services.health_dates import get_or_create_profile, local_date_for_profile, local_week_start
 from app.services.scores import SCORE_VERSIONS, STRAIN_LOAD_VERSION
 
@@ -144,7 +144,7 @@ def dashboard_bundle(
         "user_id": user.id,
         "date": day,
         "profile": profile_payload,
-        "connections": {"google_health": connections},
+        "connections": {"health_connections": connections},
         "sync_status": sync_status,
         "snapshot": snapshot,
         "metric_summaries": metric_summaries,
@@ -222,16 +222,17 @@ def _recent_workouts_payload(
 
 def _connection_payloads(session: DbSession, user_id: str) -> list[dict[str, object]]:
     accounts = session.scalars(
-        select(GoogleAccount)
-        .where(GoogleAccount.user_id == user_id)
-        .order_by(GoogleAccount.connected_at.desc())
+        select(HealthConnection)
+        .where(HealthConnection.user_id == user_id)
+        .order_by(HealthConnection.connected_at.desc())
     ).all()
     return [
         {
             "account_id": account.id,
+            "provider": account.provider,
             "status": account.status.value,
-            "health_user_id_present": bool(account.health_user_id),
-            "legacy_user_id_present": bool(account.legacy_user_id),
+            "external_user_id_present": bool(account.external_user_id),
+            "external_legacy_user_id_present": bool(account.external_legacy_user_id),
             "granted_scopes": account.granted_scopes,
             "connected_at": account.connected_at,
             "last_sync_at": account.last_sync_at,
@@ -244,18 +245,18 @@ def _connection_payloads(session: DbSession, user_id: str) -> list[dict[str, obj
 def _sync_status_payload(session: DbSession, user_id: str) -> list[dict[str, object]]:
     account_ids = [
         account.id
-        for account in session.scalars(select(GoogleAccount).where(GoogleAccount.user_id == user_id))
+        for account in session.scalars(select(HealthConnection).where(HealthConnection.user_id == user_id))
     ]
     if not account_ids:
         return []
     cursors = session.scalars(
         select(SyncCursor)
-        .where(SyncCursor.google_account_id.in_(account_ids))
+        .where(SyncCursor.connection_id.in_(account_ids))
         .order_by(SyncCursor.updated_at.desc())
     ).all()
     return [
         {
-            "google_account_id": cursor.google_account_id,
+            "connection_id": cursor.connection_id,
             "data_type": cursor.data_type,
             "status": cursor.status.value,
             "last_successful_start": cursor.last_successful_start,

@@ -14,7 +14,7 @@ from app.main import app
 from app.models import (
     ConnectionStatus,
     DailySummary,
-    GoogleAccount,
+    HealthConnection,
     HistoricalBackfill,
     MetricDailyRollup,
     MetricHourlyRollup,
@@ -33,7 +33,7 @@ from app.services.sync import (
     SyncWindow,
     run_initial_backfill,
     run_historical_backfill,
-    sync_google_account_range,
+    sync_google_health_range,
     sync_window_from_cursors,
 )
 from app.tasks import sync as sync_tasks
@@ -45,14 +45,14 @@ def isolate_backfill_queue(monkeypatch):
     monkeypatch.setattr(sync_tasks, "enqueue_historical_backfill", lambda account_id: True)
 
 
-def _connected_account(session) -> GoogleAccount:
+def _connected_account(session) -> HealthConnection:
     user = User()
     session.add(user)
     session.flush()
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=user.id,
-        health_user_id="health-id",
-        legacy_user_id="legacy-id",
+        external_user_id="health-id",
+        external_legacy_user_id="legacy-id",
         granted_scopes=[],
         encrypted_refresh_token=encrypt_secret("refresh-token"),
         status=ConnectionStatus.connected,
@@ -76,13 +76,13 @@ class FixedNextDate(date):
 
 def _add_success_cursors(
     session,
-    account: GoogleAccount,
+    account: HealthConnection,
     cursor_dates: dict[str, date],
 ) -> None:
     for data_type, cursor_end in cursor_dates.items():
         session.add(
             SyncCursor(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type=data_type,
                 status=SyncStatus.succeeded,
                 last_successful_start=cursor_end,
@@ -447,7 +447,7 @@ def test_sync_window_does_not_initial_backfill_for_known_failed_type(session) ->
     _add_success_cursors(session, account, {"steps": date(2026, 6, 20)})
     session.add(
         SyncCursor(
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="nutrition-log",
             status=SyncStatus.failed,
             last_successful_start=None,
@@ -474,7 +474,7 @@ async def test_heart_rate_sync_uses_daily_reconcile_chunks(session) -> None:
     account = _connected_account(session)
     client = FakePagedGoogleHealthClient()
 
-    result = await sync_google_account_range(
+    result = await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 16),
@@ -503,7 +503,7 @@ async def test_heart_rate_sync_uses_daily_reconcile_chunks(session) -> None:
 
     cursor = session.scalar(
         select(SyncCursor).where(
-            SyncCursor.google_account_id == account.id,
+            SyncCursor.connection_id == account.id,
             SyncCursor.data_type == "heart-rate",
         )
     )
@@ -513,7 +513,7 @@ async def test_heart_rate_sync_uses_daily_reconcile_chunks(session) -> None:
     cursor.last_successful_end_at = None
     session.commit()
 
-    await sync_google_account_range(
+    await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 16),
@@ -538,7 +538,7 @@ async def test_heart_rate_sync_uses_daily_reconcile_chunks(session) -> None:
 async def test_sync_resumes_from_saved_page_token(session) -> None:
     account = _connected_account(session)
     cursor = SyncCursor(
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="heart-rate",
         status=SyncStatus.running,
         last_successful_start=date(2026, 6, 18),
@@ -551,7 +551,7 @@ async def test_sync_resumes_from_saved_page_token(session) -> None:
     session.commit()
     client = FakeResumeGoogleHealthClient()
 
-    await sync_google_account_range(
+    await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 18),
@@ -567,7 +567,7 @@ async def test_sync_resumes_from_saved_page_token(session) -> None:
 async def test_sync_resume_skips_prior_completed_chunks(session) -> None:
     account = _connected_account(session)
     cursor = SyncCursor(
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="heart-rate",
         status=SyncStatus.running,
         last_successful_start=date(2026, 6, 17),
@@ -580,7 +580,7 @@ async def test_sync_resume_skips_prior_completed_chunks(session) -> None:
     session.commit()
     client = FakeResumeGoogleHealthClient()
 
-    await sync_google_account_range(
+    await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 16),
@@ -604,7 +604,7 @@ async def test_incremental_timestamp_sync_uses_hour_overlap(session) -> None:
     for data_type in ("active-energy-burned", "time-in-heart-rate-zone"):
         session.add(
             SyncCursor(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type=data_type,
                 status=SyncStatus.succeeded,
                 last_successful_start=date(2026, 6, 23),
@@ -616,7 +616,7 @@ async def test_incremental_timestamp_sync_uses_hour_overlap(session) -> None:
     session.commit()
     client = FakeResumeGoogleHealthClient()
 
-    await sync_google_account_range(
+    await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 22),
@@ -642,7 +642,7 @@ async def test_incremental_timestamp_sync_uses_hour_overlap(session) -> None:
 async def test_daily_zone_sync_ignores_saved_page_token(session) -> None:
     account = _connected_account(session)
     cursor = SyncCursor(
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="daily-heart-rate-zones",
         status=SyncStatus.running,
         last_successful_start=date(2026, 6, 5),
@@ -653,7 +653,7 @@ async def test_daily_zone_sync_ignores_saved_page_token(session) -> None:
     session.commit()
     client = FakeResumeGoogleHealthClient()
 
-    await sync_google_account_range(
+    await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 5),
@@ -674,7 +674,7 @@ async def test_daily_zone_sync_ignores_saved_page_token(session) -> None:
 async def test_sync_discards_daily_points_outside_requested_range(session) -> None:
     account = _connected_account(session)
 
-    result = await sync_google_account_range(
+    result = await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 18),
@@ -695,7 +695,7 @@ async def test_session_sync_uses_google_session_page_cap(session) -> None:
     account = _connected_account(session)
     client = FakeResumeGoogleHealthClient()
 
-    await sync_google_account_range(
+    await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 5),
@@ -712,7 +712,7 @@ async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_record
     account = _connected_account(session)
     session.add(
         SyncCursor(
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="exercise",
             status=SyncStatus.succeeded,
             last_successful_start=date(2026, 6, 24),
@@ -721,7 +721,7 @@ async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_record
     )
     kept_raw = RawHealthRecord(
         user_id=account.user_id,
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="exercise",
         source_record_id="users/me/dataTypes/exercise/dataPoints/keep",
         civil_date=date(2026, 6, 24),
@@ -730,7 +730,7 @@ async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_record
     )
     deleted_raw = RawHealthRecord(
         user_id=account.user_id,
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="exercise",
         source_record_id="users/me/dataTypes/exercise/dataPoints/delete",
         civil_date=date(2026, 6, 24),
@@ -765,7 +765,7 @@ async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_record
     )
     session.commit()
 
-    result = await sync_google_account_range(
+    result = await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 24),
@@ -778,7 +778,7 @@ async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_record
     workouts = session.scalars(select(Workout).where(Workout.user_id == account.user_id)).all()
     raw_records = session.scalars(
         select(RawHealthRecord).where(
-            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.connection_id == account.id,
             RawHealthRecord.data_type == "exercise",
         )
     ).all()
@@ -793,7 +793,7 @@ async def test_exercise_sync_lists_cursor_window_edits_and_prunes_deleted_record
 async def test_heart_rate_failure_does_not_block_other_data_types(session) -> None:
     account = _connected_account(session)
 
-    result = await sync_google_account_range(
+    result = await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 18),
@@ -820,7 +820,7 @@ async def test_heart_rate_failure_does_not_block_other_data_types(session) -> No
 
     heart_rate_cursor = session.scalar(
         select(SyncCursor).where(
-            SyncCursor.google_account_id == account.id,
+            SyncCursor.connection_id == account.id,
             SyncCursor.data_type == "heart-rate",
         )
     )
@@ -829,19 +829,19 @@ async def test_heart_rate_failure_does_not_block_other_data_types(session) -> No
 
     steps_cursor = session.scalar(
         select(SyncCursor).where(
-            SyncCursor.google_account_id == account.id,
+            SyncCursor.connection_id == account.id,
             SyncCursor.data_type == "steps",
         )
     )
     assert steps_cursor.status.value == "succeeded"
-    assert session.get(GoogleAccount, account.id).status == ConnectionStatus.connected
+    assert session.get(HealthConnection, account.id).status == ConnectionStatus.connected
 
 
 @pytest.mark.asyncio
 async def test_activity_metrics_sync_total_calories_to_hourly_and_daily_rollups(session) -> None:
     account = _connected_account(session)
 
-    result = await sync_google_account_range(
+    result = await sync_google_health_range(
         session,
         account=account,
         start=date(2026, 6, 18),
@@ -877,7 +877,7 @@ async def test_initial_backfill_is_limited_to_fourteen_days(session, monkeypatch
     account = _connected_account(session)
     captured: dict[str, date] = {}
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -890,7 +890,7 @@ async def test_initial_backfill_is_limited_to_fourteen_days(session, monkeypatch
         captured["end"] = end
         return None
 
-    monkeypatch.setattr("app.services.sync.sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr("app.services.sync.sync_google_health_range", fake_sync_google_health_range)
     monkeypatch.setattr(sync_service, "date", FixedDate)
 
     await run_initial_backfill(session, account=account)
@@ -911,7 +911,7 @@ async def test_initial_backfill_uses_cursor_window_when_account_was_already_sync
     )
     captured: dict[str, date] = {}
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -924,7 +924,7 @@ async def test_initial_backfill_uses_cursor_window_when_account_was_already_sync
         captured["end"] = end
         return None
 
-    monkeypatch.setattr("app.services.sync.sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr("app.services.sync.sync_google_health_range", fake_sync_google_health_range)
     monkeypatch.setattr(sync_service, "date", FixedDate)
 
     await run_initial_backfill(session, account=account)
@@ -942,7 +942,7 @@ async def test_historical_backfill_tracks_each_source_and_retries_only_failures(
     calls: list[tuple[str, date, date]] = []
     sleep_attempts = 0
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -964,7 +964,7 @@ async def test_historical_backfill_tracks_each_source_and_retries_only_failures(
             session.add(historical_cursor)
             session.commit()
         return SyncResult(
-            google_account_id=account.id,
+            connection_id=account.id,
             start=start,
             end=end,
             records_seen=0,
@@ -973,7 +973,7 @@ async def test_historical_backfill_tracks_each_source_and_retries_only_failures(
         )
 
     monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("steps", "sleep"))
-    monkeypatch.setattr(sync_service, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_service, "sync_google_health_range", fake_sync_google_health_range)
 
     first = await run_historical_backfill(
         session,
@@ -1008,7 +1008,7 @@ def test_sync_all_connected_accounts_uses_cursor_window(session, monkeypatch) ->
     )
     captured: dict[str, date] = {}
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -1021,7 +1021,7 @@ def test_sync_all_connected_accounts_uses_cursor_window(session, monkeypatch) ->
         captured["end"] = end
         return None
 
-    monkeypatch.setattr(sync_tasks, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_tasks, "sync_google_health_range", fake_sync_google_health_range)
     monkeypatch.setattr(sync_tasks, "date", FixedDate)
 
     result = sync_tasks.sync_all_connected_accounts()
@@ -1045,7 +1045,7 @@ def test_sync_all_connected_accounts_skips_fresh_accounts(session, monkeypatch) 
     async def fail_sync(*args, **kwargs):
         raise AssertionError("fresh accounts should not sync")
 
-    monkeypatch.setattr(sync_tasks, "sync_google_account_range", fail_sync)
+    monkeypatch.setattr(sync_tasks, "sync_google_health_range", fail_sync)
 
     result = sync_tasks.sync_all_connected_accounts()
 
@@ -1058,7 +1058,7 @@ def test_sync_all_connected_accounts_skips_running_accounts(session, monkeypatch
     account = _connected_account(session)
     session.add(
         SyncCursor(
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="steps",
             status=SyncStatus.running,
         )
@@ -1068,7 +1068,7 @@ def test_sync_all_connected_accounts_skips_running_accounts(session, monkeypatch
     async def fail_sync(*args, **kwargs):
         raise AssertionError("running accounts should not sync")
 
-    monkeypatch.setattr(sync_tasks, "sync_google_account_range", fail_sync)
+    monkeypatch.setattr(sync_tasks, "sync_google_health_range", fail_sync)
 
     result = sync_tasks.sync_all_connected_accounts()
 
@@ -1086,7 +1086,7 @@ def test_current_sync_skips_fresh_account(session, auth_headers, monkeypatch) ->
     async def fail_sync(*args, **kwargs):
         raise AssertionError("fresh accounts should not sync")
 
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fail_sync)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fail_sync)
 
     response = TestClient(app).post("/sync/current", headers=auth_headers(user))
 
@@ -1111,7 +1111,7 @@ def test_current_sync_never_synced_account_runs_cursor_window(
     user = session.get(User, account.user_id)
     captured: dict[str, date] = {}
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -1126,7 +1126,7 @@ def test_current_sync_never_synced_account_runs_cursor_window(
         session.add(account)
         session.commit()
         return SyncResult(
-            google_account_id=account.id,
+            connection_id=account.id,
             start=start,
             end=end,
             records_seen=3,
@@ -1134,7 +1134,7 @@ def test_current_sync_never_synced_account_runs_cursor_window(
             data_types=["steps"],
         )
 
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fake_sync_google_health_range)
     monkeypatch.setattr(sync_routes, "date", FixedDate)
 
     response = TestClient(app).post("/sync/current", headers=auth_headers(user))
@@ -1152,7 +1152,7 @@ def test_current_sync_reports_already_running(session, auth_headers, monkeypatch
     account = _connected_account(session)
     session.add(
         SyncCursor(
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="steps",
             status=SyncStatus.running,
         )
@@ -1164,7 +1164,7 @@ def test_current_sync_reports_already_running(session, auth_headers, monkeypatch
     async def fail_sync(*args, **kwargs):
         raise AssertionError("running accounts should not sync")
 
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fail_sync)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fail_sync)
 
     response = TestClient(app).post("/sync/current", headers=auth_headers(user))
 
@@ -1184,13 +1184,13 @@ def test_current_sync_retries_only_failed_sources_even_when_fresh(
     session.add_all(
         [
             SyncCursor(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type="steps",
                 status=SyncStatus.succeeded,
                 last_successful_end=date.today(),
             ),
             SyncCursor(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type="sleep",
                 status=SyncStatus.failed,
                 last_error="provider unavailable",
@@ -1201,7 +1201,7 @@ def test_current_sync_retries_only_failed_sources_even_when_fresh(
     user = session.get(User, account.user_id)
     captured: dict[str, object] = {}
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -1212,7 +1212,7 @@ def test_current_sync_retries_only_failed_sources_even_when_fresh(
     ):
         captured["data_types"] = data_types
         return SyncResult(
-            google_account_id=account.id,
+            connection_id=account.id,
             start=start,
             end=end,
             records_seen=0,
@@ -1220,7 +1220,7 @@ def test_current_sync_retries_only_failed_sources_even_when_fresh(
             data_types=list(data_types),
         )
 
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fake_sync_google_health_range)
 
     response = TestClient(app).post("/sync/current", headers=auth_headers(user))
 
@@ -1234,10 +1234,10 @@ def test_current_sync_status_is_scoped_to_current_user(session, auth_headers) ->
     other_user = User()
     session.add(other_user)
     session.flush()
-    other = GoogleAccount(
+    other = HealthConnection(
         user_id=other_user.id,
-        health_user_id="other-health-id",
-        legacy_user_id="other-legacy-id",
+        external_user_id="other-health-id",
+        external_legacy_user_id="other-legacy-id",
         granted_scopes=[],
         encrypted_refresh_token=encrypt_secret("refresh-token"),
         status=ConnectionStatus.connected,
@@ -1246,7 +1246,7 @@ def test_current_sync_status_is_scoped_to_current_user(session, auth_headers) ->
     session.flush()
     session.add(
         SyncCursor(
-            google_account_id=other.id,
+            connection_id=other.id,
             data_type="steps",
             status=SyncStatus.running,
         )
@@ -1271,14 +1271,14 @@ def test_current_sync_status_exposes_stable_historical_backfill_progress(
     session.add_all(
         [
             HistoricalBackfill(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type="steps",
                 range_start=date(2026, 3, 24),
                 range_end=date(2026, 6, 21),
                 status=SyncStatus.succeeded,
             ),
             HistoricalBackfill(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type="sleep",
                 range_start=date(2026, 3, 24),
                 range_end=date(2026, 6, 21),
@@ -1330,7 +1330,7 @@ def test_manual_sync_without_dates_uses_cursor_window(session, monkeypatch) -> N
             is_initial_backfill=False,
         )
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -1343,7 +1343,7 @@ def test_manual_sync_without_dates_uses_cursor_window(session, monkeypatch) -> N
         captured["end"] = end
         captured["data_types"] = data_types
         return SyncResult(
-            google_account_id=account.id,
+            connection_id=account.id,
             start=start,
             end=end,
             records_seen=0,
@@ -1352,7 +1352,7 @@ def test_manual_sync_without_dates_uses_cursor_window(session, monkeypatch) -> N
         )
 
     monkeypatch.setattr(sync_routes, "sync_window_from_cursors", fake_sync_window_from_cursors)
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fake_sync_google_health_range)
     client = TestClient(app)
 
     response = client.post(
@@ -1373,7 +1373,7 @@ def test_manual_sync_with_explicit_dates_keeps_requested_range(session, monkeypa
     session.commit()
     captured: dict[str, object] = {}
 
-    async def fake_sync_google_account_range(
+    async def fake_sync_google_health_range(
         session,
         *,
         account,
@@ -1385,7 +1385,7 @@ def test_manual_sync_with_explicit_dates_keeps_requested_range(session, monkeypa
         captured["start"] = start
         captured["end"] = end
         return SyncResult(
-            google_account_id=account.id,
+            connection_id=account.id,
             start=start,
             end=end,
             records_seen=0,
@@ -1393,7 +1393,7 @@ def test_manual_sync_with_explicit_dates_keeps_requested_range(session, monkeypa
             data_types=list(data_types),
         )
 
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync_google_account_range)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fake_sync_google_health_range)
     client = TestClient(app)
 
     response = client.post(
@@ -1413,7 +1413,7 @@ def test_stale_core_sources_refresh_despite_optional_failure(
     account.last_sync_at = datetime.now(UTC) - timedelta(minutes=0 if recent_account_timestamp else 30)
     _add_success_cursors(session, account, {"steps": date.today() - timedelta(days=17)})
     session.add(SyncCursor(
-        google_account_id=account.id, data_type="nutrition-log", status=SyncStatus.failed,
+        connection_id=account.id, data_type="nutrition-log", status=SyncStatus.failed,
         last_error="missing scope",
     ))
     session.commit()
@@ -1423,7 +1423,7 @@ def test_stale_core_sources_refresh_despite_optional_failure(
         captured.extend(data_types)
         return SyncResult(account.id, start, end, 0, 0, list(data_types))
 
-    monkeypatch.setattr(sync_routes, "sync_google_account_range", fake_sync)
+    monkeypatch.setattr(sync_routes, "sync_google_health_range", fake_sync)
     headers = auth_headers(session.get(User, account.user_id))
     status = TestClient(app).get("/sync/current/status", headers=headers).json()
     assert status["is_fresh"] is False
@@ -1442,7 +1442,7 @@ async def test_current_sync_stays_running_through_score_rebuild(session, monkeyp
 
     monkeypatch.setattr(sync_service, "rebuild_daily_summaries", rebuild)
     monkeypatch.setattr(sync_service, "rebuild_derived_scores", rebuild)
-    await sync_google_account_range(
+    await sync_google_health_range(
         session, account=account, start=date.today(), end=date.today(),
         data_types=("sleep",), client=FakeResumeGoogleHealthClient(),
     )
@@ -1456,7 +1456,7 @@ async def test_historical_backfill_keeps_current_cursors_and_freshness(session, 
     account.last_sync_at = datetime.now(UTC)
     stamp = account.last_sync_at
     _add_success_cursors(session, account, {"sleep": date.today()})
-    cursor = session.scalar(select(SyncCursor).where(SyncCursor.google_account_id == account.id))
+    cursor = session.scalar(select(SyncCursor).where(SyncCursor.connection_id == account.id))
     monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
     monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
     monkeypatch.setattr(sync_service, "rebuild_derived_scores", lambda *args, **kwargs: None)
@@ -1508,7 +1508,7 @@ async def test_failed_source_does_not_stop_successful_sources(session, monkeypat
 
     monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
     monkeypatch.setattr(sync_service, "rebuild_derived_scores", lambda *args, **kwargs: None)
-    result = await sync_google_account_range(
+    result = await sync_google_health_range(
         session, account=account, start=date.today(), end=date.today(),
         data_types=("sleep", "steps"), client=PartialClient(),
     )
@@ -1528,7 +1528,7 @@ async def test_score_rebuild_failure_remains_visible_and_retryable(session, auth
     monkeypatch.setattr(sync_service, "rebuild_daily_summaries", lambda *args, **kwargs: None)
     monkeypatch.setattr(sync_service, "rebuild_derived_scores", fail)
     with pytest.raises(RuntimeError):
-        await sync_google_account_range(
+        await sync_google_health_range(
             session, account=account, start=date.today(), end=date.today(),
             data_types=("sleep",), client=FakeResumeGoogleHealthClient(),
         )
@@ -1569,7 +1569,7 @@ def test_historical_queue_is_visible_and_deduplicated(session, monkeypatch):
 def test_interrupted_historical_job_can_be_retried(session, auth_headers, monkeypatch):
     account = _connected_account(session)
     session.add(HistoricalBackfill(
-        google_account_id=account.id, data_type="sleep", status=SyncStatus.running,
+        connection_id=account.id, data_type="sleep", status=SyncStatus.running,
         range_start=date.today() - timedelta(days=89), range_end=date.today(),
         updated_at=datetime.now(UTC) - timedelta(hours=2),
     ))
@@ -1662,7 +1662,7 @@ def test_full_range_sync_receipt_completes_history_without_a_worker(session, mon
     account.last_sync_at = datetime.now(UTC)
     monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
     start, end = date.today() - timedelta(days=89), date.today()
-    session.add(SyncCursor(google_account_id=account.id, data_type="sleep",
+    session.add(SyncCursor(connection_id=account.id, data_type="sleep",
                            status=SyncStatus.succeeded, last_successful_start=start,
                            last_successful_end=end))
     session.commit()
@@ -1677,7 +1677,7 @@ def test_full_range_sync_receipt_completes_history_without_a_worker(session, mon
 def test_existing_records_are_available_not_falsely_reported_as_zero_history(session, auth_headers):
     account = _connected_account(session)
     session.add(HistoricalBackfill(
-        google_account_id=account.id, data_type="sleep", status=SyncStatus.pending,
+        connection_id=account.id, data_type="sleep", status=SyncStatus.pending,
         range_start=date.today() - timedelta(days=89), range_end=date.today(),
         updated_at=datetime.now(UTC) - timedelta(days=2),
     ))
@@ -1698,7 +1698,7 @@ def test_recent_sync_does_not_prove_full_historical_coverage(session, monkeypatc
     account = _connected_account(session)
     account.last_sync_at = datetime.now(UTC)
     monkeypatch.setattr(sync_service, "MVP_SYNC_DATA_TYPES", ("sleep",))
-    session.add(SyncCursor(google_account_id=account.id, data_type="sleep",
+    session.add(SyncCursor(connection_id=account.id, data_type="sleep",
                            status=SyncStatus.succeeded, last_successful_start=date.today() - timedelta(days=13),
                            last_successful_end=date.today()))
     session.commit()

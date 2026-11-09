@@ -23,7 +23,7 @@ from app.models import (
     DailySummary,
     ExerciseCatalogItem,
     ExerciseFavorite,
-    GoogleAccount,
+    HealthConnection,
     HistoricalBackfill,
     JournalCompletion,
     JournalEntry,
@@ -36,6 +36,7 @@ from app.models import (
     MetricSample,
     RawHealthRecord,
     RoutineExercise,
+    SignInIdentity,
     SleepSession,
     StrainTarget,
     SyncCursor,
@@ -188,24 +189,25 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
         return (
             TableExport(User, lambda user_id: select(User).where(User.id == user_id)),
             TableExport(UserProfile, by_user(UserProfile)),
+            TableExport(SignInIdentity, by_user(SignInIdentity)),
             TableExport(
-                GoogleAccount,
-                by_user(GoogleAccount),
+                HealthConnection,
+                by_user(HealthConnection),
                 frozenset({"encrypted_refresh_token", "last_error"}),
             ),
             TableExport(
                 SyncCursor,
                 lambda user_id: select(SyncCursor)
-                .join(GoogleAccount, SyncCursor.google_account_id == GoogleAccount.id)
-                .where(GoogleAccount.user_id == user_id)
+                .join(HealthConnection, SyncCursor.connection_id == HealthConnection.id)
+                .where(HealthConnection.user_id == user_id)
                 .order_by(SyncCursor.id),
                 frozenset({"last_page_token", "last_error"}),
             ),
             TableExport(
                 HistoricalBackfill,
                 lambda user_id: select(HistoricalBackfill)
-                .join(GoogleAccount, HistoricalBackfill.google_account_id == GoogleAccount.id)
-                .where(GoogleAccount.user_id == user_id)
+                .join(HealthConnection, HistoricalBackfill.connection_id == HealthConnection.id)
+                .where(HealthConnection.user_id == user_id)
                 .order_by(HistoricalBackfill.id),
                 frozenset({"last_page_token", "last_error"}),
             ),

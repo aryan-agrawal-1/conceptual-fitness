@@ -207,7 +207,7 @@ def _sleep_source_signature(session: Session, sleep: SleepSession) -> tuple[str,
     if raw is None:
         return None
     source = ":".join(filter(None, (raw.source_platform, raw.source_device))) or "google_health"
-    return raw.google_account_id, source
+    return raw.connection_id, source
 
 
 def _heart_rate_samples(session: Session, user_id: str, day: date) -> list[MetricSample | RollupPoint]:

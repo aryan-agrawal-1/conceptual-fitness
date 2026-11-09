@@ -11,7 +11,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.core.security import utcnow
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
 from app.models import (
-    DailyScore, ConnectionStatus, GoogleAccount, HistoricalBackfill, SyncCursor,
+    DailyScore, ConnectionStatus, HealthConnection, HistoricalBackfill, SyncCursor,
     MetricDailyRollup, MetricSample, MetricInterval, SleepSession, Workout,
 )
 from app.services.sync import (
@@ -20,7 +20,7 @@ from app.services.sync import (
     account_has_running_sync,
     is_account_sync_fresh,
     prepare_historical_backfill,
-    sync_google_account_range,
+    sync_google_health_range,
     sync_window_from_cursors,
 )
 from app.tasks.sync import enqueue_historical_backfill
@@ -75,7 +75,7 @@ def current_sync(session: DbSession, user: CurrentUser) -> dict[str, object]:
         today=today,
     )
     try:
-        result = asyncio.run(sync_google_account_range(
+        result = asyncio.run(sync_google_health_range(
             session,
             account=account,
             start=window.start,
@@ -132,7 +132,7 @@ async def manual_sync(
     end: date | None = Query(default=None),
     data_type: list[str] | None = Query(default=None),
 ) -> dict[str, object]:
-    account = session.get(GoogleAccount, account_id)
+    account = session.get(HealthConnection, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Google account not found")
     today = date.today()
@@ -150,7 +150,7 @@ async def manual_sync(
         start_date = start or today - timedelta(days=1)
         end_date = end or today
     try:
-        result = await sync_google_account_range(
+        result = await sync_google_health_range(
             session,
             account=account,
             start=start_date,
@@ -160,7 +160,7 @@ async def manual_sync(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {
-        "google_account_id": result.google_account_id,
+        "connection_id": result.connection_id,
         "start": result.start,
         "end": result.end,
         "records_seen": result.records_seen,
@@ -173,11 +173,11 @@ async def manual_sync(
 def sync_status(session: DbSession, account_id: str | None = Query(default=None)) -> list[dict[str, object]]:
     statement = select(SyncCursor)
     if account_id:
-        statement = statement.where(SyncCursor.google_account_id == account_id)
+        statement = statement.where(SyncCursor.connection_id == account_id)
     cursors = session.scalars(statement.order_by(SyncCursor.updated_at.desc())).all()
     return [
         {
-            "google_account_id": cursor.google_account_id,
+            "connection_id": cursor.connection_id,
             "data_type": cursor.data_type,
             "status": cursor.status.value,
             "last_successful_start": cursor.last_successful_start,
@@ -189,28 +189,28 @@ def sync_status(session: DbSession, account_id: str | None = Query(default=None)
     ]
 
 
-def _current_connected_account(session: DbSession, user_id: str) -> GoogleAccount | None:
+def _current_connected_account(session: DbSession, user_id: str) -> HealthConnection | None:
     return session.scalar(
-        select(GoogleAccount)
+        select(HealthConnection)
         .where(
-            GoogleAccount.user_id == user_id,
-            GoogleAccount.status == ConnectionStatus.connected,
+            HealthConnection.user_id == user_id,
+            HealthConnection.status == ConnectionStatus.connected,
         )
-        .order_by(GoogleAccount.connected_at.desc())
+        .order_by(HealthConnection.connected_at.desc())
     )
 
 
 def _account_cursors(session: DbSession, account_id: str) -> list[SyncCursor]:
     return session.scalars(
         select(SyncCursor)
-        .where(SyncCursor.google_account_id == account_id)
+        .where(SyncCursor.connection_id == account_id)
         .order_by(SyncCursor.updated_at.desc())
     ).all()
 
 
 def _current_status_payload(
     session: DbSession,
-    account: GoogleAccount,
+    account: HealthConnection,
     cursors: list[SyncCursor],
 ) -> dict[str, object]:
     backfills = _historical_backfills(session, account.id)
@@ -261,7 +261,7 @@ def _current_status_payload(
         ).limit(1)) is not None,
         "cursors": [
             {
-                "google_account_id": cursor.google_account_id,
+                "connection_id": cursor.connection_id,
                 "data_type": cursor.data_type,
                 "status": cursor.status.value,
                 "last_successful_start": cursor.last_successful_start,
@@ -277,7 +277,7 @@ def _current_status_payload(
 def _historical_backfills(session: DbSession, account_id: str) -> list[HistoricalBackfill]:
     return session.scalars(
         select(HistoricalBackfill)
-        .where(HistoricalBackfill.google_account_id == account_id)
+        .where(HistoricalBackfill.connection_id == account_id)
         .order_by(HistoricalBackfill.range_end.desc(), HistoricalBackfill.data_type)
     ).all()
 

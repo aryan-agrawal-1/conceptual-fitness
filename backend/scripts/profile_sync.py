@@ -10,28 +10,28 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.google_health.data_types import MVP_SYNC_DATA_TYPES
-from app.models import ConnectionStatus, GoogleAccount
-from app.services.sync import SyncProfile, sync_google_account_range, sync_window_from_cursors
+from app.models import ConnectionStatus, HealthConnection
+from app.services.sync import SyncProfile, sync_google_health_range, sync_window_from_cursors
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a Google Health sync and print timing details.")
-    parser.add_argument("--account-id", help="GoogleAccount id to sync. Defaults to first connected account.")
+    parser.add_argument("--account-id", help="HealthConnection id to sync. Defaults to first connected account.")
     parser.add_argument("--data-type", action="append", dest="data_types", help="Data type to sync. Repeatable.")
     parser.add_argument("--start", type=date.fromisoformat, help="Inclusive start date, YYYY-MM-DD.")
     parser.add_argument("--end", type=date.fromisoformat, help="Inclusive end date, YYYY-MM-DD.")
     return parser.parse_args()
 
 
-def _find_account(account_id: str | None) -> GoogleAccount:
+def _find_account(account_id: str | None) -> HealthConnection:
     with SessionLocal() as session:
         if account_id:
-            account = session.get(GoogleAccount, account_id)
+            account = session.get(HealthConnection, account_id)
         else:
             account = session.scalar(
-                select(GoogleAccount)
-                .where(GoogleAccount.status == ConnectionStatus.connected)
-                .order_by(GoogleAccount.created_at.desc())
+                select(HealthConnection)
+                .where(HealthConnection.status == ConnectionStatus.connected)
+                .order_by(HealthConnection.created_at.desc())
             )
         if account is None:
             raise SystemExit("No matching connected Google account found.")
@@ -63,7 +63,7 @@ async def _run() -> dict[str, object]:
             end = args.end or today
             is_cursor_window = False
 
-        result = await sync_google_account_range(
+        result = await sync_google_health_range(
             session,
             account=account,
             start=start,
@@ -73,7 +73,7 @@ async def _run() -> dict[str, object]:
         )
 
     return {
-        "account_id": result.google_account_id,
+        "account_id": result.connection_id,
         "window": {
             "start": result.start.isoformat(),
             "end": result.end.isoformat(),

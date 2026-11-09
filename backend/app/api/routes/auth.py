@@ -14,7 +14,7 @@ from app.api.deps import CurrentUser, DbSession, bearer_token_from_request
 from app.core.config import get_settings, missing_or_placeholder_keys
 from app.core.security import decrypt_secret, utcnow
 from app.google_health.client import GoogleHealthAPIError
-from app.models import ConnectionStatus, GoogleAccount, User
+from app.models import ConnectionStatus, HealthConnection, User
 from app.services.health_dates import get_or_create_profile
 from app.services.app_auth import (
     AppAuthError,
@@ -28,10 +28,13 @@ from app.services.app_auth import (
 )
 from app.services.device_keys import DeviceKeyError
 from app.services.oauth import (
+    CONNECT_HEALTH,
+    HealthAccountInUseError,
     OAuthConfigurationError,
     OAuthStateError,
-    complete_google_health_oauth,
+    complete_google_oauth,
     create_authorization_url,
+    latest_health_connection,
 )
 from app.services.rate_limit import (
     AUTH_EXCHANGE_LIMIT,
@@ -66,6 +69,9 @@ def sensitive_oauth_failure_reason(exc: Exception) -> str:
         "Sensitive action requires an existing account": "account_not_found",
         "Authenticated Google account does not match the app session": "account_mismatch",
         "Pending-deletion accounts cannot authenticate": "account_pending_deletion",
+        "Account is not pending deletion": "account_not_pending_deletion",
+        "Account was not found": "account_not_found",
+        "Health account is connected to another user": "health_account_in_use",
     }.get(str(exc), "oauth_state_or_configuration")
 
 
@@ -134,7 +140,8 @@ class UserUpdate(BaseModel):
     last_name: str | None = Field(default=None, max_length=80)
 
 
-class GoogleHealthStatus(BaseModel):
+class HealthConnectionStatus(BaseModel):
+    provider: str | None
     status: str
     connected_at: datetime | None
     last_sync_at: datetime | None
@@ -148,7 +155,7 @@ class MeProfileStatus(BaseModel):
 
 class MeResponse(BaseModel):
     user: UserPayload
-    google_health: GoogleHealthStatus
+    health_connection: HealthConnectionStatus
     profile: MeProfileStatus
 
 
@@ -248,7 +255,7 @@ def start_sensitive_google_oauth_url(
                 session,
                 device_id=device_id,
                 user_id=user_id,
-                sensitive_action=purpose,
+                purpose=purpose,
                 device_public_key=device_public_key,
                 source_session_id=source_session_id,
             )
@@ -269,37 +276,41 @@ async def google_oauth_callback(
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing OAuth code or state")
     try:
-        completion = await complete_google_health_oauth(session, code=code, state=state)
-        if completion.sensitive_action == "recover_deletion":
+        completion = await complete_google_oauth(session, code=code, state=state)
+        if completion.purpose == CONNECT_HEALTH:
+            queued = enqueue_initial_backfill(completion.connection_id)
+            return _deep_link_redirect(status="health_connected_queued" if queued else "health_connected")
+        if completion.purpose == "recover_deletion":
             if not completion.device_public_key:
                 raise OAuthStateError("OAuth state is missing device key binding")
             grant = create_sensitive_action_challenge(
                 session,
-                user_id=completion.account.user_id,
+                user_id=completion.user_id,
                 device_id_hash=completion.device_id_hash,
-                purpose=completion.sensitive_action,
+                purpose=completion.purpose,
                 device_public_key=completion.device_public_key,
             )
             return _deep_link_redirect(
                 status="authorized",
                 grant=grant,
-                purpose=completion.sensitive_action,
+                purpose=completion.purpose,
             )
         app_code = create_app_auth_code(
             session,
-            user_id=completion.account.user_id,
+            user_id=completion.user_id,
             device_id_hash=completion.device_id_hash,
             device_public_key=completion.device_public_key,
             source_session_id=completion.source_session_id,
         )
+    except HealthAccountInUseError:
+        logger.warning("Google OAuth failed reason=health_account_in_use")
+        return _deep_link_redirect(status="error", reason="health_account_in_use")
     except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError) as exc:
         reason = sensitive_oauth_failure_reason(exc)
-        logger.warning("Sensitive OAuth failed reason=%s", reason)
+        logger.warning("Google OAuth failed reason=%s", reason)
         return _deep_link_redirect(status="error", reason="oauth_failed")
 
-    queued = enqueue_initial_backfill(completion.account.id)
-    status = "connected_queued" if queued else "connected"
-    return _deep_link_redirect(status=status, code=app_code)
+    return _deep_link_redirect(status="signed_in", code=app_code)
 
 
 @router.post("/exchange", response_model=TokenResponse)
@@ -436,14 +447,35 @@ def update_me(payload: UserUpdate, session: DbSession, user: CurrentUser) -> MeR
 connections_router = APIRouter(prefix="/connections", tags=["connections"])
 
 
+@connections_router.get("/google-health/start-url")
+def start_google_health_connection_url(
+    request: Request,
+    session: DbSession,
+    user: CurrentUser,
+    device_id: str = Query(..., min_length=16),
+) -> dict[str, str]:
+    enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
+    try:
+        return {
+            "authorization_url": create_authorization_url(
+                session,
+                device_id=device_id,
+                purpose=CONNECT_HEALTH,
+                user_id=user.id,
+            )
+        }
+    except OAuthConfigurationError as exc:
+        raise HTTPException(status_code=500, detail="OAuth configuration is incomplete") from exc
+
+
 @connections_router.get("/google-health")
 def google_health_connections(session: DbSession, user: CurrentUser) -> list[dict[str, object]]:
-    accounts = session.scalars(
-        select(GoogleAccount)
-        .where(GoogleAccount.user_id == user.id)
-        .order_by(GoogleAccount.connected_at.desc())
+    connections = session.scalars(
+        select(HealthConnection)
+        .where(HealthConnection.user_id == user.id)
+        .order_by(HealthConnection.connected_at.desc())
     ).all()
-    return [_connection_payload(account) for account in accounts]
+    return [_connection_payload(connection) for connection in connections]
 
 
 @connections_router.post("/google-health/disconnect")
@@ -454,27 +486,23 @@ async def disconnect_google_health(
     payload: DisconnectRequest | None = None,
 ) -> dict[str, str]:
     enforce_rate_limit(request, CONNECTION_MUTATION_LIMIT, user.id)
-    account = session.scalar(
-        select(GoogleAccount)
-        .where(GoogleAccount.user_id == user.id)
-        .order_by(GoogleAccount.connected_at.desc())
-    )
-    if account is None:
-        raise HTTPException(status_code=404, detail="Google Health account not found")
+    connection = latest_health_connection(session, user.id)
+    if connection is None:
+        raise HTTPException(status_code=404, detail="Health connection not found")
     revoke = True if payload is None else payload.revoke
-    if revoke and account.encrypted_refresh_token:
+    if revoke and connection.encrypted_refresh_token:
         from app.google_health.client import GoogleHealthClient
 
         try:
-            await GoogleHealthClient().revoke_token(decrypt_secret(account.encrypted_refresh_token))
+            await GoogleHealthClient().revoke_token(decrypt_secret(connection.encrypted_refresh_token))
         except GoogleHealthAPIError:
             pass
-    account.status = ConnectionStatus.disconnected
-    account.disconnected_at = utcnow()
-    account.encrypted_refresh_token = None
-    session.add(account)
+    connection.status = ConnectionStatus.disconnected
+    connection.disconnected_at = utcnow()
+    connection.encrypted_refresh_token = None
+    session.add(connection)
     session.commit()
-    return {"status": "disconnected", "account_id": account.id}
+    return {"status": "disconnected", "account_id": connection.id}
 
 
 def _deep_link_redirect(**params: str) -> RedirectResponse:
@@ -508,7 +536,7 @@ def _me_response(session: DbSession, user: User) -> MeResponse:
     session.commit()
     return MeResponse(
         user=_user_payload(user),
-        google_health=_google_health_status(session, user.id),
+        health_connection=_health_connection_status(session, user.id),
         profile=MeProfileStatus(
             onboarding_completed_at=profile.onboarding_completed_at,
             weather_enabled=profile.weather_enabled,
@@ -530,35 +558,34 @@ def _clean_optional_string(value: str | None) -> str | None:
     return cleaned or None
 
 
-def _google_health_status(session: DbSession, user_id: str) -> GoogleHealthStatus:
-    account = session.scalar(
-        select(GoogleAccount)
-        .where(GoogleAccount.user_id == user_id)
-        .order_by(GoogleAccount.connected_at.desc())
-    )
-    if account is None:
-        return GoogleHealthStatus(
+def _health_connection_status(session: DbSession, user_id: str) -> HealthConnectionStatus:
+    connection = latest_health_connection(session, user_id)
+    if connection is None:
+        return HealthConnectionStatus(
+            provider=None,
             status="disconnected",
             connected_at=None,
             last_sync_at=None,
             last_error=None,
         )
-    return GoogleHealthStatus(
-        status=account.status.value,
-        connected_at=account.connected_at,
-        last_sync_at=account.last_sync_at,
-        last_error=account.last_error,
+    return HealthConnectionStatus(
+        provider=connection.provider,
+        status=connection.status.value,
+        connected_at=connection.connected_at,
+        last_sync_at=connection.last_sync_at,
+        last_error=connection.last_error,
     )
 
 
-def _connection_payload(account: GoogleAccount) -> dict[str, object]:
+def _connection_payload(connection: HealthConnection) -> dict[str, object]:
     return {
-        "account_id": account.id,
-        "status": account.status.value,
-        "health_user_id_present": bool(account.health_user_id),
-        "legacy_user_id_present": bool(account.legacy_user_id),
-        "granted_scopes": account.granted_scopes,
-        "connected_at": account.connected_at,
-        "last_sync_at": account.last_sync_at,
-        "last_error": account.last_error,
+        "account_id": connection.id,
+        "provider": connection.provider,
+        "status": connection.status.value,
+        "external_user_id_present": bool(connection.external_user_id),
+        "external_legacy_user_id_present": bool(connection.external_legacy_user_id),
+        "granted_scopes": connection.granted_scopes,
+        "connected_at": connection.connected_at,
+        "last_sync_at": connection.last_sync_at,
+        "last_error": connection.last_error,
     }

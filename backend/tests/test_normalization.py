@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.models import (
     DailySummary,
-    GoogleAccount,
+    HealthConnection,
     MetricDailyRollup,
     MetricHourlyRollup,
     MetricInterval,
@@ -26,14 +26,14 @@ from app.services.normalization import _content_hash, upsert_raw_and_normalized
 from app.services.summaries import rebuild_daily_summaries
 
 
-def _account(session) -> GoogleAccount:
+def _account(session) -> HealthConnection:
     user = User()
     session.add(user)
     session.flush()
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=user.id,
-        health_user_id="health-id",
-        legacy_user_id="legacy-id",
+        external_user_id="health-id",
+        external_legacy_user_id="legacy-id",
         granted_scopes=[],
     )
     session.add(account)
@@ -160,7 +160,7 @@ def test_upsert_merges_legacy_hash_record_when_data_point_name_exists(session) -
     session.add(
         RawHealthRecord(
             user_id=account.user_id,
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="sleep",
             source_record_id=f"sleep:{raw_hash}",
             raw_json=data_point,
@@ -583,7 +583,7 @@ def test_daily_summary_prefers_daily_derived_samples(session) -> None:
     day = date(2026, 6, 15)
     raw_daily = RawHealthRecord(
         user_id=account.user_id,
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="daily-oxygen-saturation",
         source_record_id="daily-spo2-1",
         civil_date=day,
@@ -592,7 +592,7 @@ def test_daily_summary_prefers_daily_derived_samples(session) -> None:
     )
     raw_intraday = RawHealthRecord(
         user_id=account.user_id,
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="oxygen-saturation",
         source_record_id="spo2-1",
         civil_date=day,

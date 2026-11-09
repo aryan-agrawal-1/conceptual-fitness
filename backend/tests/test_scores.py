@@ -11,7 +11,7 @@ from app.models import (
     DailyScore,
     DailySummary,
     ExerciseCatalogItem,
-    GoogleAccount,
+    HealthConnection,
     MetricSample,
     ScoreStatus,
     SleepSession,
@@ -55,10 +55,10 @@ def _user_with_profile(
         )
     )
     session.add(
-        GoogleAccount(
+        HealthConnection(
             user_id=user.id,
-            health_user_id=f"health-{user.id}",
-            legacy_user_id=f"legacy-{user.id}",
+            external_user_id=f"health-{user.id}",
+            external_legacy_user_id=f"legacy-{user.id}",
             granted_scopes=[],
         )
     )
@@ -737,7 +737,7 @@ def test_strain_uses_observed_resting_hr_when_daily_rhr_missing(session) -> None
 
 def test_strain_uses_time_in_zone_intervals_when_hr_confidence_weak(session) -> None:
     user = _user_with_profile(session, birth_year=2005)
-    account = session.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id))
+    account = session.scalar(select(HealthConnection).where(HealthConnection.user_id == user.id))
     day = date.today() - timedelta(days=1)
     _add_summary(session, user, day, rhr=None, steps=0, active_calories=0)
     upsert_raw_and_normalized(
@@ -1048,10 +1048,10 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
             unit="ml_per_kg_min",
         )
     )
-    account = session.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id))
+    account = session.scalar(select(HealthConnection).where(HealthConnection.user_id == user.id))
     session.add(
         SyncCursor(
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="daily-summary",
             status=SyncStatus.succeeded,
             last_successful_start=day,
@@ -1072,7 +1072,7 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
     assert payload["user_id"] == user.id
     assert payload["date"] == day.isoformat()
     assert payload["profile"]["timezone"] == "UTC"
-    assert len(payload["connections"]["google_health"]) == 1
+    assert len(payload["connections"]["health_connections"]) == 1
     assert payload["sync_status"][0]["status"] == "succeeded"
     assert payload["snapshot"]["metrics"]["heart_rate_variability"] == 58.0
     assert set(payload["snapshot"]["scores"]) == {"sleep", "readiness", "strain"}
@@ -1333,7 +1333,7 @@ def test_strain_requires_same_minute_movement_except_inside_workouts(session) ->
     from app.services.strain_scores import _cardio_load_from_hr, _movement_minutes
 
     user = _user_with_profile(session)
-    account = session.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id))
+    account = session.scalar(select(HealthConnection).where(HealthConnection.user_id == user.id))
     day = date(2026, 9, 7)
     start = _dt(day, 8)
     records = [
