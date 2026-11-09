@@ -23,8 +23,10 @@ struct Experiment: Decodable, Equatable, Identifiable {
     let days: [ExperimentDay]
     let adherence: ExperimentAdherence
     let result: ExperimentResult?
+    var offTrack: ExperimentOffTrack? = nil
 
     var isActive: Bool { status == "active" }
+    var isOffTrack: Bool { status == "off_track" }
     var hasStarted: Bool { today != nil }
 
     func plan(on day: String) -> ExperimentDay? {
@@ -36,6 +38,7 @@ struct Experiment: Decodable, Equatable, Identifiable {
         switch status {
         case "completed": "Finished"
         case "stopped": "Stopped"
+        case "off_track": "Off track"
         default:
             if let today { "Day \(today.dayNumber) of \(days.count)" } else { "Starts \(JournalDay.longTitle(startDate))" }
         }
@@ -75,9 +78,48 @@ struct ExperimentResult: Decodable, Equatable {
     var isReady: Bool { status == "ready" && difference != nil }
 }
 
+struct ExperimentOffTrack: Decodable, Equatable {
+    let date: String?
+    let summary: String
+    let restartText: String
+}
+
 struct ExperimentStartRequest: Encodable {
     let pairId: String
     let stratum: String
+    var behaviourId: String? = nil
+}
+
+struct ExperimentSetupResponse: Decodable, Equatable {
+    let setup: ExperimentSetup
+}
+
+struct ExperimentSetup: Decodable, Equatable {
+    let pairId: String
+    let stratum: String
+    let inputId: String
+    let outcomeLabel: String
+    let usual: ExperimentUsual
+    let options: [ExperimentOption]
+    let startDate: String
+    let endDate: String
+    let resultDate: String
+    let weeks: Int
+    let washoutDays: Int
+    let safetyNote: String?
+}
+
+struct ExperimentUsual: Decodable, Equatable {
+    let loggedDays: Int
+    let lines: [String]
+    let basis: String?
+}
+
+struct ExperimentOption: Decodable, Equatable, Identifiable {
+    let id: String
+    let title: String
+    let changeText: String
+    let detail: String
 }
 
 extension PatternStory {

@@ -55,18 +55,35 @@ final class ExperimentStore: ObservableObject {
         }
     }
 
+    func setup(for finding: PatternFinding) async throws -> ExperimentSetup {
+        guard var components = URLComponents(url: url("insights/experiment/setup"), resolvingAgainstBaseURL: false)
+        else { throw URLError(.badURL) }
+        components.queryItems = [URLQueryItem(name: "pair_id", value: finding.pairId),
+                                 URLQueryItem(name: "stratum", value: finding.stratum)]
+        guard let address = components.url else { throw URLError(.badURL) }
+        let data = try await perform(URLRequest(url: address))
+        return try JournalCoding.decoder().decode(ExperimentSetupResponse.self, from: data).setup
+    }
+
     @discardableResult
-    func start(_ finding: PatternFinding) async -> Bool {
+    func start(_ finding: PatternFinding, change: String? = nil) async -> Bool {
         var request = URLRequest(url: url("insights/experiment"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         do {
             request.httpBody = try JournalCoding.encoder().encode(
-                ExperimentStartRequest(pairId: finding.pairId, stratum: finding.stratum))
+                ExperimentStartRequest(pairId: finding.pairId, stratum: finding.stratum, behaviourId: change))
         } catch {
             return false
         }
         return await run(request, name: "start")
+    }
+
+    @discardableResult
+    func restart() async -> Bool {
+        var request = URLRequest(url: url("insights/experiment/restart"))
+        request.httpMethod = "POST"
+        return await run(request, name: "restart")
     }
 
     @discardableResult
@@ -95,7 +112,7 @@ final class ExperimentStore: ObservableObject {
             let code = (error as? HTTPResponseError)?.code
             action = .failed(Self.message(code, name: name))
             logger.error("Experiment \(name, privacy: .public) failed; status=\(Self.status(error)); code=\(code ?? "none", privacy: .public)")
-            if code == "experiment_active" || code == "no_active_experiment" { await reload() }
+            if ["experiment_active", "no_active_experiment", "nothing_to_restart"].contains(code) { await reload() }
             return false
         }
     }
@@ -118,8 +135,9 @@ final class ExperimentStore: ObservableObject {
         case "experiment_active": "Another experiment is already running. Stop it first to start a new one."
         case "not_testable": "This pattern can’t be tested right now. It may have changed since you opened it."
         case "no_active_experiment": "This experiment has already ended."
-        default: name == "start" ? "Couldn’t start the experiment. Check your connection and try again."
-            : "Couldn’t stop the experiment. Check your connection and try again."
+        case "change_not_available": "That change isn’t available any more. Go back and pick another one."
+        case "nothing_to_restart": "This experiment can’t be restarted any more."
+        default: "Couldn’t \(name) the experiment. Check your connection and try again."
         }
     }
 }

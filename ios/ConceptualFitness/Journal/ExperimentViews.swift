@@ -1,16 +1,9 @@
 import SwiftUI
 
-enum ExperimentCopy {
-    static let explanation = "For 4 weeks you’ll alternate: one week making the change, one week as usual, twice. "
-        + "Each day, the check-in shows that day’s plan at the top. You still log what you actually did yourself. "
-        + "The first 2 days of each week are left out of the result so the switch can settle. "
-        + "You can stop at any time."
-}
-
 struct ExperimentTestSection: View {
     let story: PatternStory
+    var group: PatternGroup?
     @EnvironmentObject private var store: ExperimentStore
-    @State private var confirming = false
 
     var body: some View {
         if let finding = story.testableFinding {
@@ -23,39 +16,35 @@ struct ExperimentTestSection: View {
                     Text("You already have an experiment running. Stop it to test this pattern.")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    Text("Test this yourself")
-                        .font(.headline).accessibilityAddTraits(.isHeader)
-                    Text("Try a 4-week experiment to see how \(finding.outcomeLabel.lowercased()) looks on change weeks compared with usual weeks.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button { confirming = true } label: {
-                        HStack {
-                            if store.action == .working { ProgressView().tint(.white) }
-                            Text("Test this").font(.body.weight(.semibold))
+                    HStack(spacing: 12) {
+                        Image(systemName: "flask").font(.title3).foregroundStyle(HealthTheme.color(for: .activity))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Test this yourself").font(.subheadline.weight(.semibold))
+                            Text("4-week experiment on \(finding.outcomeLabel.lowercased())")
+                                .font(.footnote).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        Spacer(minLength: 8)
+                        NavigationLink {
+                            ExperimentSetupView(story: story, finding: finding, group: group ?? finding.group)
+                        } label: {
+                            Text("Test").font(.subheadline.weight(.semibold)).frame(minHeight: 30)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .tint(HealthTheme.color(for: .activity))
+                        .accessibilityLabel("Test this yourself")
+                        .accessibilityHint("Sets up a 4-week experiment")
+                        .accessibilityIdentifier("experiment.test")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(HealthTheme.color(for: .activity))
-                    .disabled(store.action == .working)
-                    .accessibilityHint("Explains the experiment and asks you to confirm")
-                    .accessibilityIdentifier("experiment.test")
-                    if case .failed(let message) = store.action {
-                        Text(message).font(.caption).foregroundStyle(.secondary)
-                            .accessibilityIdentifier("experiment.error")
-                    }
+                    .frame(minHeight: 44)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .panelSurface(cornerRadius: 22)
-            .alert("Start a 4-week experiment?", isPresented: $confirming) {
-                Button("Start") { Task { await store.start(finding) } }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(ExperimentCopy.explanation)
-            }
-            .onAppear { store.clearError() }
         }
     }
 
@@ -110,10 +99,13 @@ struct ExperimentSummaryCard: View {
             Image(systemName: "flask").font(.title3).foregroundStyle(HealthTheme.color(for: .activity))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(experiment.isActive ? "Your experiment" : "Experiment result")
+                Text(experiment.isActive ? "Your experiment" : experiment.isOffTrack ? "Experiment ended"
+                     : "Experiment result")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                 Text(experiment.title).font(.subheadline.weight(.semibold))
-                Text(experiment.today?.plan ?? experiment.statusText).font(.footnote).foregroundStyle(.secondary)
+                Text(experiment.isOffTrack ? "Off track · you can restart it"
+                     : experiment.today?.plan ?? experiment.statusText)
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -138,6 +130,7 @@ struct ExperimentDetailView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if let experiment = store.experiment {
                         header(experiment)
+                        if let offTrack = experiment.offTrack { ExperimentOffTrackCard(offTrack: offTrack) }
                         if experiment.isActive { plan(experiment) }
                         ExperimentWeeksStrip(experiment: experiment)
                         if let result = experiment.result { ExperimentResultView(experiment: experiment, result: result) }
@@ -257,7 +250,7 @@ struct ExperimentWeeksStrip: View {
                     .accessibilityLabel("Week \(item.week), \(item.change ? "change" : "usual") week\(current ? ", this week" : "")")
                 }
             }
-            Text("Change days logged so far: \(experiment.adherence.followedDays) of \(experiment.adherence.changeDays) followed the plan.")
+            Text("Days in change weeks you stuck to so far: \(experiment.adherence.followedDays) of \(experiment.adherence.changeDays).")
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .padding(16)
@@ -287,7 +280,7 @@ struct ExperimentResultView: View {
             }
             Text(result.summary).font(.subheadline).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("experiment.result")
-            Text("Compared \(result.changeDays) change days with \(result.usualDays) usual days.")
+            Text("Compared \(result.changeDays) days in change weeks with \(result.usualDays) in usual weeks.")
                 .font(.footnote).foregroundStyle(.secondary)
             if let adherence = result.adherenceText {
                 Text(adherence).font(.footnote).foregroundStyle(.secondary)
@@ -316,5 +309,330 @@ struct ExperimentCheckInPin: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .panelSurface(cornerRadius: 22)
         }
+    }
+}
+
+struct ExperimentOffTrackCard: View {
+    let offTrack: ExperimentOffTrack
+    @EnvironmentObject private var store: ExperimentStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Off track", systemImage: "arrow.uturn.backward.circle")
+                .font(.headline).foregroundStyle(HealthTheme.color(for: .activity))
+                .accessibilityAddTraits(.isHeader)
+            Text(offTrack.summary).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            Text(offTrack.restartText).font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { Task { await store.restart() } } label: {
+                HStack {
+                    if store.action == .working { ProgressView().tint(.white) }
+                    Text("Restart from tomorrow").font(.body.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(HealthTheme.color(for: .activity))
+            .disabled(store.action == .working)
+            .accessibilityIdentifier("experiment.restart")
+            if case .failed(let message) = store.action {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 22)
+        .accessibilityIdentifier("experiment.offTrack")
+    }
+}
+
+struct ExperimentSetupView: View {
+    enum Step: Int, CaseIterable {
+        case usual
+        case change
+        case plan
+
+        var title: String {
+            switch self {
+            case .usual: "Your usual"
+            case .change: "Pick your change"
+            case .plan: "How it works"
+            }
+        }
+    }
+
+    let story: PatternStory
+    let finding: PatternFinding
+    let group: PatternGroup
+    @EnvironmentObject private var store: ExperimentStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var setup: ExperimentSetup?
+    @State private var loadFailed = false
+    @State private var step = Step.usual
+    @State private var choice: String?
+    @State private var heroBehindToolbar = true
+
+    private var chosen: ExperimentOption? { setup?.options.first { $0.id == choice } }
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    header
+                        .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 150 } action: {
+                            heroBehindToolbar = $0
+                        }
+                    if let setup {
+                        content(setup)
+                        controls(setup)
+                    } else if loadFailed {
+                        failure
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                            .accessibilityLabel("Loading your usual week")
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+                .animation(.snappy, value: step)
+            }
+            .modifier(PatternsScrollEdge(hidden: heroBehindToolbar))
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .task { if setup == nil { await load() } }
+        .onAppear { store.clearError() }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Step \(step.rawValue + 1) of \(Step.allCases.count) · \(story.title)")
+                .font(.footnote.weight(.medium)).foregroundStyle(.white.opacity(0.75))
+                .fadesNearTop(from: 122, to: 96)
+            Text(step.title)
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .accessibilityAddTraits(.isHeader)
+                .fadesNearTop(from: 122, to: 96)
+            Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+                .fadesNearTop(from: 122, to: 96)
+            HStack(spacing: 6) {
+                ForEach(Step.allCases, id: \.self) { item in
+                    Capsule().fill(.white.opacity(item.rawValue <= step.rawValue ? 0.9 : 0.3))
+                        .frame(height: 4)
+                }
+            }
+            .padding(.top, 8)
+            .accessibilityHidden(true)
+            .fadesNearTop(from: 122, to: 96)
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
+        .padding(.bottom, PatternsSky.bottomFade - 8)
+        .background { PatternsSky(group: group).padding(.horizontal, -16) }
+    }
+
+    private var subtitle: String {
+        switch step {
+        case .usual: "What a normal week looks like for you, from your own logs."
+        case .change: "What you’ll do on change weeks."
+        case .plan:
+            if let setup { "\(setup.weeks) weeks, starting \(JournalDay.longTitle(setup.startDate))." } else { "" }
+        }
+    }
+
+    @ViewBuilder
+    private func content(_ setup: ExperimentSetup) -> some View {
+        switch step {
+        case .usual: usual(setup)
+        case .change: changes(setup)
+        case .plan: plan(setup)
+        }
+    }
+
+    private func usual(_ setup: ExperimentSetup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(setup.usual.lines, id: \.self) { line in
+                Label { Text(line).fixedSize(horizontal: false, vertical: true) } icon: {
+                    Image(systemName: "calendar").foregroundStyle(HealthTheme.color(for: .activity))
+                }
+                .font(.body)
+            }
+            if let basis = setup.usual.basis {
+                Text(basis).font(.footnote).foregroundStyle(.secondary)
+            }
+            Divider()
+            Text("On usual weeks you carry on like this. Only change weeks are different.")
+                .font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 22)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("experiment.usual")
+    }
+
+    private func changes(_ setup: ExperimentSetup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(setup.options) { option in
+                let selected = option.id == choice
+                Button { choice = option.id } label: {
+                    HStack(spacing: 12) {
+                        Text(option.title).font(.headline)
+                        Spacer(minLength: 8)
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(selected ? HealthTheme.color(for: .activity) : Color.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .panelSurface(cornerRadius: 22)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 22)
+                            .strokeBorder(HealthTheme.color(for: .activity), lineWidth: selected ? 2 : 0)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("experiment.option.\(option.id)")
+            }
+        }
+    }
+
+    private func plan(_ setup: ExperimentSetup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ExperimentWeeksPreview(weeks: setup.weeks)
+            VStack(alignment: .leading, spacing: 14) {
+                ExperimentStepRow(icon: "flask", title: "Change weeks", text: chosen?.detail ?? "")
+                ExperimentStepRow(icon: "circle.dashed", title: "Usual weeks", text: "Carry on as you normally do.")
+                ExperimentStepRow(icon: "checklist", title: "Every day",
+                                  text: "Your check-in shows that day’s plan at the top. You still log what you actually did.")
+                ExperimentStepRow(icon: "hourglass", title: "Settling in",
+                                  text: "The first \(setup.washoutDays) days of each week aren’t counted, so each switch can settle.")
+                ExperimentStepRow(icon: "exclamationmark.circle", title: "Don’t slip!",
+                                  text: "Logging something that breaks the plan in a change week ends the experiment. You can restart it from the next day.")
+                ExperimentStepRow(icon: "chart.bar", title: "Your result",
+                                  text: "Ready \(JournalDay.longTitle(setup.resultDate)), comparing \(setup.outcomeLabel.lowercased()) in change and usual weeks.")
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .panelSurface(cornerRadius: 22)
+            if let note = setup.safetyNote { PatternSafetyNote(text: note) }
+        }
+    }
+
+    private func controls(_ setup: ExperimentSetup) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if case .failed(let message) = store.action {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("experiment.error")
+            }
+            HStack(spacing: 10) {
+                if step != .usual {
+                    Button { back() } label: {
+                        Text("Back").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Button { Task { await advance(setup) } } label: {
+                    HStack {
+                        if store.action == .working { ProgressView().tint(.white) }
+                        Text(step == .plan ? "Start experiment" : "Next").font(.body.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(HealthTheme.color(for: .activity))
+                .disabled(store.action == .working || (step != .usual && chosen == nil))
+                .accessibilityIdentifier(step == .plan ? "experiment.start" : "experiment.next")
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var failure: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Couldn’t load your usual week.").font(.subheadline).foregroundStyle(.secondary)
+            Button("Retry") { Task { await load() } }.frame(minHeight: 44)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 22)
+    }
+
+    private func load() async {
+        loadFailed = false
+        do {
+            let next = try await store.setup(for: finding)
+            setup = next
+            choice = choice ?? next.options.first?.id
+        } catch {
+            loadFailed = true
+        }
+    }
+
+    private func back() {
+        store.clearError()
+        step = Step(rawValue: step.rawValue - 1) ?? .usual
+    }
+
+    private func advance(_ setup: ExperimentSetup) async {
+        store.clearError()
+        guard step == .plan else {
+            step = Step(rawValue: step.rawValue + 1) ?? .plan
+            return
+        }
+        if await store.start(finding, change: choice) { dismiss() }
+    }
+}
+
+struct ExperimentStepRow: View {
+    let icon: String
+    let title: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).font(.body).foregroundStyle(HealthTheme.color(for: .activity))
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(text).font(.subheadline).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct ExperimentWeeksPreview: View {
+    let weeks: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(1...max(weeks, 1), id: \.self) { week in
+                let change = week % 2 == 1
+                VStack(spacing: 4) {
+                    Text("Week \(week)").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(change ? "Change" : "Usual").font(.footnote.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .background(change ? HealthTheme.color(for: .activity).opacity(0.18) : Color.secondary.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 10))
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Week \(week), \(change ? "change" : "usual") week")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 22)
     }
 }

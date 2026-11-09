@@ -277,7 +277,7 @@ struct PatternsView: View {
     }
 }
 
-private struct PatternsScrollEdge: ViewModifier {
+struct PatternsScrollEdge: ViewModifier {
     let hidden: Bool
 
     func body(content: Content) -> some View {
@@ -692,7 +692,7 @@ struct PatternStoryView: View {
                     if let note = story.safetyNote {
                         PatternSafetyNote(text: note)
                     }
-                    ExperimentTestSection(story: story)
+                    ExperimentTestSection(story: story, group: group)
                     ForEach(groups, id: \.0) { group, findings in
                         VStack(alignment: .leading, spacing: 16) {
                             Text(group.title).font(.headline).accessibilityAddTraits(.isHeader)

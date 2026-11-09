@@ -4,27 +4,29 @@ import XCTest
 @MainActor
 final class ExperimentTests: XCTestCase {
     private func day(_ date: String, number: Int, kind: String, washout: Bool = false) -> String {
-        let plan = kind == "change" ? "Experiment day: no alcohol" : "Usual day: do what you normally do"
+        let plan = kind == "change" ? "Change week: no alcohol" : "Usual week: do what you normally do"
         return #"{"date": "\#(date)", "day_number": \#(number), "week": \#((number - 1) / 7 + 1), "kind": "\#(kind)", "washout": \#(washout), "plan": "\#(plan)"}"#
     }
 
-    private func experiment(status: String = "active", today: String? = nil, result: String = "null") -> Data {
+    private func experiment(status: String = "active", today: String? = nil, result: String = "null",
+                            offTrack: String = "null") -> Data {
         let days = [day("2026-11-02", number: 1, kind: "change", washout: true),
                     day("2026-11-09", number: 8, kind: "usual", washout: true)]
         return Data("""
         {"experiment": {"id": "exp", "behaviour_id": "alcohol_free", "input_id": "alcohol", "pair_id": "alcohol:rhr:d1",
          "stratum": "all", "outcome_id": "rhr", "outcome_label": "Overnight resting heart rate",
-         "title": "Alcohol-free days", "change_text": "Experiment day: no alcohol",
-         "usual_text": "Usual day: do what you normally do", "status": "\(status)",
+         "title": "Alcohol-free weeks", "change_text": "Change week: no alcohol",
+         "usual_text": "Usual week: do what you normally do", "status": "\(status)",
          "start_date": "2026-11-02", "end_date": "2026-11-29", "result_date": "2026-12-01",
          "started_at": "2026-11-01T10:00:00Z", "stopped_at": null, "completed_at": null,
          "today": \(today ?? "null"), "days": [\(days.joined(separator: ","))],
-         "adherence": {"change_days": 3, "logged_days": 3, "followed_days": 2}, "result": \(result)}}
+         "adherence": {"change_days": 3, "logged_days": 3, "followed_days": 2}, "result": \(result),
+         "off_track": \(offTrack)}}
         """.utf8)
     }
 
     private var readyResult: String {
-        #"{"status": "ready", "change_days": 10, "usual_days": 9, "minimum_days": 6, "difference": -5.0, "unit": "bpm", "benefit": "helps", "summary": "Overnight resting heart rate was about 5 bpm lower on change days than on usual days.", "adherence_text": "You logged doing the change on 12 of 14 change days.", "notes": ["This is one person's result over a short period."]}"#
+        #"{"status": "ready", "change_days": 10, "usual_days": 9, "minimum_days": 6, "difference": -5.0, "unit": "bpm", "benefit": "helps", "summary": "Overnight resting heart rate was about 5 bpm lower in change weeks than in usual weeks.", "adherence_text": "You logged sticking to the change on 12 of the 14 days in change weeks.", "notes": ["This is one person's result over a short period."]}"#
     }
 
     private func decodeFinding(testable: String = #", "testable": true"#) throws -> PatternFinding {
@@ -49,7 +51,7 @@ final class ExperimentTests: XCTestCase {
         let response = try JournalCoding.decoder().decode(ExperimentResponse.self, from: experiment(today: today))
         let decoded = try XCTUnwrap(response.experiment)
         XCTAssertEqual(decoded.statusText, "Day 1 of 2")
-        XCTAssertEqual(decoded.plan(on: "2026-11-02")?.plan, "Experiment day: no alcohol")
+        XCTAssertEqual(decoded.plan(on: "2026-11-02")?.plan, "Change week: no alcohol")
         XCTAssertEqual(decoded.plan(on: "2026-11-09")?.isChange, false)
         XCTAssertNil(decoded.plan(on: "2026-12-25"))
     }
@@ -68,6 +70,61 @@ final class ExperimentTests: XCTestCase {
         let response = try JournalCoding.decoder().decode(ExperimentResponse.self,
                                                           from: experiment(status: "stopped", result: tooFew))
         XCTAssertEqual(response.experiment?.result?.isReady, false)
+    }
+
+    func testSetupDecodesTheUsualWeekAndChanges() throws {
+        let json = """
+        {"setup": {"pair_id": "alcohol:rhr:d1", "stratum": "all", "input_id": "alcohol",
+         "outcome_label": "Overnight resting heart rate",
+         "usual": {"logged_days": 28, "used_days": 14, "typical_units": 4.0, "typical_last_use": null,
+                   "lines": ["You drank on about 4 days a week.", "Usually about 4 units on those days."],
+                   "basis": "Based on the 28 days you logged in the last 4 weeks."},
+         "options": [{"id": "alcohol_free", "title": "No alcohol", "change_text": "Change week: no alcohol",
+                      "detail": "No alcohol all week."},
+                     {"id": "alcohol_week_4", "title": "Up to 4 units a week",
+                      "change_text": "Change week: no more than 4 units of alcohol this week",
+                      "detail": "Up to 4 units in total across the week."}],
+         "start_date": "2026-11-10", "end_date": "2026-12-07", "result_date": "2026-12-09", "weeks": 4,
+         "washout_days": 2, "safety_note": "Not advice."}}
+        """
+        let setup = try JournalCoding.decoder().decode(ExperimentSetupResponse.self, from: Data(json.utf8)).setup
+        XCTAssertEqual(setup.usual.lines.count, 2)
+        XCTAssertEqual(setup.options.map(\.id), ["alcohol_free", "alcohol_week_4"])
+        XCTAssertEqual(setup.weeks, 4)
+        XCTAssertEqual(setup.safetyNote, "Not advice.")
+    }
+
+    func testOffTrackExperimentHasNoPlanAndExplainsWhy() throws {
+        let offTrack = #"{"date": "2026-11-04", "summary": "In a change week, you logged alcohol, so this experiment has ended.", "restart_text": "You can restart it."}"#
+        let response = try JournalCoding.decoder().decode(ExperimentResponse.self,
+                                                          from: experiment(status: "off_track", offTrack: offTrack))
+        let decoded = try XCTUnwrap(response.experiment)
+        XCTAssertTrue(decoded.isOffTrack)
+        XCTAssertFalse(decoded.isActive)
+        XCTAssertEqual(decoded.statusText, "Off track")
+        XCTAssertNil(decoded.plan(on: "2026-11-02"))
+        XCTAssertEqual(decoded.offTrack?.summary, "In a change week, you logged alcohol, so this experiment has ended.")
+        let plain = try JournalCoding.decoder().decode(ExperimentResponse.self, from: experiment())
+        XCTAssertNil(plain.experiment?.offTrack)
+    }
+
+    func testStartSendsTheChosenChangeAndRestartUsesItsOwnEndpoint() async throws {
+        var bodies: [String] = []
+        var paths: [String] = []
+        let started = experiment()
+        let store = ExperimentStore(authStore: AuthStore()) { request in
+            paths.append(request.url?.path ?? "")
+            bodies.append(String(decoding: request.httpBody ?? Data(), as: UTF8.self))
+            return started
+        }
+        let didStart = await store.start(try finding, change: "alcohol_week_4")
+        XCTAssertTrue(didStart)
+        XCTAssertTrue(bodies[0].contains(#""behaviour_id":"alcohol_week_4""#))
+        let didRestart = await store.restart()
+        XCTAssertTrue(didRestart)
+        XCTAssertTrue(paths[1].hasSuffix("insights/experiment/restart"))
+        XCTAssertEqual(ExperimentStore.message(nil, name: "restart"),
+                       "Couldn’t restart the experiment. Check your connection and try again.")
     }
 
     func testFindingsWithoutTheFlagAreNotTestable() throws {

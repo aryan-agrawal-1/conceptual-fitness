@@ -12,6 +12,7 @@ struct JournalView: View {
     var onboardedAt: Date?
     @Binding var segment: InsightsSegment
     @ObservedObject var patterns: PatternsStore
+    @EnvironmentObject private var experiments: ExperimentStore
     @State private var selectedDay: String?
     @State private var selection: JournalEditorSelection?
     @State private var checkIn: JournalCheckInSelection?
@@ -35,6 +36,9 @@ struct JournalView: View {
                         streakHero
                         if patterns.newFindings > 0 {
                             PatternsBanner(count: patterns.newFindings) { segment = .patterns }
+                        }
+                        if experiments.experiment?.isOffTrack == true {
+                            ExperimentSummaryCard()
                         }
                         dayHeader
                         dayNote
@@ -68,6 +72,9 @@ struct JournalView: View {
         }
         .sheet(item: $checkIn) { JournalCheckInView(store: store, reminders: reminders, day: $0.day) }
         .refreshable { await store.synchronize() }
+        .onChange(of: store.isSyncing) { _, syncing in
+            if !syncing, experiments.active != nil { Task { await experiments.load() } }
+        }
         .task { await store.synchronize() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
             Task { await store.synchronize() }
