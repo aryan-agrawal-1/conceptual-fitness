@@ -64,14 +64,21 @@ struct AuthMeResponse: Decodable {
     }
 }
 
+enum SignInProvider: String, Codable, Equatable {
+    case apple
+    case google
+}
+
 struct AuthUser: Codable, Equatable {
     let id: String
+    var signInProvider: SignInProvider? = nil
     let email: String?
     let firstName: String?
     let lastName: String?
 
     enum CodingKeys: String, CodingKey {
         case id
+        case signInProvider = "sign_in_provider"
         case email
         case firstName = "first_name"
         case lastName = "last_name"
@@ -165,9 +172,15 @@ final class AuthStore: ObservableObject {
     private let signingKeys: DeviceSigningKeyStore
     private let callbackScheme = "healthapp"
     private var webSession: ASWebAuthenticationSession?
+    private let appleAuthorization = AppleAuthorizationRequester()
     private var accessToken: String?
     private var refreshTask: Task<TokenResponse, Error>?
     private static let deletionDeadlineKey = "accountDeletion.scheduledFor"
+    private static let deletionProviderKey = "accountDeletion.signInProvider"
+
+    var deletionSignInProvider: SignInProvider? {
+        UserDefaults.standard.string(forKey: Self.deletionProviderKey).flatMap(SignInProvider.init(rawValue:))
+    }
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
@@ -195,6 +208,10 @@ final class AuthStore: ObservableObject {
             state = .signedOut
             return
         }
+        if await appleCredentialWasRevoked() {
+            await signOut()
+            return
+        }
         do {
             _ = try await refreshAccessToken()
             try await loadMe()
@@ -214,28 +231,20 @@ final class AuthStore: ObservableObject {
         }
     }
 
-    func signIn() async {
+    func signIn(with provider: SignInProvider) async {
         let previousState = state
         let hadSession = keychain.refreshToken != nil
         if !hadSession { state = .signingIn }
         do {
             let deviceID = keychain.deviceID
             let canEnrollDevice = signingKeys.enrollmentAvailabilityError() == nil
-            var query = ["device_id": deviceID]
-            if canEnrollDevice {
-                query["device_public_key"] = try signingKeys.publicKeyBase64()
+            let publicKey = canEnrollDevice ? try signingKeys.publicKeyBase64() : nil
+            let code = switch provider {
+            case .apple:
+                try await appleSignInCode(purpose: "sign_in", deviceID: deviceID, publicKey: publicKey)
+            case .google:
+                try await googleSignInCode(deviceID: deviceID, publicKey: publicKey)
             }
-            let startURL: StartURLResponse = try await request(
-                path: try Self.path(
-                    "/auth/google/start-url",
-                    query: query
-                )
-            )
-            guard let authURL = URL(string: startURL.authorizationURL) else {
-                throw AuthError.badURL
-            }
-            let callbackURL = try await authenticate(with: authURL)
-            let code = try authCode(from: callbackURL)
             var body = ["code": code, "device_id": deviceID]
             if canEnrollDevice {
                 body["signature"] = try await signingKeys.signatureBase64(
@@ -255,9 +264,75 @@ final class AuthStore: ObservableObject {
             } else if Self.isCancellation(error) {
                 state = .signedOut
             } else {
-                state = .failed(Self.message(for: error, fallback: "Sign in failed. Check the backend is running and try again."))
+                state = .failed(Self.signInFailureMessage(for: error, provider: provider))
             }
         }
+    }
+
+    private func googleSignInCode(deviceID: String, publicKey: String?) async throws -> String {
+        var query = ["device_id": deviceID]
+        if let publicKey { query["device_public_key"] = publicKey }
+        let startURL: StartURLResponse = try await request(path: try Self.path("/auth/google/start-url", query: query))
+        guard let authURL = URL(string: startURL.authorizationURL) else {
+            throw AuthError.badURL
+        }
+        let callbackURL = try await authenticate(with: authURL)
+        if let reason = Self.callbackReason(from: callbackURL) {
+            throw SignInRefusal(reason: reason)
+        }
+        return try authCode(from: callbackURL)
+    }
+
+    private func appleSignInCode(purpose: String, deviceID: String, publicKey: String?) async throws -> String {
+        let completion = try await completeAppleAuthorization(purpose: purpose, deviceID: deviceID, publicKey: publicKey)
+        guard completion.status == "signed_in", let code = completion.code, !code.isEmpty else {
+            throw AuthError.badCallback
+        }
+        return code
+    }
+
+    private func completeAppleAuthorization(
+        purpose: String,
+        deviceID: String,
+        publicKey: String?
+    ) async throws -> AppleCompletionResponse {
+        var query = ["device_id": deviceID, "purpose": purpose]
+        if let publicKey { query["device_public_key"] = publicKey }
+        let path = try Self.path("/auth/apple/start", query: query)
+        let start: AppleNonceResponse = purpose == "enroll_device"
+            ? try await authenticatedRequest(path: path)
+            : try await request(path: path)
+        let credential = try await appleAuthorization.credential(
+            hashedNonce: Self.sha256Hex(start.nonce),
+            requestsProfile: purpose == "sign_in"
+        )
+        guard let identityToken = credential.identityToken.flatMap({ String(data: $0, encoding: .utf8) }),
+              let authorizationCode = credential.authorizationCode.flatMap({ String(data: $0, encoding: .utf8) })
+        else {
+            throw AuthError.badCallback
+        }
+        var body = [
+            "nonce": start.nonce,
+            "identity_token": identityToken,
+            "authorization_code": authorizationCode,
+            "device_id": deviceID,
+        ]
+        if let givenName = credential.fullName?.givenName { body["first_name"] = givenName }
+        if let familyName = credential.fullName?.familyName { body["last_name"] = familyName }
+        let completion: AppleCompletionResponse = try await post(path: "/auth/apple/complete", body: body)
+        keychain.appleUserID = credential.user
+        return completion
+    }
+
+    private func appleCredentialWasRevoked() async -> Bool {
+        guard let appleUserID = keychain.appleUserID else { return false }
+        let credentialState = try? await ASAuthorizationAppleIDProvider().credentialState(forUserID: appleUserID)
+        return credentialState == .revoked || credentialState == .notFound
+    }
+
+    func handleAppleCredentialRevoked() async {
+        guard keychain.appleUserID != nil, keychain.refreshToken != nil else { return }
+        await signOut()
     }
 
     func connectFitbit() async -> String? {
@@ -379,6 +454,9 @@ final class AuthStore: ObservableObject {
     }
 
     func completeDeletionScheduling(userID: String, scheduledFor: Date) {
+        if let provider = currentSignInProvider {
+            UserDefaults.standard.set(provider.rawValue, forKey: Self.deletionProviderKey)
+        }
         clearLocalData(userID: userID)
         keychain.clearTokens()
         signingKeys.deleteKey()
@@ -389,25 +467,25 @@ final class AuthStore: ObservableObject {
         state = .deletionScheduled(scheduledFor, nil)
     }
 
-    func restoreDeletedAccount() async {
+    func restoreDeletedAccount(using provider: SignInProvider) async {
         let savedDeadline = UserDefaults.standard.object(forKey: Self.deletionDeadlineKey) as? Date
         state = .signingIn
         do {
             if let error = signingKeys.enrollmentAvailabilityError() { throw error }
             let deviceID = keychain.deviceID
             let publicKey = try signingKeys.replaceKeyAndGetPublicKeyBase64()
-            let path = try Self.path(
-                "/auth/google/sensitive-start-url",
-                query: [
-                    "device_id": deviceID,
-                    "purpose": SensitiveActionPurpose.recoverDeletion.rawValue,
-                    "device_public_key": publicKey,
-                ]
-            )
-            let start: StartURLResponse = try await request(path: path)
-            guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
-            let callbackURL = try await authenticate(with: authURL)
-            let grant = try sensitiveActionGrant(from: callbackURL, purpose: .recoverDeletion)
+            let grant = switch provider {
+            case .apple:
+                try Self.recoveryGrant(
+                    from: try await completeAppleAuthorization(
+                        purpose: SensitiveActionPurpose.recoverDeletion.rawValue,
+                        deviceID: deviceID,
+                        publicKey: publicKey
+                    )
+                )
+            case .google:
+                try await googleRecoveryGrant(deviceID: deviceID, publicKey: publicKey)
+            }
             let signature = try await signingKeys.signatureBase64(
                 for: Self.transcript("account-recovery", grant, deviceID),
                 reason: "Confirm restoring your Conceptual Fitness account"
@@ -422,35 +500,70 @@ final class AuthStore: ObservableObject {
             )
             apply(response)
             UserDefaults.standard.removeObject(forKey: Self.deletionDeadlineKey)
+            UserDefaults.standard.removeObject(forKey: Self.deletionProviderKey)
             try await loadMe()
         } catch {
             let message = Self.isCancellation(error)
                 ? nil
-                : Self.message(for: error, fallback: "Account restoration is unavailable. Confirm the same Google account was used, or the recovery period may have ended.")
+                : Self.message(for: error, fallback: "Account restoration is unavailable. Check you signed in the same way as before, or the recovery period may have ended.")
             if let savedDeadline {
                 state = .deletionScheduled(savedDeadline, message)
             } else {
-                state = .failed(message ?? "No recoverable account was found for that Google account.")
+                state = .failed(message ?? "No recoverable account was found for that sign-in.")
             }
         }
+    }
+
+    private func googleRecoveryGrant(deviceID: String, publicKey: String) async throws -> String {
+        let path = try Self.path(
+            "/auth/google/sensitive-start-url",
+            query: [
+                "device_id": deviceID,
+                "purpose": SensitiveActionPurpose.recoverDeletion.rawValue,
+                "device_public_key": publicKey,
+            ]
+        )
+        let start: StartURLResponse = try await request(path: path)
+        guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
+        let callbackURL = try await authenticate(with: authURL)
+        return try sensitiveActionGrant(from: callbackURL, purpose: .recoverDeletion)
+    }
+
+    nonisolated static func recoveryGrant(from completion: AppleCompletionResponse) throws -> String {
+        guard completion.status == "authorized",
+              completion.purpose == SensitiveActionPurpose.recoverDeletion.rawValue,
+              let grant = completion.grant,
+              !grant.isEmpty
+        else {
+            throw AuthError.badCallback
+        }
+        return grant
     }
 
     private func enrollCurrentDevice() async throws {
         if let error = signingKeys.enrollmentAvailabilityError() { throw error }
         let deviceID = keychain.deviceID
         let publicKey = try signingKeys.publicKeyBase64()
-        let path = try Self.path(
-            "/auth/google/sensitive-start-url",
-            query: [
-                "device_id": deviceID,
-                "purpose": SensitiveActionPurpose.enrollDevice.rawValue,
-                "device_public_key": publicKey,
-            ]
-        )
-        let start: StartURLResponse = try await authenticatedRequest(path: path)
-        guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
-        let callbackURL = try await authenticate(with: authURL)
-        let code = try authCode(from: callbackURL)
+        let code: String
+        if currentSignInProvider == .apple {
+            code = try await appleSignInCode(
+                purpose: SensitiveActionPurpose.enrollDevice.rawValue,
+                deviceID: deviceID,
+                publicKey: publicKey
+            )
+        } else {
+            let path = try Self.path(
+                "/auth/google/sensitive-start-url",
+                query: [
+                    "device_id": deviceID,
+                    "purpose": SensitiveActionPurpose.enrollDevice.rawValue,
+                    "device_public_key": publicKey,
+                ]
+            )
+            let start: StartURLResponse = try await authenticatedRequest(path: path)
+            guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
+            code = try authCode(from: try await authenticate(with: authURL))
+        }
         let signature = try await signingKeys.signatureBase64(
             for: Self.transcript("auth-code-exchange", code, deviceID),
             reason: "Confirm linking this device to your Conceptual Fitness account"
@@ -460,6 +573,11 @@ final class AuthStore: ObservableObject {
             body: ["code": code, "device_id": deviceID, "signature": signature]
         )
         apply(response)
+    }
+
+    private var currentSignInProvider: SignInProvider? {
+        if case .authenticated(let session) = state { return session.user.signInProvider }
+        return keychain.appleUserID == nil ? nil : .apple
     }
 
     private func authorizeSensitiveAction(_ purpose: SensitiveActionPurpose) async throws -> String {
@@ -519,6 +637,7 @@ final class AuthStore: ObservableObject {
 
     func continueAfterRecoveryPeriod() {
         UserDefaults.standard.removeObject(forKey: Self.deletionDeadlineKey)
+        UserDefaults.standard.removeObject(forKey: Self.deletionProviderKey)
         state = .signedOut
     }
 
@@ -645,10 +764,42 @@ final class AuthStore: ObservableObject {
         let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
         let status = items.first(where: { $0.name == "status" })?.value
         if status == "health_connected" || status == "health_connected_queued" { return nil }
-        if items.first(where: { $0.name == "reason" })?.value == "health_account_in_use" {
+        switch callbackReason(from: callbackURL) {
+        case "health_account_in_use":
             return "That Fitbit account is already connected to a different Conceptual Fitness account."
+        case "google_account_in_use":
+            return "That Google account signs in to a different Conceptual Fitness account."
+        default:
+            return "Fitbit wasn’t connected. You can try again."
         }
-        return "Fitbit wasn’t connected. You can try again."
+    }
+
+    nonisolated static func callbackReason(from callbackURL: URL) -> String? {
+        let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard items.first(where: { $0.name == "status" })?.value == "error" else { return nil }
+        return items.first(where: { $0.name == "reason" })?.value ?? "oauth_failed"
+    }
+
+    nonisolated static func signInFailureMessage(for error: Error, provider: SignInProvider) -> String {
+        let reason = (error as? SignInRefusal)?.reason ?? (error as? HTTPResponseError)?.code
+        switch reason {
+        case "google_account_in_use":
+            return "This Google account provides Fitbit data for another account, so it can’t be used to sign in."
+        case "account_pending_deletion":
+            return "This account is scheduled for deletion. Restore it to sign in again."
+        default:
+            if let message = (error as? SensitiveActionError)?.errorDescription { return message }
+            if error is ASAuthorizationError {
+                return "Sign in with Apple isn’t available. Check you’re signed in to an Apple Account in Settings."
+            }
+            return provider == .apple
+                ? "Sign in with Apple didn’t finish. Check your connection and try again."
+                : "Sign in failed. Check your connection and try again."
+        }
+    }
+
+    nonisolated static func sha256Hex(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     private func sensitiveActionGrant(
@@ -708,6 +859,7 @@ final class AuthStore: ObservableObject {
 
     private static func isCancellation(_ error: Error) -> Bool {
         if case SensitiveActionError.cancelled = error { return true }
+        if let error = error as? ASAuthorizationError, error.code == .canceled { return true }
         let error = error as NSError
         if error.domain == ASWebAuthenticationSessionError.errorDomain,
            error.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
@@ -734,6 +886,21 @@ final class AuthStore: ObservableObject {
         state = .deletionScheduled(deadline, nil)
     }
     #endif
+}
+
+struct SignInRefusal: Error {
+    let reason: String
+}
+
+struct AppleNonceResponse: Decodable {
+    let nonce: String
+}
+
+struct AppleCompletionResponse: Decodable {
+    let status: String
+    let code: String?
+    let grant: String?
+    let purpose: String?
 }
 
 struct StartURLResponse: Decodable {
@@ -774,6 +941,7 @@ private struct DeviceAuthorizationResponse: Decodable {
 
 struct AuthGateView: View {
     @ObservedObject var authStore: AuthStore
+    @State private var isChoosingRestoreMethod = false
 
     var body: some View {
         #if DEBUG
@@ -790,8 +958,19 @@ struct AuthGateView: View {
         #endif
     }
 
-    @ViewBuilder
+    private var appleCredentialRevocations: NotificationCenter.Publisher {
+        NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
+    }
+
     private var authContent: some View {
+        authStates
+            .onReceive(appleCredentialRevocations) { _ in
+                Task { await authStore.handleAppleCredentialRevoked() }
+            }
+    }
+
+    @ViewBuilder
+    private var authStates: some View {
         switch authStore.state {
         case .checking:
             ProgressView()
@@ -820,60 +999,85 @@ struct AuthGateView: View {
         ZStack {
             AppBackground()
 
-            VStack(alignment: .leading, spacing: 28) {
-                Spacer()
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 28) {
+                        Spacer(minLength: 0)
 
-                VStack(alignment: .leading, spacing: 16) {
-                    Image(systemName: "heart.text.square.fill")
-                        .font(.system(size: 58, weight: .semibold))
-                        .foregroundStyle(.blue)
-                        .symbolRenderingMode(.hierarchical)
+                        VStack(alignment: .leading, spacing: 16) {
+                            Image(systemName: "heart.text.square.fill")
+                                .font(.system(size: 58, weight: .semibold))
+                                .foregroundStyle(.blue)
+                                .symbolRenderingMode(.hierarchical)
 
-                    Text("Conceptual Fitness")
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
+                            Text("Conceptual Fitness")
+                                .font(.system(size: 38, weight: .bold, design: .rounded))
+                                .foregroundStyle(.primary)
 
-                    Text("Sign in, then connect your Fitbit to turn your recovery, sleep, and training data into a daily dashboard.")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                            Text("Sign in, then connect your Fitbit to turn your recovery, sleep, and training data into a daily dashboard.")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        VStack(spacing: 12) {
+                            if let errorMessage {
+                                Text(errorMessage)
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.red)
+                                    .multilineTextAlignment(.center)
+                                    .accessibilityLabel("Sign-in error: \(errorMessage)")
+                            }
+
+                            AppleSignInButton {
+                                Task { await authStore.signIn(with: .apple) }
+                            }
+                            .frame(height: SignInButtonMetrics.height)
+
+                            Button {
+                                Task { await authStore.signIn(with: .google) }
+                            } label: {
+                                Label("Continue with Google", systemImage: "person.crop.circle.badge.checkmark")
+                                    .font(.system(size: SignInButtonMetrics.fontSize, weight: .medium))
+                                    .frame(maxWidth: .infinity, minHeight: SignInButtonMetrics.height)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.black)
+                            .background(.white, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.black, lineWidth: 1))
+
+                            Button("Restore an account scheduled for deletion") {
+                                isChoosingRestoreMethod = true
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityHint("Signs in and restores the account if it is still within the 14-day recovery period")
+                            .confirmationDialog(
+                                "How did you sign in to that account?",
+                                isPresented: $isChoosingRestoreMethod,
+                                titleVisibility: .visible
+                            ) {
+                                Button("Restore with Apple") {
+                                    Task { await authStore.restoreDeletedAccount(using: .apple) }
+                                }
+                                Button("Restore with Google") {
+                                    Task { await authStore.restoreDeletedAccount(using: .google) }
+                                }
+                            }
+
+                            Text("Your health data stays tied to your authenticated app session.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(28)
+                    .frame(minHeight: geometry.size.height)
                 }
-
-                VStack(spacing: 12) {
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.red)
-                            .multilineTextAlignment(.center)
-                            .accessibilityLabel("Sign-in error: \(errorMessage)")
-                    }
-
-                    Button {
-                        Task { await authStore.signIn() }
-                    } label: {
-                        Label("Continue with Google", systemImage: "person.crop.circle.badge.checkmark")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-
-                    Button("Restore an account scheduled for deletion") {
-                        Task { await authStore.restoreDeletedAccount() }
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityHint("Signs in with Google and restores the account if it is still within the 14-day recovery period")
-
-                    Text("Your health data stays tied to your authenticated app session.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                Spacer()
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .padding(28)
         }
     }
 
@@ -905,14 +1109,30 @@ struct AuthGateView: View {
                 }
 
                 Button {
-                    Task { await authStore.restoreDeletedAccount() }
+                    if let provider = authStore.deletionSignInProvider {
+                        Task { await authStore.restoreDeletedAccount(using: provider) }
+                    } else {
+                        isChoosingRestoreMethod = true
+                    }
                 } label: {
                     Label("Restore account", systemImage: "arrow.uturn.backward.circle.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .accessibilityHint("Authenticate with the same Google account and ask the server to cancel deletion")
+                .accessibilityHint("Sign in the same way as before to cancel the deletion")
+                .confirmationDialog(
+                    "How did you sign in to that account?",
+                    isPresented: $isChoosingRestoreMethod,
+                    titleVisibility: .visible
+                ) {
+                    Button("Restore with Apple") {
+                        Task { await authStore.restoreDeletedAccount(using: .apple) }
+                    }
+                    Button("Restore with Google") {
+                        Task { await authStore.restoreDeletedAccount(using: .google) }
+                    }
+                }
 
                 if deadline <= Date() {
                     Button("Return to sign in") {
@@ -926,6 +1146,42 @@ struct AuthGateView: View {
                 Spacer()
             }
             .padding(28)
+        }
+    }
+}
+
+private enum SignInButtonMetrics {
+    static let height: CGFloat = 50
+    static let fontSize: CGFloat = 19
+}
+
+private struct AppleSignInButton: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(authorizationButtonType: .continue, authorizationButtonStyle: .black)
+        button.cornerRadius = SignInButtonMetrics.height / 2
+        button.addTarget(context.coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: ASAuthorizationAppleIDButton, context: Context) {
+        context.coordinator.action = action
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func tapped() {
+            action()
         }
     }
 }
@@ -1026,6 +1282,61 @@ final class WebAuthPresentationContextProvider: NSObject, ASWebAuthenticationPre
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+    }
+}
+
+@MainActor
+final class AppleAuthorizationRequester: NSObject, ASAuthorizationControllerDelegate,
+    ASAuthorizationControllerPresentationContextProviding {
+    private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
+    private var controller: ASAuthorizationController?
+
+    func credential(hashedNonce: String, requestsProfile: Bool) async throws -> ASAuthorizationAppleIDCredential {
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = requestsProfile ? [.fullName, .email] : []
+        request.nonce = hashedNonce
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        self.controller = controller
+        finish(.failure(CancellationError()))
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            controller.performRequests()
+        }
+    }
+
+    nonisolated func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        let credential = authorization.credential as? ASAuthorizationAppleIDCredential
+        MainActor.assumeIsolated {
+            if let credential {
+                finish(.success(credential))
+            } else {
+                finish(.failure(AuthError.badCallback))
+            }
+        }
+    }
+
+    nonisolated func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        MainActor.assumeIsolated { finish(.failure(error)) }
+    }
+
+    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        MainActor.assumeIsolated {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+        }
+    }
+
+    private func finish(_ result: Result<ASAuthorizationAppleIDCredential, Error>) {
+        continuation?.resume(with: result)
+        continuation = nil
+        controller = nil
     }
 }
 
@@ -1165,6 +1476,18 @@ final class KeychainStore {
     private let refreshAccount = "refresh-token"
     private let deviceAccount = "device-id"
     private let cachedSessionAccount = "verified-session"
+    private let appleUserAccount = "apple-user-id"
+
+    var appleUserID: String? {
+        get { read(account: appleUserAccount) }
+        set {
+            if let newValue {
+                save(newValue, account: appleUserAccount)
+            } else {
+                delete(account: appleUserAccount)
+            }
+        }
+    }
 
     private struct CachedSession: Codable {
         let baseURL: String
@@ -1207,6 +1530,7 @@ final class KeychainStore {
     func clearTokens() {
         delete(account: refreshAccount)
         delete(account: cachedSessionAccount)
+        delete(account: appleUserAccount)
     }
 
     private func read(account: String) -> String? {

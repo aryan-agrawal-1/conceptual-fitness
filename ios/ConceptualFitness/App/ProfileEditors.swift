@@ -86,7 +86,7 @@ struct ProfileDetailsEditor: View {
                 TextField("First name", text: $firstName).textContentType(.givenName)
                 TextField("Last name (optional)", text: $lastName).textContentType(.familyName)
                 Text(user?.email ?? "Email unavailable").foregroundStyle(.secondary)
-                Text("Your email is managed by your Google account.").font(.caption).foregroundStyle(.secondary)
+                Text("Your email comes from the account you sign in with.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Body details") {
                 Picker("Birth details", selection: $ageEntry) {
