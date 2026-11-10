@@ -194,6 +194,7 @@ class SignInIdentity(Base):
     provider: Mapped[str] = mapped_column(String(32))
     subject: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_signed_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -223,6 +224,7 @@ class HealthConnection(Base):
     provider: Mapped[str] = mapped_column(String(32), default="google_health")
     external_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     external_legacy_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    account_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     granted_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     access_token_expires_at: Mapped[datetime | None] = mapped_column(
@@ -255,6 +257,7 @@ class OAuthState(Base):
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     device_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     redirect_after: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider: Mapped[str] = mapped_column(String(32), default="google")
     purpose: Mapped[str] = mapped_column(String(32), default="sign_in")
     device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
     source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

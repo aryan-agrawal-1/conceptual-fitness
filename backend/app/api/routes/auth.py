@@ -11,10 +11,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, bearer_token_from_request
+from app.apple.client import AppleAuthError
 from app.core.config import get_settings, missing_or_placeholder_keys
 from app.core.security import decrypt_secret, utcnow
 from app.google_health.client import GoogleHealthAPIError
-from app.models import ConnectionStatus, HealthConnection, User
+from app.models import ConnectionStatus, HealthConnection, SignInIdentity, User
+from app.services.apple_sign_in import (
+    complete_apple_sign_in,
+    create_apple_nonce,
+    handle_apple_notification,
+)
 from app.services.health_dates import get_or_create_profile
 from app.services.app_auth import (
     AppAuthError,
@@ -29,6 +35,8 @@ from app.services.app_auth import (
 from app.services.device_keys import DeviceKeyError
 from app.services.oauth import (
     CONNECT_HEALTH,
+    SIGN_IN,
+    GoogleAccountInUseError,
     HealthAccountInUseError,
     OAuthConfigurationError,
     OAuthStateError,
@@ -58,21 +66,28 @@ logger = logging.getLogger(__name__)
 
 
 def sensitive_oauth_failure_reason(exc: Exception) -> str:
-    if isinstance(exc, GoogleHealthAPIError):
+    if isinstance(exc, (GoogleHealthAPIError, AppleAuthError)):
         return f"provider_http_{exc.status_code}" if exc.status_code else "provider_request_failed"
     return {
+        "Apple configuration is incomplete": "apple_not_configured",
+        "Apple identity token nonce does not match": "nonce_mismatch",
+        "Apple did not return tokens": "missing_apple_tokens",
+        "Apple identity evidence does not match": "identity_mismatch",
+        "OAuth state is bound to another device": "device_mismatch",
         "Google did not return authentication evidence": "missing_id_token",
         "Google did not confirm recent authentication": "missing_auth_time",
         "Google authentication evidence is invalid": "invalid_id_token_claims",
         "Google authentication evidence is stale": "stale_auth_time",
         "Google identity evidence does not match": "identity_mismatch",
         "Sensitive action requires an existing account": "account_not_found",
-        "Authenticated Google account does not match the app session": "account_mismatch",
+        "Authenticated account does not match the app session": "account_mismatch",
         "Pending-deletion accounts cannot authenticate": "account_pending_deletion",
         "Account is not pending deletion": "account_not_pending_deletion",
         "Account was not found": "account_not_found",
         "Health account is connected to another user": "health_account_in_use",
-    }.get(str(exc), "oauth_state_or_configuration")
+        "Google account is another account's data source": "google_account_in_use",
+        "Google account signs in to another account": "google_account_in_use",
+    }.get(str(exc).split(":")[0], "oauth_state_or_configuration")
 
 
 class OAuthDiagnostics(BaseModel):
@@ -129,6 +144,7 @@ class DeviceAuthorizeResponse(BaseModel):
 
 class UserPayload(BaseModel):
     id: str
+    sign_in_provider: str | None
     email: str | None
     first_name: str | None
     last_name: str | None
@@ -161,6 +177,30 @@ class MeResponse(BaseModel):
 
 class DisconnectRequest(BaseModel):
     revoke: bool = True
+
+
+class AppleNonceResponse(BaseModel):
+    nonce: str
+
+
+class AppleCompletionRequest(BaseModel):
+    nonce: str = Field(min_length=1, max_length=128)
+    identity_token: str = Field(min_length=1, max_length=8192)
+    authorization_code: str = Field(min_length=1, max_length=1024)
+    device_id: str = Field(min_length=16)
+    first_name: str | None = Field(default=None, max_length=200)
+    last_name: str | None = Field(default=None, max_length=200)
+
+
+class AppleCompletionResponse(BaseModel):
+    status: Literal["signed_in", "authorized"]
+    code: str | None = None
+    grant: str | None = None
+    purpose: str | None = None
+
+
+class AppleNotificationRequest(BaseModel):
+    payload: str = Field(min_length=1, max_length=16384)
 
 
 @router.get("/google/diagnostics", response_model=OAuthDiagnostics)
@@ -236,19 +276,7 @@ def start_sensitive_google_oauth_url(
     device_public_key: str = Query(..., max_length=128),
 ) -> dict[str, str]:
     enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
-    user_id = None
-    source_session_id = None
-    if purpose == "enroll_device":
-        try:
-            user, app_session = authenticate_access_token_with_session(
-                session, bearer_token_from_request(request)
-            )
-            if app_session.device_public_key is not None:
-                raise HTTPException(status_code=409, detail={"code": "device_key_already_enrolled"})
-            user_id = user.id
-            source_session_id = app_session.id
-        except AppAuthError as exc:
-            raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    user_id, source_session_id = enrolling_session(request, session, purpose)
     try:
         return {
             "authorization_url": create_authorization_url(
@@ -305,12 +333,90 @@ async def google_oauth_callback(
     except HealthAccountInUseError:
         logger.warning("Google OAuth failed reason=health_account_in_use")
         return _deep_link_redirect(status="error", reason="health_account_in_use")
+    except GoogleAccountInUseError:
+        logger.warning("Google OAuth failed reason=google_account_in_use")
+        return _deep_link_redirect(status="error", reason="google_account_in_use")
     except (OAuthConfigurationError, OAuthStateError, GoogleHealthAPIError) as exc:
         reason = sensitive_oauth_failure_reason(exc)
         logger.warning("Google OAuth failed reason=%s", reason)
         return _deep_link_redirect(status="error", reason="oauth_failed")
 
     return _deep_link_redirect(status="signed_in", code=app_code)
+
+
+@router.get("/apple/start", response_model=AppleNonceResponse)
+def start_apple_sign_in(
+    request: Request,
+    session: DbSession,
+    device_id: str = Query(..., min_length=16),
+    purpose: Literal["sign_in", "enroll_device", "recover_deletion"] = Query(default=SIGN_IN),
+    device_public_key: str | None = Query(default=None, max_length=128),
+) -> AppleNonceResponse:
+    enforce_rate_limit(request, AUTH_START_LIMIT, client_ip(request), device_id)
+    user_id, source_session_id = enrolling_session(request, session, purpose)
+    try:
+        nonce = create_apple_nonce(
+            session,
+            device_id=device_id,
+            purpose=purpose,
+            user_id=user_id,
+            device_public_key=device_public_key,
+            source_session_id=source_session_id,
+        )
+    except (OAuthConfigurationError, DeviceKeyError) as exc:
+        logger.warning("Apple sign-in start failed reason=%s", sensitive_oauth_failure_reason(exc))
+        raise HTTPException(status_code=500, detail="Apple sign-in configuration is incomplete") from exc
+    return AppleNonceResponse(nonce=nonce)
+
+
+@router.post("/apple/complete", response_model=AppleCompletionResponse)
+async def complete_apple(
+    request: Request,
+    payload: AppleCompletionRequest,
+    session: DbSession,
+) -> AppleCompletionResponse:
+    enforce_rate_limit(request, AUTH_EXCHANGE_LIMIT, client_ip(request), payload.device_id)
+    try:
+        completion = await complete_apple_sign_in(
+            session,
+            nonce=payload.nonce,
+            identity_token=payload.identity_token,
+            authorization_code=payload.authorization_code,
+            device_id=payload.device_id,
+            first_name=payload.first_name,
+            last_name=payload.last_name,
+        )
+        if completion.purpose == "recover_deletion":
+            grant = create_sensitive_action_challenge(
+                session,
+                user_id=completion.user_id,
+                device_id_hash=completion.device_id_hash,
+                purpose=completion.purpose,
+                device_public_key=completion.device_public_key,
+            )
+            return AppleCompletionResponse(status="authorized", grant=grant, purpose=completion.purpose)
+        app_code = create_app_auth_code(
+            session,
+            user_id=completion.user_id,
+            device_id_hash=completion.device_id_hash,
+            device_public_key=completion.device_public_key,
+            source_session_id=completion.source_session_id,
+        )
+    except (OAuthConfigurationError, OAuthStateError, AppleAuthError) as exc:
+        reason = sensitive_oauth_failure_reason(exc)
+        logger.warning("Apple sign-in failed reason=%s", reason)
+        raise HTTPException(status_code=403, detail={"code": public_failure_code(reason)}) from exc
+    return AppleCompletionResponse(status="signed_in", code=app_code)
+
+
+@router.post("/apple/notifications", status_code=204)
+async def apple_notification(payload: AppleNotificationRequest, session: DbSession) -> Response:
+    try:
+        await handle_apple_notification(session, payload.payload)
+    except AppleAuthError as exc:
+        logger.warning("Apple notification rejected reason=%s", sensitive_oauth_failure_reason(exc))
+        raise HTTPException(status_code=400, detail="Invalid notification") from exc
+    return Response(status_code=204)
 
 
 @router.post("/exchange", response_model=TokenResponse)
@@ -505,6 +611,26 @@ async def disconnect_google_health(
     return {"status": "disconnected", "account_id": connection.id}
 
 
+def enrolling_session(request: Request, session: DbSession, purpose: str) -> tuple[str | None, str | None]:
+    if purpose != "enroll_device":
+        return None, None
+    try:
+        user, app_session = authenticate_access_token_with_session(
+            session, bearer_token_from_request(request)
+        )
+    except AppAuthError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    if app_session.device_public_key is not None:
+        raise HTTPException(status_code=409, detail={"code": "device_key_already_enrolled"})
+    return user.id, app_session.id
+
+
+def public_failure_code(reason: str) -> str:
+    if reason in {"account_pending_deletion", "account_not_pending_deletion", "account_not_found"}:
+        return reason
+    return "sign_in_failed"
+
+
 def _deep_link_redirect(**params: str) -> RedirectResponse:
     settings = get_settings()
     query = urlencode({key: value for key, value in params.items() if value})
@@ -521,9 +647,12 @@ def _token_response(token_pair: TokenPair) -> TokenResponse:
     )
 
 
-def _user_payload(user: User) -> UserPayload:
+def _user_payload(session: DbSession, user: User) -> UserPayload:
     return UserPayload(
         id=user.id,
+        sign_in_provider=session.scalar(
+            select(SignInIdentity.provider).where(SignInIdentity.user_id == user.id)
+        ),
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
@@ -535,7 +664,7 @@ def _me_response(session: DbSession, user: User) -> MeResponse:
     profile = get_or_create_profile(session, user.id)
     session.commit()
     return MeResponse(
-        user=_user_payload(user),
+        user=_user_payload(session, user),
         health_connection=_health_connection_status(session, user.id),
         profile=MeProfileStatus(
             onboarding_completed_at=profile.onboarding_completed_at,

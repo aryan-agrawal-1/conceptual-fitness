@@ -9,6 +9,7 @@ from app.core.security import decrypt_secret, encrypt_secret, utcnow
 from app.models import ConnectionStatus, HealthConnection, OAuthState, SignInIdentity, User
 from app.services.oauth import (
     CONNECT_HEALTH,
+    GoogleAccountInUseError,
     HealthAccountInUseError,
     OAuthConfigurationError,
     complete_google_oauth,
@@ -237,3 +238,53 @@ async def test_connect_is_refused_for_accounts_pending_deletion(session) -> None
 
     with pytest.raises(OAuthConfigurationError, match="Pending-deletion"):
         await connect(session, user.id, FakeGoogleClient())
+
+
+def apple_signed_in_user(session) -> User:
+    user = User()
+    session.add(user)
+    session.flush()
+    session.add(SignInIdentity(user_id=user.id, provider="apple", subject="apple-sub"))
+    session.commit()
+    return user
+
+
+@pytest.mark.asyncio
+async def test_connect_records_which_google_account_was_used(session) -> None:
+    user = apple_signed_in_user(session)
+
+    await connect(session, user.id, FakeGoogleClient(subject="fitbit-google-sub"))
+
+    assert session.scalar(select(HealthConnection)).account_subject == "fitbit-google-sub"
+
+
+@pytest.mark.asyncio
+async def test_google_sign_in_is_refused_for_another_accounts_data_source(session, device_key) -> None:
+    owner = apple_signed_in_user(session)
+    await connect(session, owner.id, FakeGoogleClient(subject="fitbit-google-sub"))
+
+    with pytest.raises(GoogleAccountInUseError):
+        await sign_in(session, device_key, FakeGoogleClient(subject="fitbit-google-sub"))
+
+    assert session.scalars(select(User)).all() == [owner]
+    assert session.scalars(select(SignInIdentity).where(SignInIdentity.provider == "google")).all() == []
+
+
+@pytest.mark.asyncio
+async def test_connect_is_refused_when_the_google_account_signs_in_to_another_account(session) -> None:
+    signed_in_user(session, subject="google-sub")
+    user = apple_signed_in_user(session)
+
+    with pytest.raises(GoogleAccountInUseError):
+        await connect(session, user.id, FakeGoogleClient(subject="google-sub"))
+
+    assert session.scalars(select(HealthConnection)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_connect_with_your_own_google_sign_in_account_is_allowed(session) -> None:
+    user = signed_in_user(session, subject="google-sub")
+
+    await connect(session, user.id, FakeGoogleClient(subject="google-sub"))
+
+    assert session.scalar(select(HealthConnection)).user_id == user.id

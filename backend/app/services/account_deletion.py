@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.apple.client import AppleClient
 from app.core.security import decrypt_secret, token_digest, utcnow
 from app.google_health.client import GoogleHealthClient
-from app.models import AppSession, ConnectionStatus, HealthConnection, User
+from app.models import AppSession, ConnectionStatus, HealthConnection, SignInIdentity, User
 from app.services.app_auth import revoke_session
 
 
@@ -53,6 +54,7 @@ async def purge_due_accounts(
     *,
     now: datetime | None = None,
     google_client: GoogleHealthClient | None = None,
+    apple_client: AppleClient | None = None,
 ) -> dict[str, int]:
     cutoff = now or utcnow()
     user_ids = session.scalars(
@@ -62,6 +64,7 @@ async def purge_due_accounts(
         )
     ).all()
     client = google_client or GoogleHealthClient()
+    apple = apple_client or AppleClient()
     purged = 0
     failed = 0
     revocation_failed = 0
@@ -76,20 +79,31 @@ async def purge_due_accounts(
             ):
                 session.rollback()
                 continue
-            accounts = session.scalars(
-                select(HealthConnection).where(HealthConnection.user_id == user.id)
-            ).all()
-            for account in accounts:
-                if account.encrypted_refresh_token:
-                    try:
-                        await client.revoke_token(decrypt_secret(account.encrypted_refresh_token))
-                    except Exception as exc:
-                        revocation_failed += 1
-                        logger.warning(
-                            "Provider credential revocation failed before account purge user=%s (%s)",
-                            token_digest(user.id)[:12],
-                            type(exc).__name__,
-                        )
+            revocations = [
+                (client, account.encrypted_refresh_token)
+                for account in session.scalars(
+                    select(HealthConnection).where(HealthConnection.user_id == user.id)
+                )
+                if account.encrypted_refresh_token
+            ] + [
+                (apple, identity.encrypted_refresh_token)
+                for identity in session.scalars(
+                    select(SignInIdentity).where(
+                        SignInIdentity.user_id == user.id, SignInIdentity.provider == "apple"
+                    )
+                )
+                if identity.encrypted_refresh_token
+            ]
+            for provider_client, encrypted_token in revocations:
+                try:
+                    await provider_client.revoke_token(decrypt_secret(encrypted_token))
+                except Exception as exc:
+                    revocation_failed += 1
+                    logger.warning(
+                        "Provider credential revocation failed before account purge user=%s (%s)",
+                        token_digest(user.id)[:12],
+                        type(exc).__name__,
+                    )
             session.delete(user)
             session.commit()
             purged += 1
