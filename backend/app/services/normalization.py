@@ -447,6 +447,10 @@ def _bulk_upsert_normalized_rows(
     )
 
 
+def remove_normalized_records(session: Session, raw_record_ids: list[str]) -> None:
+    _replace_normalized_many(session, raw_record_ids)
+
+
 def _replace_normalized(session: Session, raw_record_id: str, *, storage: str | None = None) -> None:
     _replace_normalized_many(session, [raw_record_id], storage=storage)
 

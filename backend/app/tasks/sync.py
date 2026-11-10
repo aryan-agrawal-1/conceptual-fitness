@@ -10,6 +10,9 @@ from app.core.security import utcnow
 from app.db.session import SessionLocal
 from app.models import ConnectionStatus, HealthConnection, HistoricalBackfill, SyncStatus
 from app.services.metric_rollups import cleanup_high_volume_storage
+from app.services.oauth import GOOGLE_HEALTH_PROVIDER
+from app.services.scores import rebuild_derived_scores
+from app.services.summaries import rebuild_daily_summaries
 from app.services.sync import (
     SYNC_LEASE,
     account_has_running_sync,
@@ -29,6 +32,15 @@ def enqueue_initial_backfill(account_id: str) -> bool:
         initial_backfill.delay(account_id)
         return True
     except Exception:
+        return False
+
+
+def enqueue_score_rebuild(user_id: str, start: date, end: date) -> bool:
+    try:
+        rebuild_scores.delay(user_id, start.isoformat(), end.isoformat())
+        return True
+    except Exception as exc:
+        logger.warning("Score rebuild could not be queued (%s)", type(exc).__name__)
         return False
 
 
@@ -109,6 +121,16 @@ def historical_backfill(account_id: str, data_type: str | None = None) -> dict[s
         }
 
 
+@celery_app.task(name="app.tasks.sync.rebuild_scores")
+def rebuild_scores(user_id: str, start: str, end: str) -> dict[str, object]:
+    first, last = date.fromisoformat(start), date.fromisoformat(end)
+    with SessionLocal() as session:
+        rebuild_daily_summaries(session, user_id=user_id, start=first, end=last)
+        result = rebuild_derived_scores(session, user_id=user_id, start=first, end=last, include_dependents=True)
+        session.commit()
+    return {"status": "ok", "scores_rebuilt": result.scores_rebuilt}
+
+
 @celery_app.task(name="app.tasks.sync.sync_all_connected_accounts")
 def sync_all_connected_accounts() -> dict[str, object]:
     synced: list[str] = []
@@ -117,7 +139,10 @@ def sync_all_connected_accounts() -> dict[str, object]:
     ranges: dict[str, dict[str, object]] = {}
     with SessionLocal() as session:
         accounts = session.scalars(
-            select(HealthConnection).where(HealthConnection.status == ConnectionStatus.connected)
+            select(HealthConnection).where(
+                HealthConnection.status == ConnectionStatus.connected,
+                HealthConnection.provider == GOOGLE_HEALTH_PROVIDER,
+            )
         ).all()
         for account in accounts:
             try:

@@ -21,6 +21,7 @@ AUTH_EXCHANGE_LIMIT = RateLimit("auth_exchange", 10, 600)
 AUTH_REFRESH_LIMIT = RateLimit("auth_refresh", 30, 600)
 AUTH_LOGOUT_LIMIT = RateLimit("auth_logout", 30, 600)
 CONNECTION_MUTATION_LIMIT = RateLimit("connection_mutation", 10, 600)
+DEVICE_UPLOAD_LIMIT = RateLimit("device_upload", 600, 600)
 
 
 def client_ip(request: Request) -> str:

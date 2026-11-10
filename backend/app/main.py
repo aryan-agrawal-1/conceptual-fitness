@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import account, auth, body, dashboard, export, fitness, health, insights, journal, metrics, profile, scores, sync, tags
+from app.api.routes import account, auth, body, dashboard, device_uploads, export, fitness, health, insights, journal, metrics, profile, scores, sync, tags
 from app.core.config import get_settings, validate_production_settings
 
 
@@ -30,6 +30,8 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(auth.connections_router)
 app.include_router(sync.router)
+app.include_router(device_uploads.connections_router)
+app.include_router(device_uploads.router)
 app.include_router(dashboard.router)
 app.include_router(metrics.router)
 app.include_router(scores.router)
