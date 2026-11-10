@@ -16,7 +16,7 @@ from app.google_health.client import GoogleHealthClient
 from app.google_health.data_types import DATA_TYPE_SPECS, MVP_SYNC_DATA_TYPES
 from app.models import (
     ConnectionStatus,
-    GoogleAccount,
+    HealthConnection,
     HistoricalBackfill,
     RawHealthRecord,
     SyncCursor,
@@ -58,7 +58,7 @@ def sync_freshness_window() -> timedelta:
 
 
 def is_account_sync_fresh(
-    account: GoogleAccount, *, now: datetime | None = None, session: Session | None = None
+    account: HealthConnection, *, now: datetime | None = None, session: Session | None = None
 ) -> bool:
     if account.sync_started_at is not None or account.last_sync_at is None or account.last_error:
         return False
@@ -66,7 +66,7 @@ def is_account_sync_fresh(
     if session is not None:
         today = checked_at.astimezone(_account_timezone(session, account)).date()
         cursors = session.scalars(select(SyncCursor).where(
-            SyncCursor.google_account_id == account.id,
+            SyncCursor.connection_id == account.id,
         )).all()
         if any(
             DATA_TYPE_SPECS[cursor.data_type].fail_sync_on_error
@@ -79,14 +79,14 @@ def is_account_sync_fresh(
     return checked_at.astimezone(UTC) - last_sync_at < sync_freshness_window()
 
 
-def account_has_running_sync(session: Session, account: GoogleAccount) -> bool:
+def account_has_running_sync(session: Session, account: HealthConnection) -> bool:
     if account.sync_started_at is not None:
         return _ensure_aware(account.sync_started_at, UTC) > utcnow() - SYNC_LEASE
     return (
         session.scalar(
             select(SyncCursor.id)
             .where(
-                SyncCursor.google_account_id == account.id,
+                SyncCursor.connection_id == account.id,
                 SyncCursor.status == SyncStatus.running,
                 SyncCursor.updated_at > utcnow() - SYNC_LEASE,
             )
@@ -96,7 +96,7 @@ def account_has_running_sync(session: Session, account: GoogleAccount) -> bool:
     )
 
 
-def account_is_available_for_sync(session: Session, account: GoogleAccount) -> bool:
+def account_is_available_for_sync(session: Session, account: HealthConnection) -> bool:
     return session.scalar(
         select(User.id).where(
             User.id == account.user_id,
@@ -107,7 +107,7 @@ def account_is_available_for_sync(session: Session, account: GoogleAccount) -> b
 
 @dataclass
 class SyncResult:
-    google_account_id: str
+    connection_id: str
     start: date
     end: date
     records_seen: int
@@ -216,7 +216,7 @@ class TypeSyncBounds:
 def sync_window_from_cursors(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     data_types: tuple[str, ...] = MVP_SYNC_DATA_TYPES,
     today: date | None = None,
     overlap_days: int = 1,
@@ -228,7 +228,7 @@ def sync_window_from_cursors(
     initial_start = end - timedelta(days=INITIAL_BACKFILL_DAYS - 1)
     cursors = session.scalars(
         select(SyncCursor).where(
-            SyncCursor.google_account_id == account.id,
+            SyncCursor.connection_id == account.id,
             SyncCursor.data_type.in_(data_types),
         )
     ).all()
@@ -256,10 +256,10 @@ def sync_window_from_cursors(
     )
 
 
-async def sync_google_account_range(
+async def sync_google_health_range(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     start: date,
     end: date,
     data_types: tuple[str, ...] = MVP_SYNC_DATA_TYPES,
@@ -271,10 +271,10 @@ async def sync_google_account_range(
     if historical_cursor is None:
         started_at = utcnow()
         claimed = session.execute(
-            update(GoogleAccount).where(
-                GoogleAccount.id == account.id,
-                or_(GoogleAccount.sync_started_at.is_(None),
-                    GoogleAccount.sync_started_at < started_at - SYNC_LEASE),
+            update(HealthConnection).where(
+                HealthConnection.id == account.id,
+                or_(HealthConnection.sync_started_at.is_(None),
+                    HealthConnection.sync_started_at < started_at - SYNC_LEASE),
             ).values(sync_started_at=started_at)
         ).rowcount
         session.commit()
@@ -400,7 +400,7 @@ async def sync_google_account_range(
         if historical_cursor is not None:
             logger.info("Historical score checkpoint committed: %s", historical_cursor.data_type)
         return SyncResult(
-            google_account_id=account.id,
+            connection_id=account.id,
             start=start,
             end=end,
             records_seen=records_seen,
@@ -426,11 +426,11 @@ async def sync_google_account_range(
 async def run_initial_backfill(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     client: GoogleHealthClient | None = None,
 ) -> SyncResult:
     window = sync_window_from_cursors(session, account=account)
-    return await sync_google_account_range(
+    return await sync_google_health_range(
         session,
         account=account,
         start=window.start,
@@ -440,14 +440,14 @@ async def run_initial_backfill(
 
 
 def prepare_historical_backfill(
-    session: Session, *, account: GoogleAccount, today: date | None = None,
+    session: Session, *, account: HealthConnection, today: date | None = None,
 ) -> list[HistoricalBackfill]:
     existing = None
     if today is None:
         existing = session.scalar(
             select(HistoricalBackfill)
             .where(
-                HistoricalBackfill.google_account_id == account.id,
+                HistoricalBackfill.connection_id == account.id,
             )
             .order_by(HistoricalBackfill.range_end.desc())
             .limit(1)
@@ -459,13 +459,13 @@ def prepare_historical_backfill(
         else end - timedelta(days=HISTORICAL_BACKFILL_DAYS - 1)
     )
     cursors = {cursor.data_type: cursor for cursor in session.scalars(
-        select(SyncCursor).where(SyncCursor.google_account_id == account.id)
+        select(SyncCursor).where(SyncCursor.connection_id == account.id)
     )}
     rows: list[HistoricalBackfill] = []
     for data_type in MVP_SYNC_DATA_TYPES:
         row = session.scalar(
             select(HistoricalBackfill).where(
-                HistoricalBackfill.google_account_id == account.id,
+                HistoricalBackfill.connection_id == account.id,
                 HistoricalBackfill.data_type == data_type,
                 HistoricalBackfill.range_start == start,
                 HistoricalBackfill.range_end == end,
@@ -473,7 +473,7 @@ def prepare_historical_backfill(
         )
         if row is None:
             row = HistoricalBackfill(
-                google_account_id=account.id,
+                connection_id=account.id,
                 data_type=data_type,
                 range_start=start,
                 range_end=end,
@@ -503,7 +503,7 @@ def prepare_historical_backfill(
 async def run_historical_backfill(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     client: GoogleHealthClient | None = None,
     today: date | None = None,
     data_type: str | None = None,
@@ -530,7 +530,7 @@ async def run_historical_backfill(
             session.refresh(row)
             continue
         try:
-            result = await sync_google_account_range(
+            result = await sync_google_health_range(
                 session,
                 account=account,
                 start=row.range_start,
@@ -556,7 +556,7 @@ async def run_historical_backfill(
 async def _sync_data_type(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     client: GoogleHealthClient,
     access_token: str,
     data_type: str,
@@ -817,7 +817,7 @@ async def _sync_data_type(
 def _bounds_for_data_type(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     cursor: SyncCursor,
     data_type: str,
     start: date,
@@ -877,7 +877,7 @@ def _bounds_for_data_type(
 
 def _timestamp_end_for_filter(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     filter_time_path: str,
     end: date,
     now: datetime,
@@ -895,7 +895,7 @@ def _timestamp_end_for_filter(
 def _timestamp_start_for_filter(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     cursor: SyncCursor,
     filter_time_path: str,
     start: date,
@@ -930,7 +930,7 @@ def _timestamp_start_for_filter(
 
 def _date_start_for_filter(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     filter_time_path: str,
     value: date,
 ) -> datetime:
@@ -941,7 +941,7 @@ def _date_start_for_filter(
 
 def _range_start_datetime(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     filter_time_path: str,
     value: date | datetime,
 ) -> datetime:
@@ -952,7 +952,7 @@ def _range_start_datetime(
 
 def _range_end_datetime(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     filter_time_path: str,
     value: date | datetime,
 ) -> datetime:
@@ -963,7 +963,7 @@ def _range_end_datetime(
 
 def _normalize_timestamp_for_filter(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     filter_time_path: str,
     value: datetime,
 ) -> datetime:
@@ -973,7 +973,7 @@ def _normalize_timestamp_for_filter(
     return _ensure_aware(value, tz).astimezone(tz)
 
 
-def _account_timezone(session: Session, account: GoogleAccount) -> ZoneInfo:
+def _account_timezone(session: Session, account: HealthConnection) -> ZoneInfo:
     profile = session.scalar(select(UserProfile).where(UserProfile.user_id == account.user_id))
     if profile is None:
         return ZoneInfo("UTC")
@@ -1030,7 +1030,7 @@ def _set_cursor_chunk_complete(
 
 def _store_points(
     session: Session,
-    account: GoogleAccount,
+    account: HealthConnection,
     data_type: str,
     points: list[dict[str, object]],
     *,
@@ -1059,7 +1059,7 @@ def _store_points(
 def _prune_missing_exercise_records(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     points: list[dict[str, object]],
     start: date,
     end: date,
@@ -1067,7 +1067,7 @@ def _prune_missing_exercise_records(
     source_record_ids = _source_record_ids_for_points("exercise", points)
     stale_records = session.scalars(
         select(RawHealthRecord).where(
-            RawHealthRecord.google_account_id == account.id,
+            RawHealthRecord.connection_id == account.id,
             RawHealthRecord.data_type == "exercise",
             RawHealthRecord.civil_date >= start,
             RawHealthRecord.civil_date <= end,
@@ -1174,16 +1174,16 @@ def _should_skip_chunk_for_resume(
     return False
 
 
-def _get_or_create_cursor(session: Session, google_account_id: str, data_type: str) -> SyncCursor:
+def _get_or_create_cursor(session: Session, connection_id: str, data_type: str) -> SyncCursor:
     cursor = session.scalar(
         select(SyncCursor).where(
-            SyncCursor.google_account_id == google_account_id,
+            SyncCursor.connection_id == connection_id,
             SyncCursor.data_type == data_type,
         )
     )
     if cursor:
         return cursor
-    cursor = SyncCursor(google_account_id=google_account_id, data_type=data_type)
+    cursor = SyncCursor(connection_id=connection_id, data_type=data_type)
     session.add(cursor)
     session.flush()
     return cursor

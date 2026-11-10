@@ -385,7 +385,7 @@ def _metric_source_for_day(
         if raw_record_id:
             raw = session.get(RawHealthRecord, raw_record_id)
             if raw is not None:
-                account_id = raw.google_account_id
+                account_id = raw.connection_id
                 platform = platform or raw.source_platform
                 device = device or raw.source_device
         source = ":".join(filter(None, (platform, device))) or "google_health"

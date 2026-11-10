@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -69,7 +70,11 @@ class User(Base):
         DateTime(timezone=True), nullable=True, index=True
     )
 
-    google_accounts: Mapped[list[GoogleAccount]] = relationship(
+    sign_in_identities: Mapped[list[SignInIdentity]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+    health_connections: Mapped[list[HealthConnection]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -178,17 +183,46 @@ class UserProfile(Base):
     user: Mapped[User] = relationship(back_populates="profile")
 
 
-class GoogleAccount(Base):
-    __tablename__ = "google_accounts"
+class SignInIdentity(Base):
+    __tablename__ = "sign_in_identities"
     __table_args__ = (
-        UniqueConstraint("health_user_id", name="uq_google_accounts_health_user_id"),
-        UniqueConstraint("legacy_user_id", name="uq_google_accounts_legacy_user_id"),
+        UniqueConstraint("provider", "subject", name="uq_sign_in_identities_provider_subject"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    health_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    legacy_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_signed_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="sign_in_identities")
+
+
+class HealthConnection(Base):
+    __tablename__ = "health_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "external_user_id", name="uq_health_connections_provider_external_user"
+        ),
+        UniqueConstraint(
+            "provider", "external_legacy_user_id", name="uq_health_connections_provider_legacy_user"
+        ),
+        Index(
+            "uq_health_connections_one_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status <> 'disconnected'"),
+            sqlite_where=text("status <> 'disconnected'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="google_health")
+    external_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    external_legacy_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     granted_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     access_token_expires_at: Mapped[datetime | None] = mapped_column(
@@ -210,7 +244,7 @@ class GoogleAccount(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
-    user: Mapped[User] = relationship(back_populates="google_accounts")
+    user: Mapped[User] = relationship(back_populates="health_connections")
 
 
 class OAuthState(Base):
@@ -221,7 +255,7 @@ class OAuthState(Base):
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     device_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     redirect_after: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sensitive_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    purpose: Mapped[str] = mapped_column(String(32), default="sign_in")
     device_public_key: Mapped[str | None] = mapped_column(String(88), nullable=True)
     source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -324,14 +358,14 @@ class SensitiveActionGrant(Base):
 class RawHealthRecord(Base):
     __tablename__ = "raw_health_records"
     __table_args__ = (
-        UniqueConstraint("google_account_id", "data_type", "source_record_id", name="uq_raw_record"),
+        UniqueConstraint("connection_id", "data_type", "source_record_id", name="uq_raw_record"),
         Index("ix_raw_records_user_data_type_date", "user_id", "data_type", "civil_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    google_account_id: Mapped[str] = mapped_column(
-        ForeignKey("google_accounts.id", ondelete="CASCADE"), index=True
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("health_connections.id", ondelete="CASCADE"), index=True
     )
     data_type: Mapped[str] = mapped_column(String(80))
     source_record_id: Mapped[str] = mapped_column(Text)
@@ -976,11 +1010,11 @@ class DailyContext(Base):
 
 class SyncCursor(Base):
     __tablename__ = "sync_cursors"
-    __table_args__ = (UniqueConstraint("google_account_id", "data_type", name="uq_sync_cursor"),)
+    __table_args__ = (UniqueConstraint("connection_id", "data_type", name="uq_sync_cursor"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    google_account_id: Mapped[str] = mapped_column(
-        ForeignKey("google_accounts.id", ondelete="CASCADE"), index=True
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("health_connections.id", ondelete="CASCADE"), index=True
     )
     data_type: Mapped[str] = mapped_column(String(80))
     last_successful_start: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -1003,7 +1037,7 @@ class HistoricalBackfill(Base):
     __tablename__ = "historical_backfills"
     __table_args__ = (
         UniqueConstraint(
-            "google_account_id",
+            "connection_id",
             "data_type",
             "range_start",
             "range_end",
@@ -1012,8 +1046,8 @@ class HistoricalBackfill(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    google_account_id: Mapped[str] = mapped_column(
-        ForeignKey("google_accounts.id", ondelete="CASCADE"), index=True
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("health_connections.id", ondelete="CASCADE"), index=True
     )
     data_type: Mapped[str] = mapped_column(String(80))
     range_start: Mapped[date] = mapped_column(Date)

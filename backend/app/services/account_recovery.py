@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
-from app.models import ConnectionStatus, GoogleAccount, User
+from app.models import ConnectionStatus, HealthConnection, User
 
 
 class AccountRecoveryError(RuntimeError):
@@ -22,15 +22,20 @@ def recover_account(session: Session, user: User, *, now: datetime | None = None
     recovered_at = now or utcnow()
     user.deletion_requested_at = None
     user.deletion_scheduled_for = None
-    for account in session.scalars(
-        select(GoogleAccount).where(GoogleAccount.user_id == user.id)
-    ):
-        if account.encrypted_refresh_token:
-            account.status = ConnectionStatus.connected
-            account.connected_at = recovered_at
-            account.disconnected_at = None
-            account.last_error = None
-            session.add(account)
+    restorable = session.scalar(
+        select(HealthConnection)
+        .where(
+            HealthConnection.user_id == user.id,
+            HealthConnection.encrypted_refresh_token.is_not(None),
+        )
+        .order_by(HealthConnection.connected_at.desc())
+    )
+    if restorable is not None:
+        restorable.status = ConnectionStatus.connected
+        restorable.connected_at = recovered_at
+        restorable.disconnected_at = None
+        restorable.last_error = None
+        session.add(restorable)
     session.add(user)
     session.commit()
     session.refresh(user)

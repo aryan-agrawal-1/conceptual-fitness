@@ -19,14 +19,14 @@ struct DashboardBundle: Decodable {
 }
 
 struct DashboardConnections: Decodable {
-    let googleHealth: [GoogleHealthConnection]
+    let healthConnections: [DashboardHealthConnection]
 
     enum CodingKeys: String, CodingKey {
-        case googleHealth = "google_health"
+        case healthConnections = "health_connections"
     }
 }
 
-struct GoogleHealthConnection: Decodable {
+struct DashboardHealthConnection: Decodable {
     let accountID: String?
     let status: String?
     let lastSyncAt: String?
@@ -39,14 +39,14 @@ struct GoogleHealthConnection: Decodable {
 }
 
 struct DashboardSyncStatus: Decodable {
-    let googleAccountID: String?
+    let connectionID: String?
     let dataType: String?
     let status: String
     let lastError: String?
     let updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case googleAccountID = "google_account_id"
+        case connectionID = "connection_id"
         case dataType = "data_type"
         case status
         case lastError = "last_error"
@@ -1581,8 +1581,8 @@ struct DashboardData {
             ],
             workouts: WorkoutSummary.samples,
             vo2Max: VO2MaxDetail(current: MetricPoint(value: 48.2, date: "2026-06-22"), dataQuality: "strong"),
-            connections: DashboardConnections(googleHealth: [
-                GoogleHealthConnection(accountID: "preview", status: "connected", lastSyncAt: "2026-06-22T18:42:00Z")
+            connections: DashboardConnections(healthConnections: [
+                DashboardHealthConnection(accountID: "preview", status: "connected", lastSyncAt: "2026-06-22T18:42:00Z")
             ]),
             syncStatus: [],
             dateContext: dateContext,
@@ -1600,7 +1600,7 @@ struct DashboardData {
 
 extension DashboardData {
     var lastSyncAt: Date? {
-        connections?.googleHealth
+        connections?.healthConnections
             .compactMap { DashboardFormatters.parseBackendDateTime($0.lastSyncAt) }
             .max()
     }

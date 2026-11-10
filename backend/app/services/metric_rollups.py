@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.security import utcnow
 from app.models import (
     DailyBaseline,
-    GoogleAccount,
+    HealthConnection,
     MetricDailyRollup,
     MetricHourlyRollup,
     MetricInterval,
@@ -111,7 +111,7 @@ class _Aggregate:
 def replace_high_volume_rollups(
     session: Session,
     *,
-    account: GoogleAccount,
+    account: HealthConnection,
     metric: str,
     records: list[HighVolumeRecord],
     range_start: datetime,

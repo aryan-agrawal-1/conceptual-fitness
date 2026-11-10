@@ -18,11 +18,12 @@ from app.models import (
     ConnectionStatus,
     DailyContext,
     DailyScore,
-    GoogleAccount,
+    HealthConnection,
     OAuthState,
     RawHealthRecord,
     ScoreStatus,
     SensitiveActionGrant,
+    SignInIdentity,
     User,
     UserProfile,
 )
@@ -31,7 +32,8 @@ from app.services.sensitive_actions import (
     consume_sensitive_action_grant,
 )
 from app.services.app_auth import device_id_digest
-from app.services.oauth import complete_google_health_oauth, create_authorization_url
+from app.services.oauth import complete_google_oauth, create_authorization_url
+from tests.oauth_fakes import FakeGoogleClient, state_from
 
 
 DEVICE_ID = f"test-device-{uuid4()}"
@@ -137,16 +139,14 @@ def test_sensitive_start_requires_session_and_requests_fresh_authentication(
     assert response.status_code == 200
     query = parse_qs(urlparse(response.json()["authorization_url"]).query)
     assert query["prompt"] == ["select_account"]
-    assert query["scope"] == [
-        "openid email profile https://www.googleapis.com/auth/googlehealth.profile.readonly"
-    ]
+    assert query["scope"] == ["openid email profile"]
     assert "access_type" not in query
     assert "include_granted_scopes" not in query
     assert "max_age" not in query
     assert "claims" not in query
     state = session.scalar(select(OAuthState))
     assert state.user_id == owner.id
-    assert state.sensitive_action == "enroll_device"
+    assert state.purpose == "enroll_device"
     assert state.device_public_key == device_key.public_key
     assert state.source_session_id is not None
 
@@ -154,17 +154,17 @@ def test_sensitive_start_requires_session_and_requests_fresh_authentication(
 def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_headers) -> None:
     owner = user(session, "owner@example.com")
     other = user(session, "other@example.com")
-    account = GoogleAccount(
+    account = HealthConnection(
         user_id=owner.id,
-        health_user_id="owner-health-id",
+        external_user_id="owner-health-id",
         status=ConnectionStatus.connected,
         granted_scopes=["health.read"],
         encrypted_refresh_token="must-not-export",
         last_error="must-not-export",
     )
-    other_account = GoogleAccount(
+    other_account = HealthConnection(
         user_id=other.id,
-        health_user_id="other-health-id",
+        external_user_id="other-health-id",
         status=ConnectionStatus.connected,
         granted_scopes=[],
     )
@@ -201,7 +201,7 @@ def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_he
     session.add(
         RawHealthRecord(
             user_id=owner.id,
-            google_account_id=account.id,
+            connection_id=account.id,
             data_type="steps",
             source_record_id="source-1",
             raw_json={"steps": 1234},
@@ -312,53 +312,30 @@ def test_export_rejects_wrong_purpose_and_empty_selection(session, auth_headers)
     assert empty.status_code == 422
 
 
-class SensitiveOAuthClient:
-    def __init__(self, health_user_id: str = "health-id") -> None:
-        self.health_user_id = health_user_id
-
-    async def exchange_code_for_tokens(self, code: str) -> dict[str, object]:
-        return {"access_token": "access-token", "expires_in": 3600}
-
-    async def get_identity(self, access_token: str) -> dict[str, str]:
-        return {"healthUserId": self.health_user_id, "legacyUserId": "legacy-id"}
-
-    async def get_userinfo(self, access_token: str) -> dict[str, object]:
-        return {"sub": "google-sub", "email": "owner@example.com", "email_verified": True}
-
-
 @pytest.mark.asyncio
 async def test_enrollment_oauth_needs_same_google_account_but_not_auth_time(
     session,
     device_key,
 ) -> None:
     owner = user(session, "owner@example.com")
-    session.add(
-        GoogleAccount(
-            user_id=owner.id,
-            health_user_id="health-id",
-            legacy_user_id="legacy-id",
-            status=ConnectionStatus.connected,
-            granted_scopes=[],
-        )
-    )
+    session.add(SignInIdentity(user_id=owner.id, provider="google", subject="google-sub"))
     session.commit()
     url = create_authorization_url(
         session,
         device_id=DEVICE_ID,
         user_id=owner.id,
-        sensitive_action="enroll_device",
+        purpose="enroll_device",
         device_public_key=device_key.public_key,
         source_session_id="legacy-session-id",
     )
-    state = parse_qs(urlparse(url).query)["state"][0]
 
-    completion = await complete_google_health_oauth(
+    completion = await complete_google_oauth(
         session,
         code="auth-code",
-        state=state,
-        client=SensitiveOAuthClient(),
+        state=state_from(url),
+        client=FakeGoogleClient(),
     )
 
-    assert completion.account.user_id == owner.id
+    assert completion.user_id == owner.id
     assert completion.device_public_key == device_key.public_key
     assert completion.source_session_id == "legacy-session-id"

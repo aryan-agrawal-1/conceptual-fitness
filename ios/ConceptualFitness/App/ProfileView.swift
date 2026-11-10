@@ -83,20 +83,22 @@ struct ProfileView: View {
             if let journalReminders { JournalReminderSection(reminders: journalReminders) }
 
             Section("Connections and sync") {
-                LabeledContent("Google Health", value: connectionTitle)
-                if let connected = DashboardFormatters.parseBackendDateTime(session?.googleHealth.connectedAt) {
+                LabeledContent("Fitbit", value: connectionTitle)
+                if let connected = DashboardFormatters.parseBackendDateTime(session?.healthConnection.connectedAt) {
                     LabeledContent("Connected", value: connected.formatted(date: .abbreviated, time: .omitted))
                 }
                 LabeledContent("Last synced", value: coordinator.lastSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not synced yet")
                 if let message = coordinator.failureMessage { Text(message).foregroundStyle(.secondary) }
                 if isUpdatingConnection {
                     ProgressView("Updating connection…")
-                } else if session?.googleHealth.status == .connected {
+                } else if session?.healthConnection.status == .connected {
                     Button(coordinator.isSyncing ? "Syncing…" : "Sync now") { Task { await coordinator.retry() } }
                         .disabled(coordinator.isSyncing)
-                    Button("Disconnect Google Health", role: .destructive) { connectionAction = .disconnect }
+                    Button("Disconnect Fitbit", role: .destructive) { connectionAction = .disconnect }
                 } else {
-                    Button("Reconnect Google Health") { Task { await reconnect() } }
+                    Button(session?.healthConnection.provider == nil ? "Connect Fitbit" : "Reconnect Fitbit") {
+                        Task { await connect() }
+                    }
                 }
                 if let connectionError {
                     Text(connectionError).foregroundStyle(.red)
@@ -141,12 +143,12 @@ struct ProfileView: View {
             await refreshConnection()
         }
         .confirmationDialog(
-            connectionAction == .disconnect ? "Disconnect Google Health?" : "Sign out of this device?",
+            connectionAction == .disconnect ? "Disconnect Fitbit?" : "Sign out of this device?",
             isPresented: Binding(get: { connectionAction != nil }, set: { if !$0 { connectionAction = nil } }),
             titleVisibility: .visible
         ) {
             if connectionAction == .disconnect {
-                Button("Disconnect Google Health", role: .destructive) { Task { await disconnect() } }
+                Button("Disconnect Fitbit", role: .destructive) { Task { await disconnect() } }
             } else {
                 Button("Sign out", role: .destructive) { Task { await authStore.signOut() } }
             }
@@ -159,10 +161,10 @@ struct ProfileView: View {
     }
 
     private var connectionTitle: String {
-        switch session?.googleHealth.status {
+        switch session?.healthConnection.status {
         case .connected: "Connected"
         case .errored: "Needs attention"
-        case .disconnected: "Disconnected"
+        case .disconnected: session?.healthConnection.provider == nil ? "Not connected" : "Disconnected"
         case nil: "Status unavailable"
         }
     }
@@ -199,15 +201,12 @@ struct ProfileView: View {
         }
     }
 
-    @MainActor private func reconnect() async {
+    @MainActor private func connect() async {
         guard !isUpdatingConnection else { return }
         isUpdatingConnection = true
         connectionError = nil
         defer { isUpdatingConnection = false }
-        await authStore.reconnectGoogleHealth()
-        if session?.googleHealth.status != .connected {
-            connectionError = "Google Health wasn’t reconnected. You can try again."
-        }
+        connectionError = await authStore.connectFitbit()
     }
 
     @MainActor private func refreshConnection() async {
@@ -225,7 +224,7 @@ private struct ProfilePrivacyView: View {
     var body: some View {
         Form {
             Section("Your health data") {
-                Text("Google Health access is read-only. Disconnecting stops future imports; it does not erase records already saved in your account.")
+                Text("Fitbit access through Google is read-only. Disconnecting stops future imports; it does not erase records already saved in your account.")
                 Text("Your account stores imported health data, workouts, journal entries, derived scores, and your profile preferences. Daily briefs and unfinished workout drafts may also be stored on this device. Daily notes sync to your account and are encrypted when stored on the server.")
             }
             Section("Location") {

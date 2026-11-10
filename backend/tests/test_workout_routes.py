@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models import (
     DailySummary,
-    GoogleAccount,
+    HealthConnection,
     MetricInterval,
     MetricSample,
     RawHealthRecord,
@@ -120,13 +120,13 @@ def test_workout_list_returns_enriched_provider_zone_summary(session, auth_heade
 def test_workout_detail_uses_time_in_zone_intervals_when_provider_zones_missing(session, auth_headers) -> None:
     user = _user(session)
     day = date(2026, 6, 19)
-    account = GoogleAccount(user_id=user.id, health_user_id="health-id", granted_scopes=[])
+    account = HealthConnection(user_id=user.id, external_user_id="health-id", granted_scopes=[])
     session.add(account)
     session.flush()
     workout = _workout(session, user, day)
     raw = RawHealthRecord(
         user_id=user.id,
-        google_account_id=account.id,
+        connection_id=account.id,
         data_type="time-in-heart-rate-zone",
         source_record_id="zone-1",
         civil_date=day,

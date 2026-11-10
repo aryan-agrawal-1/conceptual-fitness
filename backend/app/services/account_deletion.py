@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decrypt_secret, token_digest, utcnow
 from app.google_health.client import GoogleHealthClient
-from app.models import AppSession, ConnectionStatus, GoogleAccount, User
+from app.models import AppSession, ConnectionStatus, HealthConnection, User
 from app.services.app_auth import revoke_session
 
 
@@ -35,7 +35,7 @@ def schedule_account_deletion(
         revoke_session(session, app_session)
 
     for account in session.scalars(
-        select(GoogleAccount).where(GoogleAccount.user_id == user.id)
+        select(HealthConnection).where(HealthConnection.user_id == user.id)
     ):
         account.status = ConnectionStatus.disconnected
         account.disconnected_at = requested_at
@@ -77,7 +77,7 @@ async def purge_due_accounts(
                 session.rollback()
                 continue
             accounts = session.scalars(
-                select(GoogleAccount).where(GoogleAccount.user_id == user.id)
+                select(HealthConnection).where(HealthConnection.user_id == user.id)
             ).all()
             for account in accounts:
                 if account.encrypted_refresh_token:

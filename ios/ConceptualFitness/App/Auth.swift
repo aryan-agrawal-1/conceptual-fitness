@@ -16,7 +16,7 @@ enum AuthState: Equatable {
     case failed(String)
 }
 
-enum GoogleHealthConnectionState: String, Codable, Equatable {
+enum HealthConnectionState: String, Codable, Equatable {
     case connected
     case disconnected
     case errored
@@ -24,12 +24,12 @@ enum GoogleHealthConnectionState: String, Codable, Equatable {
 
 struct AuthSession: Codable, Equatable {
     let user: AuthUser
-    let googleHealth: GoogleHealthStatus
+    let healthConnection: HealthConnectionStatus
     let profile: AuthProfileStatus
 
     enum CodingKeys: String, CodingKey {
         case user
-        case googleHealth = "google_health"
+        case healthConnection = "health_connection"
         case profile
     }
 }
@@ -50,17 +50,17 @@ struct TokenResponse: Decodable {
 
 struct AuthMeResponse: Decodable {
     let user: AuthUser
-    let googleHealth: GoogleHealthStatus
+    let healthConnection: HealthConnectionStatus
     let profile: AuthProfileStatus
 
     enum CodingKeys: String, CodingKey {
         case user
-        case googleHealth = "google_health"
+        case healthConnection = "health_connection"
         case profile
     }
 
     var session: AuthSession {
-        AuthSession(user: user, googleHealth: googleHealth, profile: profile)
+        AuthSession(user: user, healthConnection: healthConnection, profile: profile)
     }
 }
 
@@ -78,13 +78,15 @@ struct AuthUser: Codable, Equatable {
     }
 }
 
-struct GoogleHealthStatus: Codable, Equatable {
-    let status: GoogleHealthConnectionState
+struct HealthConnectionStatus: Codable, Equatable {
+    let provider: String?
+    let status: HealthConnectionState
     let connectedAt: String?
     let lastSyncAt: String?
     let lastError: String?
 
     enum CodingKeys: String, CodingKey {
+        case provider
         case status
         case connectedAt = "connected_at"
         case lastSyncAt = "last_sync_at"
@@ -258,8 +260,18 @@ final class AuthStore: ObservableObject {
         }
     }
 
-    func reconnectGoogleHealth() async {
-        await signIn()
+    func connectFitbit() async -> String? {
+        do {
+            let path = try Self.path("/connections/google-health/start-url", query: ["device_id": keychain.deviceID])
+            let start: StartURLResponse = try await authenticatedRequest(path: path)
+            guard let authURL = URL(string: start.authorizationURL) else { throw AuthError.badURL }
+            let callbackURL = try await authenticate(with: authURL)
+            let outcome = Self.healthConnectionOutcome(from: callbackURL)
+            try await loadMe()
+            return outcome
+        } catch {
+            return Self.isCancellation(error) ? nil : "Fitbit wasn’t connected. Check your connection and try again."
+        }
     }
 
     func signOut() async {
@@ -629,6 +641,16 @@ final class AuthStore: ObservableObject {
         return code
     }
 
+    nonisolated static func healthConnectionOutcome(from callbackURL: URL) -> String? {
+        let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let status = items.first(where: { $0.name == "status" })?.value
+        if status == "health_connected" || status == "health_connected_queued" { return nil }
+        if items.first(where: { $0.name == "reason" })?.value == "health_account_in_use" {
+            return "That Fitbit account is already connected to a different Conceptual Fitness account."
+        }
+        return "Fitbit wasn’t connected. You can try again."
+    }
+
     private func sensitiveActionGrant(
         from callbackURL: URL,
         purpose: SensitiveActionPurpose
@@ -786,10 +808,10 @@ struct AuthGateView: View {
             if session.profile.onboardingCompletedAt != nil {
                 AppShellView(authStore: authStore, session: session)
                     .id(session.user.id)
-            } else if session.googleHealth.status == .connected {
+            } else if session.healthConnection.status == .connected {
                 OnboardingView(authStore: authStore, session: session)
             } else {
-                reconnectView
+                ConnectFitbitView(authStore: authStore, needsAttention: session.healthConnection.status == .errored)
             }
         }
     }
@@ -811,7 +833,7 @@ struct AuthGateView: View {
                         .font(.system(size: 38, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
 
-                    Text("Connect Google Health to turn your recovery, sleep, and training data into a daily dashboard.")
+                    Text("Sign in, then connect your Fitbit to turn your recovery, sleep, and training data into a daily dashboard.")
                         .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineSpacing(3)
@@ -906,34 +928,67 @@ struct AuthGateView: View {
             .padding(28)
         }
     }
+}
 
-    private var reconnectView: some View {
+private struct ConnectFitbitView: View {
+    @ObservedObject var authStore: AuthStore
+    let needsAttention: Bool
+    @State private var isConnecting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
         VStack(spacing: 18) {
             Spacer()
             Image(systemName: "link.badge.plus")
                 .font(.system(size: 48, weight: .semibold))
                 .foregroundStyle(.blue)
-            Text("Reconnect Google Health")
+                .accessibilityHidden(true)
+            Text(needsAttention ? "Reconnect your Fitbit" : "Connect your Fitbit")
                 .font(.title2.weight(.bold))
-            Text("Your app session is active, but Google Health is disconnected.")
+                .multilineTextAlignment(.center)
+            Text(needsAttention
+                 ? "Your Fitbit connection stopped working. Reconnect it to keep importing your data."
+                 : "You’re signed in. Connect the Google account your Fitbit uses so the app can read your sleep, recovery and training data.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .accessibilityLabel("Connection error: \(errorMessage)")
+            }
             Button {
-                Task { await authStore.reconnectGoogleHealth() }
+                Task { await connect() }
             } label: {
-                Label("Reconnect Google", systemImage: "link")
-                    .frame(maxWidth: .infinity)
+                if isConnecting {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else {
+                    Label(needsAttention ? "Reconnect Fitbit" : "Connect Fitbit", systemImage: "link")
+                        .frame(maxWidth: .infinity)
+                }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(isConnecting)
+            .accessibilityHint("Opens Google to give read-only access to your Fitbit data")
             Button("Sign out") {
                 Task { await authStore.signOut() }
             }
             .buttonStyle(.bordered)
+            .disabled(isConnecting)
             Spacer()
         }
         .padding(28)
+    }
+
+    private func connect() async {
+        isConnecting = true
+        errorMessage = nil
+        errorMessage = await authStore.connectFitbit()
+        isConnecting = false
     }
 }
 
@@ -947,7 +1002,8 @@ private extension AuthSession {
                 firstName: "Test",
                 lastName: "User"
             ),
-            googleHealth: GoogleHealthStatus(
+            healthConnection: HealthConnectionStatus(
+                provider: "google_health",
                 status: .connected,
                 connectedAt: nil,
                 lastSyncAt: nil,

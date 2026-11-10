@@ -14,7 +14,7 @@ from sqlalchemy import func, select, update
 from app.core.security import decrypt_secret, utcnow
 from app.db.session import SessionLocal
 from app.google_health.client import GoogleHealthClient
-from app.models import ConnectionStatus, GoogleAccount, MetricMinuteRollup, RawHealthRecord
+from app.models import ConnectionStatus, HealthConnection, MetricMinuteRollup, RawHealthRecord
 from app.services.normalization import upsert_raw_and_normalized
 from app.services.scores import rebuild_derived_scores
 from app.services.summaries import rebuild_daily_summaries
@@ -28,7 +28,7 @@ from app.services.sync import (
 
 async def repair(account_id: str) -> None:
     with SessionLocal() as session:
-        account = session.get(GoogleAccount, account_id)
+        account = session.get(HealthConnection, account_id)
         if account is None or account.status != ConnectionStatus.connected or not account.encrypted_refresh_token:
             raise ValueError("A connected account with a refresh token is required")
         if account_has_running_sync(session, account):
@@ -40,8 +40,8 @@ async def repair(account_id: str) -> None:
         if start is None or end is None:
             raise ValueError("No retained minute heart-rate history to rebuild")
         lease = utcnow()
-        claimed = session.execute(update(GoogleAccount).where(
-            GoogleAccount.id == account.id, GoogleAccount.sync_started_at.is_(None),
+        claimed = session.execute(update(HealthConnection).where(
+            HealthConnection.id == account.id, HealthConnection.sync_started_at.is_(None),
         ).values(sync_started_at=lease)).rowcount
         session.commit()
         if not claimed:
@@ -59,7 +59,7 @@ async def repair(account_id: str) -> None:
                 print(f"Imported {data_type}: {seen} intervals", flush=True)
             changed = 0
             for raw in session.scalars(select(RawHealthRecord).where(
-                RawHealthRecord.google_account_id == account.id, RawHealthRecord.data_type == "sleep",
+                RawHealthRecord.connection_id == account.id, RawHealthRecord.data_type == "sleep",
             )).all():
                 old_date = raw.civil_date
                 upsert_raw_and_normalized(session, account=account, data_type="sleep", data_point=raw.raw_json)
@@ -71,8 +71,8 @@ async def repair(account_id: str) -> None:
             print(f"Corrected {changed} sleep dates; rebuilt {result.scores_rebuilt} scores and {result.targets_rebuilt} targets", flush=True)
         finally:
             session.rollback()
-            session.execute(update(GoogleAccount).where(
-                GoogleAccount.id == account_id, GoogleAccount.sync_started_at == lease,
+            session.execute(update(HealthConnection).where(
+                HealthConnection.id == account_id, HealthConnection.sync_started_at == lease,
             ).values(sync_started_at=None))
             session.commit()
 

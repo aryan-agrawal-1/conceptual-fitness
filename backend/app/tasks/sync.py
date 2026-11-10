@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.security import utcnow
 from app.db.session import SessionLocal
-from app.models import ConnectionStatus, GoogleAccount, HistoricalBackfill, SyncStatus
+from app.models import ConnectionStatus, HealthConnection, HistoricalBackfill, SyncStatus
 from app.services.metric_rollups import cleanup_high_volume_storage
 from app.services.sync import (
     SYNC_LEASE,
@@ -17,7 +17,7 @@ from app.services.sync import (
     prepare_historical_backfill,
     run_initial_backfill,
     run_historical_backfill,
-    sync_google_account_range,
+    sync_google_health_range,
     sync_window_from_cursors,
 )
 from app.tasks.celery_app import celery_app
@@ -34,11 +34,11 @@ def enqueue_initial_backfill(account_id: str) -> bool:
 
 def enqueue_historical_backfill(account_id: str, data_type: str | None = None) -> bool:
     with SessionLocal() as session:
-        account = session.get(GoogleAccount, account_id)
+        account = session.get(HealthConnection, account_id)
         if account is None:
             return False
         existing = session.scalar(select(HistoricalBackfill.id).where(
-            HistoricalBackfill.google_account_id == account_id,
+            HistoricalBackfill.connection_id == account_id,
         ).limit(1))
         rows = prepare_historical_backfill(session, account=account)
         if data_type is not None:
@@ -76,7 +76,7 @@ def enqueue_historical_backfill(account_id: str, data_type: str | None = None) -
 @celery_app.task(name="app.tasks.sync.initial_backfill")
 def initial_backfill(account_id: str) -> dict[str, object]:
     with SessionLocal() as session:
-        account = session.get(GoogleAccount, account_id)
+        account = session.get(HealthConnection, account_id)
         if account is None:
             return {"status": "missing_account", "account_id": account_id}
         result = asyncio.run(run_initial_backfill(session, account=account))
@@ -97,7 +97,7 @@ def initial_backfill(account_id: str) -> dict[str, object]:
 @celery_app.task(name="app.tasks.sync.historical_backfill")
 def historical_backfill(account_id: str, data_type: str | None = None) -> dict[str, object]:
     with SessionLocal() as session:
-        account = session.get(GoogleAccount, account_id)
+        account = session.get(HealthConnection, account_id)
         if account is None:
             return {"status": "missing_account", "account_id": account_id}
         rows = asyncio.run(run_historical_backfill(session, account=account, data_type=data_type))
@@ -117,7 +117,7 @@ def sync_all_connected_accounts() -> dict[str, object]:
     ranges: dict[str, dict[str, object]] = {}
     with SessionLocal() as session:
         accounts = session.scalars(
-            select(GoogleAccount).where(GoogleAccount.status == ConnectionStatus.connected)
+            select(HealthConnection).where(HealthConnection.status == ConnectionStatus.connected)
         ).all()
         for account in accounts:
             try:
@@ -130,7 +130,7 @@ def sync_all_connected_accounts() -> dict[str, object]:
                     continue
                 window = sync_window_from_cursors(session, account=account, today=date.today())
                 asyncio.run(
-                    sync_google_account_range(
+                    sync_google_health_range(
                         session,
                         account=account,
                         start=window.start,
