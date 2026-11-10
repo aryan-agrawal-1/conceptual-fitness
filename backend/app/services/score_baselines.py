@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models import (
     DailyContext,
+    DailySummary,
     MetricSample,
     RawHealthRecord,
     UserProfile,
@@ -18,6 +19,7 @@ from app.models import (
 from app.services.health_dates import (
     timezone_for_profile,
 )
+from app.services.hrv import HRV_METRIC, RMSSD, SDNN, approved_hrv_platforms
 from app.services.score_helpers import (
     STRAIN_LOAD_VERSION,
     _circular_mean_minutes,
@@ -116,6 +118,7 @@ def _calculate_personal_baseline(
     baseline_date: date,
 ) -> BaselineCalculation:
     window_days = _baseline_window_days(metric)
+    hrv_type = _baseline_hrv_type(session, user_id, baseline_date) if metric == HRV_METRIC else None
     observations, exclusions = _baseline_observations(
         session,
         user_id=user_id,
@@ -123,6 +126,7 @@ def _calculate_personal_baseline(
         metric=metric,
         baseline_date=baseline_date,
         window_days=window_days,
+        hrv_type=hrv_type,
     )
     if metric in {"cardio_residual_exposure", "muscular_residual_exposure"} and len(observations) < 28:
         window_days = 60
@@ -138,7 +142,7 @@ def _calculate_personal_baseline(
     observations = _drop_observation_outliers(observations, metric)
     values = [item.value for item in observations]
     metadata: dict[str, Any] = {
-        "method": _baseline_method(metric),
+        "method": _baseline_method(metric, hrv_type),
         "reference_window_days": window_days,
         "recent_trend": _recent_baseline_trend(values, metric),
         "latest_observation_date": observations[-1].day.isoformat() if observations else None,
@@ -192,8 +196,8 @@ def _calculate_personal_baseline(
         lower = exp(centre_log - 2 * spread_log)
         upper = exp(centre_log + 2 * spread_log)
         spread = (upper - lower) / 4
-        metadata["transform"] = "natural_log_rmssd"
-        metadata["hrv_measurement_type"] = "rmssd"
+        metadata["transform"] = f"natural_log_{hrv_type}"
+        metadata["hrv_measurement_type"] = hrv_type
         metadata["log_spread"] = spread_log
     elif metric == "oxygen_saturation":
         centre = float(median(values))
@@ -240,6 +244,7 @@ def _baseline_observations(
     metric: str,
     baseline_date: date,
     window_days: int,
+    hrv_type: str | None = None,
 ) -> tuple[list[BaselineObservation], list[dict[str, Any]]]:
     exclusions: list[dict[str, Any]] = []
     observations: list[BaselineObservation] = []
@@ -255,7 +260,7 @@ def _baseline_observations(
             day_type = "free_day" if day.weekday() >= 5 else "workday"
             if day_type != expected_day_type:
                 continue
-        value = _metric_value_for_baseline(session, user_id, profile, day, metric)
+        value = _metric_value_for_baseline(session, user_id, profile, day, metric, hrv_type=hrv_type)
         if value is None or not isfinite(value) or (metric == "heart_rate_variability" and value <= 0):
             exclusions.append({"date": day.isoformat(), "reason": "missing_metric"})
             continue
@@ -274,7 +279,7 @@ def _baseline_observations(
         ):
             exclusions.append({"date": day.isoformat(), "reason": "missing_daily_summary"})
             continue
-        source = _metric_source_for_day(session, user_id, day, metric)
+        source = _metric_source_for_day(session, user_id, day, metric, hrv_type=hrv_type)
         observations.append(BaselineObservation(day=day, value=value, source=source))
     return observations, exclusions
 
@@ -285,6 +290,8 @@ def _metric_value_for_baseline(
     profile: UserProfile,
     day: date,
     metric: str,
+    *,
+    hrv_type: str | None = None,
 ) -> float | None:
     summary = _summary_for_day(session, user_id, day)
     if metric == "strain_load":
@@ -325,8 +332,25 @@ def _metric_value_for_baseline(
         return float(mean(values)) if values else None
     if summary is None:
         return None
-    value = getattr(summary, metric, None)
+    if metric == HRV_METRIC:
+        value = summary.hrv_sdnn if hrv_type == SDNN else summary.hrv_rmssd
+    else:
+        value = getattr(summary, metric, None)
     return float(value) if value is not None else None
+
+
+def _baseline_hrv_type(session: Session, user_id: str, baseline_date: date) -> str:
+    selected = session.scalar(
+        select(DailySummary.heart_rate_variability_type)
+        .where(
+            DailySummary.user_id == user_id,
+            DailySummary.summary_date <= baseline_date,
+            DailySummary.heart_rate_variability_type.is_not(None),
+        )
+        .order_by(DailySummary.summary_date.desc())
+        .limit(1)
+    )
+    return selected or RMSSD
 
 
 def _baseline_window_days(metric: str) -> int:
@@ -335,13 +359,14 @@ def _baseline_window_days(metric: str) -> int:
     return 60
 
 
-def _baseline_method(metric: str) -> str:
+def _baseline_method(metric: str, hrv_type: str | None = None) -> str:
+    if metric == HRV_METRIC:
+        return f"provider_specific_log_{hrv_type or RMSSD}_median_mad"
     return {
         "sleep_minutes": "day_type_main_sleep_median_mad",
         "sleep_start_minute": "day_type_circular_median_mad",
         "sleep_end_minute": "day_type_circular_median_mad",
         "sleep_efficiency": "provider_specific_median_mad",
-        "heart_rate_variability": "provider_specific_log_rmssd_median_mad",
         "resting_heart_rate": "provider_specific_median_mad",
         "skin_temperature_variation": "provider_relative_median_mad",
         "respiratory_rate": "provider_specific_sleep_window_median_mad",
@@ -357,6 +382,8 @@ def _metric_source_for_day(
     user_id: str,
     day: date,
     metric: str,
+    *,
+    hrv_type: str | None = None,
 ) -> str:
     if metric in {"strain_load", "cardio_residual_exposure", "muscular_residual_exposure"}:
         return STRAIN_LOAD_VERSION
@@ -366,17 +393,25 @@ def _metric_source_for_day(
             return "unknown"
         signature = _sleep_source_signature(session, sleep)
         return ":".join(signature) if signature else "unknown"
-    samples = session.execute(
-        select(
-            MetricSample.raw_record_id,
-            MetricSample.source_platform,
-            MetricSample.source_device,
-        ).where(
-            MetricSample.user_id == user_id,
-            MetricSample.metric == metric,
-            MetricSample.civil_date == day,
+    statement = select(
+        MetricSample.raw_record_id,
+        MetricSample.source_platform,
+        MetricSample.source_device,
+    ).where(MetricSample.user_id == user_id, MetricSample.metric == metric)
+    if metric == HRV_METRIC:
+        statement = statement.where(
+            MetricSample.measurement_type == hrv_type,
+            MetricSample.source_platform.in_(approved_hrv_platforms()),
         )
-    ).all()
+    sleep = _main_sleep(session, user_id, day) if hrv_type == SDNN else None
+    if sleep is not None:
+        statement = statement.where(
+            MetricSample.observed_at >= sleep.start_time,
+            MetricSample.observed_at <= sleep.end_time,
+        )
+    else:
+        statement = statement.where(MetricSample.civil_date == day)
+    samples = session.execute(statement).all()
     if not samples:
         return "unknown"
     signatures: list[str] = []

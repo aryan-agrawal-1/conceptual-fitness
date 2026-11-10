@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
+from statistics import median
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,10 +11,19 @@ from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession
 from app.services.body_metrics import preferred_body_sample
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.interval_totals import interval_totals_by_date
+from app.services.hrv import (
+    HRV_METRIC,
+    RMSSD,
+    RMSSD_CALIBRATION_WINDOW_DAYS,
+    SDNN,
+    hrv_source_approved,
+    selected_hrv_type,
+)
 from app.services.metric_rollups import daily_rollup_values
+from app.services.score_helpers import _main_sleep
 
 PREFERRED_SAMPLE_DATA_TYPES: dict[str, str] = {
-    "heart_rate_variability": "daily-heart-rate-variability",
+    HRV_METRIC: "daily-heart-rate-variability",
     "oxygen_saturation": "daily-oxygen-saturation",
     "respiratory_rate": "daily-respiratory-rate",
 }
@@ -78,11 +88,12 @@ def rebuild_daily_summaries(
         lambda: defaultdict(list)
     )
     for sample in samples:
-        if sample.civil_date is None:
+        if sample.civil_date is None or not _counts_toward_summary(sample):
             continue
         sample_values[sample.civil_date][sample.metric].append(sample.value)
         if _is_preferred_sample(session, sample):
             preferred_sample_values[sample.civil_date][sample.metric].append(sample.value)
+    rmssd_nights = _earlier_rmssd_nights(session, user_id, start)
 
     sleeps = session.scalars(
         select(SleepSession).where(
@@ -125,11 +136,20 @@ def rebuild_daily_summaries(
             totals.get("distance") or rollup_totals["distance"].get(day)
         )
         summary.resting_heart_rate = _mean(values.get("resting_heart_rate"))
-        summary.heart_rate_variability = _preferred_mean(
-            preferred_values,
-            values,
-            "heart_rate_variability",
+        summary.hrv_rmssd = _preferred_mean(preferred_values, values, HRV_METRIC)
+        summary.hrv_sdnn = _nightly_sdnn(session, user_id, day)
+        recent_rmssd_nights = sum(
+            1 for night in rmssd_nights if day - timedelta(days=RMSSD_CALIBRATION_WINDOW_DAYS) <= night < day
         )
+        summary.heart_rate_variability_type = selected_hrv_type(
+            summary.hrv_rmssd, summary.hrv_sdnn, recent_rmssd_nights
+        )
+        summary.heart_rate_variability = {
+            RMSSD: summary.hrv_rmssd,
+            SDNN: summary.hrv_sdnn,
+        }.get(summary.heart_rate_variability_type)
+        if summary.hrv_rmssd is not None:
+            rmssd_nights.append(day)
         summary.oxygen_saturation = (
             _preferred_mean(preferred_values, values, "oxygen_saturation")
             or rollup_sample_averages["oxygen_saturation"].get(day)
@@ -181,6 +201,46 @@ def _preferred_mean(
     metric: str,
 ) -> float | None:
     return _mean(preferred_values.get(metric)) or _mean(values.get(metric))
+
+
+def _counts_toward_summary(sample: MetricSample) -> bool:
+    if sample.metric != HRV_METRIC:
+        return True
+    return sample.measurement_type == RMSSD and hrv_source_approved(sample.source_platform)
+
+
+def _earlier_rmssd_nights(session: Session, user_id: str, start: date) -> list[date]:
+    return list(
+        session.scalars(
+            select(DailySummary.summary_date).where(
+                DailySummary.user_id == user_id,
+                DailySummary.summary_date >= start - timedelta(days=RMSSD_CALIBRATION_WINDOW_DAYS),
+                DailySummary.summary_date < start,
+                DailySummary.hrv_rmssd.is_not(None),
+            )
+        ).all()
+    )
+
+
+def _nightly_sdnn(session: Session, user_id: str, day: date) -> float | None:
+    sleep = _main_sleep(session, user_id, day)
+    if sleep is None:
+        return None
+    samples = session.scalars(
+        select(MetricSample).where(
+            MetricSample.user_id == user_id,
+            MetricSample.metric == HRV_METRIC,
+            MetricSample.measurement_type == SDNN,
+            MetricSample.observed_at >= sleep.start_time,
+            MetricSample.observed_at <= sleep.end_time,
+        )
+    ).all()
+    values = [
+        sample.value
+        for sample in samples
+        if sample.value > 0 and hrv_source_approved(sample.source_platform)
+    ]
+    return float(median(values)) if values else None
 
 
 def _is_preferred_sample(session: Session, sample: MetricSample) -> bool:

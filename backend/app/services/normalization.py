@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.metric_rollups import HighVolumeRecord
+from app.services.hrv import HRV_METRIC, hrv_measurement
 from app.services.workout_records import normalize_provider_workout
 
 HEART_RATE_BULK_BATCH_SIZE = 2000
@@ -349,6 +350,7 @@ def _measurement_row(
         "unit": spec.unit,
         "source_platform": source.get("platform"),
         "source_device": device.get("displayName"),
+        "measurement_type": _measurement_type(spec, payload),
         "created_at": utcnow(),
     }
 
@@ -438,6 +440,7 @@ def _bulk_upsert_normalized_rows(
                 "unit": sample_insert.excluded.unit,
                 "source_platform": sample_insert.excluded.source_platform,
                 "source_device": sample_insert.excluded.source_device,
+                "measurement_type": sample_insert.excluded.measurement_type,
             },
             where=MetricSample.value.is_distinct_from(sample_insert.excluded.value),
         )
@@ -531,8 +534,13 @@ def _normalize_sample(
             unit=spec.unit,
             source_platform=raw_record.source_platform,
             source_device=raw_record.source_device,
+            measurement_type=_measurement_type(spec, payload),
         )
     )
+
+
+def _measurement_type(spec: DataTypeSpec, payload: dict[str, Any]) -> str | None:
+    return hrv_measurement(payload)[1] if spec.metric == HRV_METRIC else None
 
 
 def _normalize_sample_value(spec: DataTypeSpec, payload: dict[str, Any], value: float) -> float:
@@ -544,6 +552,8 @@ def _normalize_sample_value(spec: DataTypeSpec, payload: dict[str, Any], value: 
 
 
 def _metric_numeric_value(spec: DataTypeSpec, payload: dict[str, Any]) -> float | None:
+    if spec.metric == HRV_METRIC:
+        return hrv_measurement(payload)[0]
     if spec.metric == "skin_temperature_variation":
         nightly = _to_float(payload.get("nightlyTemperatureCelsius"))
         baseline = _to_float(payload.get("baselineTemperatureCelsius"))

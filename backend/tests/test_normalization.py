@@ -86,7 +86,7 @@ def test_normalizes_sample_and_sleep(session) -> None:
                 "physicalTime": "2026-06-15T06:00:00Z",
                 "civilTime": {"date": {"year": 2026, "month": 6, "day": 15}},
             },
-            "milliseconds": "56",
+            "averageHeartRateVariabilityMilliseconds": "56",
         },
     }
     sleep_point = {

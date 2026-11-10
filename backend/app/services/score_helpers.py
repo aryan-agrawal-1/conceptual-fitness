@@ -368,7 +368,7 @@ def _metric_baseline_score(
     metadata = baseline.metadata_json or {}
     if (
         metric == "heart_rate_variability"
-        and metadata.get("transform") == "natural_log_rmssd"
+        and str(metadata.get("transform", "")).startswith("natural_log_")
         and value > 0
         and baseline.median_value > 0
     ):

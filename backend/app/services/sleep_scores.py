@@ -35,6 +35,7 @@ from app.services.score_helpers import (
     _to_float,
     _weighted_score,
 )
+from app.services.hrv import hrv_value_of_type
 from app.services.score_baselines import _metric_value_for_baseline
 
 
@@ -408,9 +409,7 @@ def _sleep_physiology_score(
     }
     previous_summary = _summary_for_day(session, user_id, day - timedelta(days=1))
     previous_values = {
-        "heart_rate_variability": previous_summary.heart_rate_variability
-        if previous_summary
-        else None,
+        "heart_rate_variability": hrv_value_of_type(previous_summary, summary.heart_rate_variability_type),
         "resting_heart_rate": previous_summary.resting_heart_rate if previous_summary else None,
         "respiratory_rate": previous_summary.respiratory_rate if previous_summary else None,
         "oxygen_saturation": previous_summary.oxygen_saturation if previous_summary else None,

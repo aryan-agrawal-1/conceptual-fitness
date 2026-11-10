@@ -339,7 +339,7 @@ def _autonomic_metric_component(
         item = _metric_z_for_day(session, user_id, current_day, metric)
         if item is not None:
             recent.append(item)
-    recent = recent[-3:]
+    recent = [item for item in recent if item["measurement_type"] == current["measurement_type"]][-3:]
     recent_z = float(median(item["z"] for item in recent)) if recent else float(current["z"])
     combined_z = (
         READINESS_V3_CONFIG["current_autonomic_weight"] * float(current["z"])
@@ -380,6 +380,8 @@ def _metric_z_for_day(
         return None
     metadata = baseline.metadata_json or {}
     if metric == "heart_rate_variability":
+        if summary.heart_rate_variability_type != metadata.get("hrv_measurement_type"):
+            return None
         if value <= 0 or baseline.median_value <= 0:
             return None
         spread = float(metadata.get("log_spread") or 0)
