@@ -1,20 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from statistics import mean, median
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import MetricSample, RawHealthRecord, SleepSession
-from app.services.health_dates import get_or_create_profile, local_date_for_profile
+from app.models import HealthConnection, MetricSample, RawHealthRecord, SleepSession
+from app.services.health_dates import get_or_create_profile, local_date_for_profile, timezone_for_profile
 from app.services.hrv import HRV_METRIC, SDNN
+from app.services.metric_rollups import HighVolumeRecord, replace_high_volume_rollups
+from app.services.workout_records import normalize_provider_workout, remove_provider_workouts
 
 APPLE_HEALTH_PLATFORM = "APPLE_HEALTH"
 SLEEP_ANALYSIS = "HKCategoryTypeIdentifierSleepAnalysis"
 WRIST_TEMPERATURE = "HKQuantityTypeIdentifierAppleSleepingWristTemperature"
+WORKOUT = "HKWorkoutTypeIdentifier"
+HEART_RATE = "HKQuantityTypeIdentifierHeartRate"
+STEP_COUNT = "HKQuantityTypeIdentifierStepCount"
+DISTANCE = "HKQuantityTypeIdentifierDistanceWalkingRunning"
+ACTIVE_ENERGY = "HKQuantityTypeIdentifierActiveEnergyBurned"
+BASAL_ENERGY = "HKQuantityTypeIdentifierBasalEnergyBurned"
 WRIST_TEMPERATURE_METRIC = "wrist_temperature"
 SKIN_TEMPERATURE_VARIATION = "skin_temperature_variation"
 WATCH_PRODUCT_PREFIX = "Watch"
@@ -57,15 +65,45 @@ SAMPLE_MAPPINGS: dict[str, SampleMapping] = {
 DATED_BY_END = frozenset({SLEEP_ANALYSIS, WRIST_TEMPERATURE})
 
 
+@dataclass(frozen=True)
+class RollupMapping:
+    data_types: tuple[str, ...]
+    unit: str
+    accepted_unit: str
+    instant: bool = False
+
+
+ROLLUP_MAPPINGS: dict[str, RollupMapping] = {
+    "heart_rate": RollupMapping((HEART_RATE,), "bpm", "count/min", instant=True),
+    "steps": RollupMapping((STEP_COUNT,), "count", "count"),
+    "distance": RollupMapping((DISTANCE,), "meters", "m"),
+    "active_calories": RollupMapping((ACTIVE_ENERGY,), "kcal", "kcal"),
+    "total_calories": RollupMapping((ACTIVE_ENERGY, BASAL_ENERGY), "kcal", "kcal"),
+}
+ROLLUP_DATA_TYPES = frozenset(data_type for item in ROLLUP_MAPPINGS.values() for data_type in item.data_types)
+WORKOUT_TYPES = {
+    "traditional_strength_training": "strength_training",
+    "functional_strength_training": "strength_training",
+    "core_training": "strength_training",
+    "high_intensity_interval_training": "hiit",
+    "cross_training": "circuit_training",
+    "mixed_cardio": "cardio",
+    "cardio_dance": "cardio_dance",
+    "stair_climbing": "stair_climbing_cardio",
+}
+
+
 def recorded_by_watch(sample: dict[str, Any]) -> bool:
     product_type = (sample.get("source") or {}).get("product_type") or ""
     return product_type.startswith(WATCH_PRODUCT_PREFIX)
 
 
-def normalize_apple_sample(session: Session, record: RawHealthRecord) -> bool:
+def normalize_apple_sample(session: Session, connection: HealthConnection, record: RawHealthRecord) -> bool:
     session.execute(delete(MetricSample).where(MetricSample.raw_record_id == record.id))
-    mapping = SAMPLE_MAPPINGS.get(record.data_type)
     sample = record.raw_json or {}
+    if record.data_type == WORKOUT:
+        return normalize_apple_workout(session, connection, record)
+    mapping = SAMPLE_MAPPINGS.get(record.data_type)
     value = sample.get("value")
     if mapping is None or value is None or sample.get("unit") != mapping.accepted_unit:
         return False
@@ -88,7 +126,30 @@ def normalize_apple_sample(session: Session, record: RawHealthRecord) -> bool:
     return True
 
 
+def normalize_apple_workout(session: Session, connection: HealthConnection, record: RawHealthRecord) -> bool:
+    sample = record.raw_json or {}
+    if not recorded_by_watch(sample):
+        remove_provider_workouts(session, raw_record_ids=[record.id])
+        return False
+    details = sample.get("workout") or {}
+    activity = str(details.get("activity_type") or "other")
+    normalize_provider_workout(
+        session,
+        account=connection,
+        raw_record=record,
+        payload={**details, "exerciseType": WORKOUT_TYPES.get(activity, activity)},
+        start_time=record.start_time,
+        end_time=record.end_time,
+    )
+    return True
+
+
+def remove_apple_records(session: Session, raw_record_ids: list[str]) -> None:
+    remove_provider_workouts(session, raw_record_ids=raw_record_ids)
+
+
 def rebuild_apple_health_derived(session: Session, *, user_id: str, start: date, end: date) -> date:
+    rebuild_apple_activity_rollups(session, user_id=user_id, start=start, end=end)
     rebuild_apple_sleep_sessions(session, user_id=user_id, start=start, end=end)
     return rebuild_wrist_temperature_variation(session, user_id=user_id, start=start, end=end)
 
@@ -277,3 +338,60 @@ def nightly_window_mean(
         )
     ).all()
     return float(mean(values)) if values else None
+
+
+def rebuild_apple_activity_rollups(session: Session, *, user_id: str, start: date, end: date) -> int:
+    zone = timezone_for_profile(get_or_create_profile(session, user_id))
+    range_start = datetime.combine(start, time.min, zone)
+    range_end = datetime.combine(end + timedelta(days=1), time.min, zone)
+    records = session.scalars(
+        select(RawHealthRecord).where(
+            RawHealthRecord.user_id == user_id,
+            RawHealthRecord.source_platform == APPLE_HEALTH_PLATFORM,
+            RawHealthRecord.data_type.in_(ROLLUP_DATA_TYPES),
+            RawHealthRecord.start_time >= range_start,
+            RawHealthRecord.start_time < range_end,
+        )
+    ).all()
+    if not records:
+        return 0
+    connection = session.get(HealthConnection, records[0].connection_id)
+    stored = 0
+    for metric, mapping in ROLLUP_MAPPINGS.items():
+        usable = [
+            high_volume_record(record, metric, mapping)
+            for record in records
+            if record.data_type in mapping.data_types
+            and recorded_by_watch(record.raw_json or {})
+            and (record.raw_json or {}).get("unit") == mapping.accepted_unit
+            and (record.raw_json or {}).get("value") is not None
+        ]
+        stored += replace_high_volume_rollups(
+            session,
+            account=connection,
+            metric=metric,
+            records=usable,
+            range_start=range_start,
+            range_end=range_end,
+        )
+    session.flush()
+    return stored
+
+
+def high_volume_record(record: RawHealthRecord, metric: str, mapping: RollupMapping) -> HighVolumeRecord:
+    value = float(record.raw_json["value"])
+    timing = (
+        {"observed_at": record.start_time}
+        if mapping.instant
+        else {"start_time": record.start_time, "end_time": record.end_time}
+    )
+    return HighVolumeRecord(
+        data_type=record.data_type,
+        metric=metric,
+        value=value,
+        unit=mapping.unit,
+        source_platform=APPLE_HEALTH_PLATFORM,
+        source_device=record.source_device,
+        civil_date=record.civil_date,
+        **timing,
+    )

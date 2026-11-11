@@ -24,6 +24,7 @@ from app.services.apple_health_mapping import (
     DATED_BY_END,
     SLEEP_ANALYSIS,
     normalize_apple_sample,
+    remove_apple_records,
 )
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.normalization import remove_normalized_records
@@ -183,7 +184,7 @@ def ingest_device_batch(session: Session, connection: HealthConnection, batch: D
         stored += 1
     session.flush()
     for record in changed_records:
-        normalize_apple_sample(session, record)
+        normalize_apple_sample(session, connection, record)
 
     new_tombstones = [record_id for record_id in dict.fromkeys(batch.deleted_ids) if record_id not in tombstoned]
     deleted_records = session.scalars(
@@ -193,6 +194,7 @@ def ingest_device_batch(session: Session, connection: HealthConnection, batch: D
         )
     ).all() if batch.deleted_ids else []
     affected_dates.update(record.civil_date for record in deleted_records if record.civil_date)
+    remove_apple_records(session, [record.id for record in deleted_records])
     remove_normalized_records(session, [record.id for record in deleted_records])
     if deleted_records:
         session.execute(
