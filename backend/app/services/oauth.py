@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 SIGN_IN_SCOPES = ("openid", "email", "profile")
 GOOGLE_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
 GOOGLE_SIGN_IN_PROVIDER = "google"
+APPLE_SIGN_IN_PROVIDER = "apple"
 GOOGLE_HEALTH_PROVIDER = "google_health"
 SIGN_IN = "sign_in"
 CONNECT_HEALTH = "connect_health"
@@ -47,8 +48,12 @@ class HealthAccountInUseError(OAuthConfigurationError):
     pass
 
 
+class GoogleAccountInUseError(OAuthConfigurationError):
+    pass
+
+
 @dataclass(frozen=True)
-class GoogleOAuthCompletion:
+class SignInCompletion:
     user_id: str
     purpose: str
     device_id_hash: str
@@ -107,9 +112,11 @@ def create_authorization_url(
     return f"{GOOGLE_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
 
 
-def consume_oauth_state(session: Session, raw_state: str) -> OAuthState:
+def consume_oauth_state(
+    session: Session, raw_state: str, *, provider: str = GOOGLE_SIGN_IN_PROVIDER
+) -> OAuthState:
     oauth_state = session.scalar(select(OAuthState).where(OAuthState.state_hash == state_digest(raw_state)))
-    if oauth_state is None:
+    if oauth_state is None or oauth_state.provider != provider:
         raise OAuthStateError("OAuth state was not found")
     if oauth_state.consumed_at is not None:
         raise OAuthStateError("OAuth state has already been used")
@@ -133,7 +140,7 @@ async def complete_google_oauth(
     code: str,
     state: str,
     client: GoogleHealthClient | None = None,
-) -> GoogleOAuthCompletion:
+) -> SignInCompletion:
     oauth_state = consume_oauth_state(session, state)
     google_client = client or GoogleHealthClient(get_settings())
     token_payload = await google_client.exchange_code_for_tokens(code)
@@ -147,19 +154,37 @@ async def complete_google_sign_in(
     oauth_state: OAuthState,
     token_payload: dict,
     google_client: GoogleHealthClient,
-) -> GoogleOAuthCompletion:
+) -> SignInCompletion:
     subject, email = await verified_google_identity(token_payload, google_client)
-    purpose = oauth_state.purpose
-    identity = session.scalar(
-        select(SignInIdentity).where(
-            SignInIdentity.provider == GOOGLE_SIGN_IN_PROVIDER,
-            SignInIdentity.subject == subject,
-        )
+    if oauth_state.purpose == SIGN_IN and sign_in_identity(session, GOOGLE_SIGN_IN_PROVIDER, subject) is None:
+        if google_account_is_data_source(session, subject):
+            raise GoogleAccountInUseError("Google account is another account's data source")
+    return complete_sign_in(
+        session,
+        oauth_state,
+        provider=GOOGLE_SIGN_IN_PROVIDER,
+        subject=subject,
+        email=email,
     )
+
+
+def complete_sign_in(
+    session: Session,
+    oauth_state: OAuthState,
+    *,
+    provider: str,
+    subject: str,
+    email: str | None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    refresh_token: str | None = None,
+) -> SignInCompletion:
+    purpose = oauth_state.purpose
+    identity = sign_in_identity(session, provider, subject)
     if purpose in SENSITIVE_PURPOSES and identity is None:
         raise OAuthConfigurationError("Sensitive action requires an existing account")
     if oauth_state.user_id and identity and identity.user_id != oauth_state.user_id:
-        raise OAuthConfigurationError("Authenticated Google account does not match the app session")
+        raise OAuthConfigurationError("Authenticated account does not match the app session")
     user = session.get(User, identity.user_id, with_for_update=True) if identity else None
     if user and user.deletion_scheduled_for and purpose != "recover_deletion":
         raise OAuthConfigurationError("Pending-deletion accounts cannot authenticate")
@@ -170,22 +195,44 @@ async def complete_google_sign_in(
         user = User(email=email)
         session.add(user)
         session.flush()
-        identity = SignInIdentity(user_id=user.id, provider=GOOGLE_SIGN_IN_PROVIDER, subject=subject)
+        identity = SignInIdentity(user_id=user.id, provider=provider, subject=subject)
+    if first_name and not user.first_name:
+        user.first_name = first_name
+        user.last_name = last_name
     if email:
         identity.email = email
-        if purpose == SIGN_IN and user.email != email:
+        if purpose == SIGN_IN:
             user.email = email
-            session.add(user)
+    if refresh_token:
+        identity.encrypted_refresh_token = encrypt_secret(refresh_token)
     identity.last_signed_in_at = utcnow()
-    session.add(identity)
+    session.add_all([user, identity])
     session.commit()
-    return GoogleOAuthCompletion(
+    return SignInCompletion(
         user_id=user.id,
         purpose=purpose,
         device_id_hash=device_hash_for_state(oauth_state),
         device_public_key=oauth_state.device_public_key,
         source_session_id=oauth_state.source_session_id,
     )
+
+
+def sign_in_identity(session: Session, provider: str, subject: str) -> SignInIdentity | None:
+    return session.scalar(
+        select(SignInIdentity).where(
+            SignInIdentity.provider == provider,
+            SignInIdentity.subject == subject,
+        )
+    )
+
+
+def google_account_is_data_source(session: Session, subject: str) -> bool:
+    return session.scalar(
+        select(HealthConnection.id).where(
+            HealthConnection.provider == GOOGLE_HEALTH_PROVIDER,
+            HealthConnection.account_subject == subject,
+        )
+    ) is not None
 
 
 async def verified_google_identity(
@@ -211,7 +258,7 @@ async def complete_health_connection(
     oauth_state: OAuthState,
     token_payload: dict,
     google_client: GoogleHealthClient,
-) -> GoogleOAuthCompletion:
+) -> SignInCompletion:
     if oauth_state.user_id is None:
         raise OAuthStateError("OAuth state is missing the connecting user")
     user = session.get(User, oauth_state.user_id, with_for_update=True)
@@ -219,6 +266,11 @@ async def complete_health_connection(
         raise OAuthConfigurationError("Account was not found")
     if user.deletion_scheduled_for:
         raise OAuthConfigurationError("Pending-deletion accounts cannot authenticate")
+
+    account_subject, _ = await verified_google_identity(token_payload, google_client)
+    signed_in_as = sign_in_identity(session, GOOGLE_SIGN_IN_PROVIDER, account_subject)
+    if signed_in_as and signed_in_as.user_id != user.id:
+        raise GoogleAccountInUseError("Google account signs in to another account")
 
     access_token = token_payload["access_token"]
     refresh_token = token_payload.get("refresh_token")
@@ -243,6 +295,7 @@ async def complete_health_connection(
         connection.connected_at = utcnow()
     connection.external_user_id = external_user_id
     connection.external_legacy_user_id = external_legacy_user_id
+    connection.account_subject = account_subject
     connection.granted_scopes = granted_scopes
     if refresh_token:
         connection.encrypted_refresh_token = encrypt_secret(refresh_token)
@@ -254,7 +307,7 @@ async def complete_health_connection(
     session.commit()
     session.refresh(connection)
     await revoke_replaced_tokens(google_client, replaced_tokens)
-    return GoogleOAuthCompletion(
+    return SignInCompletion(
         user_id=user.id,
         purpose=CONNECT_HEALTH,
         device_id_hash=device_hash_for_state(oauth_state),

@@ -38,7 +38,7 @@ struct AccountDeletionView: View {
                 Label("14-day recovery period", systemImage: "clock.arrow.circlepath")
                     .font(.headline)
                 Text("Scheduling deletion signs you out on every device and stops Google Health syncing immediately. During the next 14 days, your account stays suspended and inaccessible.")
-                Text("You can restore it during that period by choosing Restore account and authenticating with the same Google account on any device.")
+                Text("You can restore it during that period by choosing Restore account and signing in the same way on any device.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -94,7 +94,7 @@ struct AccountDeletionView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Confirm with Face ID or your device passcode. You will be signed out immediately, and can restore the account for 14 days with the same Google account.")
+            Text("Confirm with Face ID or your device passcode. You will be signed out immediately, and can restore the account for 14 days by signing in the same way.")
         }
     }
 

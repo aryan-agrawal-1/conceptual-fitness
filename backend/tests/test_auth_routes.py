@@ -354,3 +354,20 @@ def test_connect_callback_reports_health_account_in_use(session, monkeypatch) ->
     response = _callback(monkeypatch, state_from(url["authorization_url"]), FakeGoogleClient())
 
     assert response.headers["location"] == "healthapp://auth/callback?status=error&reason=health_account_in_use"
+
+
+def test_google_sign_in_callback_reports_google_account_in_use(session, monkeypatch) -> None:
+    owner = _user(session, "owner@example.com")
+    session.add(HealthConnection(user_id=owner.id, account_subject="google-sub", status=ConnectionStatus.connected))
+    session.commit()
+    state = state_from(create_authorization_url(session, device_id=DEVICE_ID))
+
+    response = _callback(monkeypatch, state, FakeGoogleClient(subject="google-sub"))
+
+    assert response.headers["location"] == "healthapp://auth/callback?status=error&reason=google_account_in_use"
+
+
+def test_me_reports_the_sign_in_provider(session) -> None:
+    client, _ = _signed_in_client(session)
+
+    assert client.get("/auth/me").json()["user"]["sign_in_provider"] == "google"

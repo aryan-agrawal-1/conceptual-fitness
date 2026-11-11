@@ -67,7 +67,7 @@ struct AccountExportView: View {
         Form {
             Section {
                 Text("Choose the data to include. You’ll confirm with Face ID or your device passcode before the archive is created.")
-                Text("If this is an older app session, you may be asked to sign in with Google once to link this device.")
+                Text("If this is an older app session, you may be asked to sign in once to link this device.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Text("The ZIP contains documented JSON files. Authentication credentials are never included.")

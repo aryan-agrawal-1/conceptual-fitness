@@ -232,7 +232,7 @@ private struct ProfilePrivacyView: View {
             }
             Section("Export and deletion") {
                 Text("Export lets you choose categories for a machine-readable archive. Export and account deletion require Face ID or device passcode confirmation on a supported iPhone.")
-                Text("Deleting your account immediately suspends access and stops imports. You can restore it with the same Google account for 14 days; after that, application data is permanently erased.")
+                Text("Deleting your account immediately suspends access and stops imports. You can restore it for 14 days by signing in the same way; after that, application data is permanently erased.")
                 Text("Infrastructure backup retention is managed separately and is not available in the app. Files you save or share outside the app remain under your control.")
             }
         }

@@ -10,8 +10,18 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 
+APPLE_TEST_KEY = ec.generate_private_key(ec.SECP256R1())
+
 os.environ.update(
     {
+        "APPLE_CLIENT_ID": "com.example.conceptualfitness",
+        "APPLE_TEAM_ID": "TEAMID1234",
+        "APPLE_KEY_ID": "KEYID12345",
+        "APPLE_PRIVATE_KEY": APPLE_TEST_KEY.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode(),
         "APP_ENV": "test",
         "APP_BASE_URL": "http://localhost:8000",
         "IOS_DEEP_LINK_REDIRECT": "healthapp://auth/callback",

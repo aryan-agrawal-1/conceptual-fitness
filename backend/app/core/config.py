@@ -49,6 +49,10 @@ class Settings:
     celery_sync_minute: str
     google_health_sync_freshness_minutes: int
     google_health_scopes: tuple[str, ...] = GOOGLE_HEALTH_SCOPES
+    apple_client_id: str = ""
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""
 
     @property
     def is_configured_for_google(self) -> bool:
@@ -140,6 +144,10 @@ def get_settings() -> Settings:
             15,
         ),
         google_health_scopes=_parse_scopes(env.get("GOOGLE_HEALTH_SCOPES")),
+        apple_client_id=env.get("APPLE_CLIENT_ID", ""),
+        apple_team_id=env.get("APPLE_TEAM_ID", ""),
+        apple_key_id=env.get("APPLE_KEY_ID", ""),
+        apple_private_key=env.get("APPLE_PRIVATE_KEY", "").replace("\\n", "\n"),
     )
 
 
@@ -159,10 +167,20 @@ def missing_or_placeholder_keys(settings: Settings) -> list[str]:
     ]
 
 
+def missing_apple_keys(settings: Settings) -> list[str]:
+    keys = (
+        ("APPLE_CLIENT_ID", settings.apple_client_id),
+        ("APPLE_TEAM_ID", settings.apple_team_id),
+        ("APPLE_KEY_ID", settings.apple_key_id),
+        ("APPLE_PRIVATE_KEY", settings.apple_private_key),
+    )
+    return [key for key, value in keys if not value or value.lower().startswith("your-")]
+
+
 def validate_production_settings(settings: Settings) -> None:
     if settings.app_env != "production":
         return
-    missing = missing_or_placeholder_keys(settings)
+    missing = missing_or_placeholder_keys(settings) + missing_apple_keys(settings)
     if missing:
         raise RuntimeError(f"Production configuration is incomplete: {', '.join(missing)}")
     if not settings.app_base_url.startswith("https://"):
