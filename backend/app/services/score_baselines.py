@@ -16,6 +16,7 @@ from app.models import (
     RawHealthRecord,
     UserProfile,
 )
+from app.services.apple_health_mapping import APPLE_HEALTH_PLATFORM
 from app.services.health_dates import (
     timezone_for_profile,
 )
@@ -214,6 +215,14 @@ def _calculate_personal_baseline(
         lower = max(0.0, centre - 2 * spread)
         upper = centre + 2 * spread
         metadata["ewma_half_life_days"] = 28
+    elif metric == "skin_temperature_variation" and APPLE_HEALTH_PLATFORM in (metadata.get("source") or ""):
+        centre = 0.0
+        avg = float(mean(values))
+        spread = float(median(abs(value) for value in values) * 1.4826)
+        lower = -2 * spread
+        upper = 2 * spread
+        metadata["method"] = "apple_wrist_temperature_rolling_median_reference"
+        metadata["reference_centre_fixed"] = True
     else:
         centre = float(median(values))
         avg = float(mean(values))

@@ -8,6 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import DailySummary, MetricSample, RawHealthRecord, SleepSession, User, Workout
+from app.services.apple_health_mapping import (
+    APPLE_HEALTH_PLATFORM,
+    NIGHTLY_WINDOW_METRICS,
+    nightly_window_mean,
+)
 from app.services.body_metrics import preferred_body_sample
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.interval_totals import interval_totals_by_date
@@ -150,11 +155,15 @@ def rebuild_daily_summaries(
         }.get(summary.heart_rate_variability_type)
         if summary.hrv_rmssd is not None:
             rmssd_nights.append(day)
+        main_sleep = _main_sleep(session, user_id, day)
         summary.oxygen_saturation = (
             _preferred_mean(preferred_values, values, "oxygen_saturation")
             or rollup_sample_averages["oxygen_saturation"].get(day)
+            or nightly_window_mean(session, user_id, main_sleep, "oxygen_saturation")
         )
-        summary.respiratory_rate = _preferred_mean(preferred_values, values, "respiratory_rate")
+        summary.respiratory_rate = _preferred_mean(
+            preferred_values, values, "respiratory_rate"
+        ) or nightly_window_mean(session, user_id, main_sleep, "respiratory_rate")
         summary.sleep_minutes = sleep_minutes.get(day) or None
         summary.workout_count = workout_counts.get(day, 0)
         summary.data_quality = _data_quality(summary)
@@ -204,6 +213,8 @@ def _preferred_mean(
 
 
 def _counts_toward_summary(sample: MetricSample) -> bool:
+    if sample.metric in NIGHTLY_WINDOW_METRICS and sample.source_platform == APPLE_HEALTH_PLATFORM:
+        return False
     if sample.metric != HRV_METRIC:
         return True
     return sample.measurement_type == RMSSD and hrv_source_approved(sample.source_platform)
