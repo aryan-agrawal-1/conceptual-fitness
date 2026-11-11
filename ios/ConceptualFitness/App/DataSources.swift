@@ -63,18 +63,27 @@ extension AuthStore {
     func connect(_ device: DataSourceDevice) async -> String? {
         switch device {
         case .fitbit:
-            return await connectFitbit()
+            let message = await connectFitbit()
+            if connectedSession?.healthConnection.activeDevice == .fitbit { AppleHealthSync.shared.disable() }
+            return message
         case .appleWatch:
             return await connectAppleWatch()
         }
     }
 
     func connectAppleWatch() async -> String? {
+        guard AppleHealthSync.isAvailable else { return "Apple Health isn’t available on this device." }
+        do {
+            try await AppleHealthSync.shared.requestAuthorization()
+        } catch {
+            return "Apple Health access couldn’t be requested. Try again."
+        }
         do {
             let _: ConnectionChangeResponse = try await authenticatedJSON(
                 path: "/connections/apple-health", method: "POST", body: [String: String]()
             )
-            try await refreshSession()
+            let session = try await refreshSession()
+            AppleHealthSync.shared.enable(authStore: self, userID: session.user.id)
             return nil
         } catch {
             return "Apple Watch wasn’t connected. Check your connection and try again."
@@ -82,6 +91,7 @@ extension AuthStore {
     }
 
     func disconnect(_ device: DataSourceDevice) async -> String? {
+        if device == .appleWatch { AppleHealthSync.shared.disable() }
         do {
             let body: [String: Bool] = device == .fitbit ? ["revoke": true] : [:]
             let _: ConnectionChangeResponse = try await authenticatedJSON(path: device.disconnectPath, method: "POST", body: body)
@@ -154,6 +164,10 @@ struct DeviceChoiceList: View {
     }
 }
 
+enum AppleHealthCopy {
+    static let noData = "No Apple Watch data has arrived yet. If you turned off access, open Settings, then Privacy & Security, Health, Conceptual Fitness."
+}
+
 enum DeviceSwitchCopy {
     static func confirmation(from old: DataSourceDevice, to new: DataSourceDevice) -> String {
         let stop = old == .fitbit ? "Fitbit imports will stop and its Google access will be removed." : "Apple Watch imports will stop."
@@ -219,6 +233,9 @@ struct DataSourcesView: View {
                         LabeledContent("Connected", value: connected.formatted(date: .abbreviated, time: .omitted))
                     }
                     if let message = coordinator.failureMessage { Text(message).foregroundStyle(.secondary) }
+                    if active == .appleWatch && coordinator.appleHealthLooksEmpty {
+                        Text(AppleHealthCopy.noData).font(.footnote).foregroundStyle(.secondary)
+                    }
                     Button(coordinator.isSyncing ? "Syncing…" : "Sync now") { Task { await coordinator.retry() } }
                         .disabled(coordinator.isSyncing)
                 }

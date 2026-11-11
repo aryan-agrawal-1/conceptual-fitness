@@ -5,10 +5,13 @@ import UserNotifications
 
 @main
 struct ConceptualFitnessApp: App {
-    @StateObject private var authStore = AuthStore()
+    @StateObject private var authStore: AuthStore
 
     init() {
         UNUserNotificationCenter.current().delegate = JournalNotificationRouter.shared
+        let store = AuthStore()
+        _authStore = StateObject(wrappedValue: store)
+        AppleHealthSync.shared.resumeIfEnabled(authStore: store)
     }
 
     var body: some Scene {

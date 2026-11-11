@@ -22,6 +22,7 @@
         010000000000000000000040 /* HistoricalBackfillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000040 /* HistoricalBackfillView.swift */; };
 		010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000001 /* ConceptualFitnessApp.swift */; };
 		010000000000000000B00000 /* DataSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00000 /* DataSources.swift */; };
+		010000000000000000B00002 /* AppleHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00002 /* AppleHealth.swift */; };
 		010000000000000000000002 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000002 /* AppRoute.swift */; };
 		010000000000000000000003 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000003 /* AppShellView.swift */; };
 		010000000000000000000004 /* PlaceholderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000004 /* PlaceholderViews.swift */; };
@@ -79,6 +80,7 @@
 		01000000000000000E0E0E04 /* ExperimentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000E0E0E04 /* ExperimentTests.swift */; };
 		0100000000000000000AF001 /* PatternsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000AF001 /* PatternsTests.swift */; };
 		010000000000000000B00001 /* DataSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00001 /* DataSourceTests.swift */; };
+		010000000000000000B00003 /* AppleHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00003 /* AppleHealthTests.swift */; };
 		0100000000000000000AF003 /* AuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000AF003 /* AuthTests.swift */; };
 		01000000000000000000004D /* JournalLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004D /* JournalLedgerRow.swift */; };
 		01000000000000000000004E /* JournalCheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000004E /* JournalCheckIn.swift */; };
@@ -113,6 +115,7 @@
         020000000000000000000040 /* HistoricalBackfillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoricalBackfillView.swift; sourceTree = "<group>"; };
 		020000000000000000000001 /* ConceptualFitnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConceptualFitnessApp.swift; sourceTree = "<group>"; };
 		020000000000000000B00000 /* DataSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataSources.swift; sourceTree = "<group>"; };
+		020000000000000000B00002 /* AppleHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealth.swift; sourceTree = "<group>"; };
 		020000000000000000000002 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
 		020000000000000000000003 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		020000000000000000000004 /* PlaceholderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderViews.swift; sourceTree = "<group>"; };
@@ -173,6 +176,7 @@
 		02000000000000000E0E0E04 /* ExperimentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperimentTests.swift; sourceTree = "<group>"; };
 		0200000000000000000AF001 /* PatternsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatternsTests.swift; sourceTree = "<group>"; };
 		020000000000000000B00001 /* DataSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataSourceTests.swift; sourceTree = "<group>"; };
+		020000000000000000B00003 /* AppleHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealthTests.swift; sourceTree = "<group>"; };
 		0200000000000000000AF003 /* AuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTests.swift; sourceTree = "<group>"; };
 		02000000000000000000F002 /* ConceptualFitnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConceptualFitnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		02000000000000000000004D /* JournalLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Journal/JournalLedgerRow.swift; sourceTree = "<group>"; };
@@ -264,6 +268,7 @@
 			isa = PBXGroup;
 			children = (
 				020000000000000000B00000 /* DataSources.swift */,
+				020000000000000000B00002 /* AppleHealth.swift */,
 				020000000000000000000002 /* AppRoute.swift */,
 				020000000000000000000003 /* AppShellView.swift */,
 				020000000000000000000041 /* AccountExportView.swift */,
@@ -386,6 +391,7 @@
 				02000000000000000000F001 /* JournalTests.swift */,
 				0200000000000000000AF001 /* PatternsTests.swift */,
 				020000000000000000B00001 /* DataSourceTests.swift */,
+				020000000000000000B00003 /* AppleHealthTests.swift */,
 				0200000000000000000AF003 /* AuthTests.swift */,
 				02000000000000000E0E0E04 /* ExperimentTests.swift */,
 			);
@@ -513,6 +519,7 @@
 				010000000000000000000099 /* JournalAIContext.swift in Sources */,
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000B00000 /* DataSources.swift in Sources */,
+				010000000000000000B00002 /* AppleHealth.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,
 				010000000000000000000041 /* AccountExportView.swift in Sources */,
@@ -579,6 +586,7 @@
 				01000000000000000000F001 /* JournalTests.swift in Sources */,
 				0100000000000000000AF001 /* PatternsTests.swift in Sources */,
 				010000000000000000B00001 /* DataSourceTests.swift in Sources */,
+				010000000000000000B00003 /* AppleHealthTests.swift in Sources */,
 				0100000000000000000AF003 /* AuthTests.swift in Sources */,
 				01000000000000000E0E0E04 /* ExperimentTests.swift in Sources */,
 			);

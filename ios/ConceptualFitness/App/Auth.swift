@@ -365,6 +365,7 @@ final class AuthStore: ObservableObject {
         }
         keychain.clearTokens()
         accessToken = nil
+        AppleHealthSync.shared.disable()
         state = .signedOut
     }
 
@@ -609,7 +610,8 @@ final class AuthStore: ObservableObject {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
             where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history")
-                || key.hasPrefix("journalReminder") || key.hasPrefix("journalPrompted") {
+                || key.hasPrefix("journalReminder") || key.hasPrefix("journalPrompted")
+                || key.hasPrefix(AppleHealthState.keyPrefix) {
             defaults.removeObject(forKey: key)
         }
         if let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
@@ -964,6 +966,7 @@ struct AuthGateView: View {
 
     private var authContent: some View {
         authStates
+            .modifier(AppleHealthAccessModifier())
             .onReceive(appleCredentialRevocations) { _ in
                 Task { await authStore.handleAppleCredentialRevoked() }
             }
