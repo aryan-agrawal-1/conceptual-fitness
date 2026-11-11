@@ -26,6 +26,7 @@ struct OnboardingView: View {
     @State private var heightInches = ""
     @State private var weightKg = ""
     @State private var weightPounds = ""
+    @State private var device: DataSourceDevice?
 
     @MainActor
     init(authStore: AuthStore, session: AuthSession) {
@@ -34,6 +35,9 @@ struct OnboardingView: View {
         _locationProvider = StateObject(wrappedValue: LocationProvider())
         _firstName = State(initialValue: session.user.firstName ?? "")
         _lastName = State(initialValue: session.user.lastName ?? "")
+        let knowsName = !(session.user.firstName ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+        _step = State(initialValue: knowsName ? .location : .name)
+        _device = State(initialValue: session.healthConnection.activeDevice)
     }
 
     var body: some View {
@@ -86,12 +90,12 @@ struct OnboardingView: View {
                 Text("Set up your profile")
                     .font(.title2.weight(.bold))
                 Spacer()
-                Text("\(step.index + 1) of \(OnboardingStep.allCases.count)")
+                Text("\(progressPosition) of \(progressSteps.count)")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
-            ProgressView(value: Double(step.index + 1), total: Double(OnboardingStep.allCases.count))
+            ProgressView(value: Double(progressPosition), total: Double(progressSteps.count))
                 .tint(.blue)
 
             Text(step.subtitle)
@@ -116,6 +120,21 @@ struct OnboardingView: View {
             manualTimezoneStep
         case .body:
             bodyStep
+        case .device:
+            deviceStep
+        }
+    }
+
+    private var deviceStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            OnboardingStepTitle(title: "Which device do you wear?")
+            DeviceChoiceList(
+                selection: Binding(get: { device }, set: { device = $0; errorMessage = nil }),
+                connected: session.healthConnection.status == .connected ? session.healthConnection.activeDevice : nil
+            )
+            Text("You can change this later in Profile.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -301,7 +320,7 @@ struct OnboardingView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                 } else {
-                    Text(step.primaryActionTitle)
+                    Text(primaryActionTitle)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -309,7 +328,19 @@ struct OnboardingView: View {
             .controlSize(.large)
             .disabled(isSaving || !canContinue)
 
-            if step.index > 0 {
+            if step == .device {
+                Button {
+                    Task { await completeOnboarding() }
+                } label: {
+                    Text("Not now").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isSaving)
+                .accessibilityHint("Finishes setup without a device. Scores stay empty until you connect one.")
+            }
+
+            if step.index > firstStep.index {
                 Button {
                     errorMessage = nil
                     step = step.previous
@@ -346,7 +377,29 @@ struct OnboardingView: View {
             return !selectedTimezone.identifier.isEmpty
         case .body:
             return sex != nil && parsedHeightCm != nil && parsedWeightKg != nil
+        case .device:
+            return device != nil
         }
+    }
+
+    private var firstStep: OnboardingStep {
+        (session.user.firstName ?? "").trimmingCharacters(in: .whitespaces).isEmpty ? .name : .location
+    }
+
+    private var progressSteps: [OnboardingStep] {
+        (firstStep == .name ? [.name] : []) + [.location, .body, .device]
+    }
+
+    private var progressPosition: Int {
+        (progressSteps.firstIndex(of: step == .manualTimezone ? .location : step) ?? 0) + 1
+    }
+
+    private var primaryActionTitle: String {
+        guard step == .device, let device else { return step.primaryActionTitle }
+        if session.healthConnection.status == .connected && session.healthConnection.activeDevice == device {
+            return "Finish"
+        }
+        return "Connect \(device.shortName)"
     }
 
     private var parsedHeightCm: Double? {
@@ -401,7 +454,9 @@ struct OnboardingView: View {
         case .manualTimezone:
             await saveManualTimezone()
         case .body:
-            await finishOnboarding()
+            await saveBodyAndContinue()
+        case .device:
+            await connectDeviceAndFinish()
         }
     }
 
@@ -511,7 +566,7 @@ struct OnboardingView: View {
     }
 
     @MainActor
-    private func finishOnboarding() async {
+    private func saveBodyAndContinue() async {
         guard let sex, let height = parsedHeightCm, let weight = parsedWeightKg else {
             errorMessage = "Complete each body detail to continue."
             return
@@ -535,12 +590,60 @@ struct OnboardingView: View {
                     locationPermissionStatus: nil,
                     heightSourcePreference: "manual",
                     weightSourcePreference: "manual",
+                    onboardingCompleted: nil
+                )
+            )
+            step = .device
+        } catch {
+            errorMessage = "Could not save your body details. Check your connection and try again."
+        }
+        isSaving = false
+    }
+
+    @MainActor
+    private func connectDeviceAndFinish() async {
+        guard let device else { return }
+        isSaving = true
+        errorMessage = nil
+        let connection = authStore.connectedSession?.healthConnection
+        if connection?.status != .connected || connection?.activeDevice != device {
+            if let message = await authStore.connect(device) {
+                errorMessage = message
+                isSaving = false
+                return
+            }
+            guard authStore.connectedSession?.healthConnection.status == .connected,
+                  authStore.connectedSession?.healthConnection.activeDevice == device else {
+                isSaving = false
+                return
+            }
+        }
+        isSaving = false
+        await completeOnboarding()
+    }
+
+    @MainActor
+    private func completeOnboarding() async {
+        isSaving = true
+        errorMessage = nil
+        do {
+            let _: UserProfilePayload = try await authStore.authenticatedJSON(
+                path: "/profile",
+                method: "PATCH",
+                body: ProfileUpdateRequest(
+                    timezone: nil,
+                    dateOfBirth: nil,
+                    sex: nil,
+                    weatherEnabled: nil,
+                    locationPermissionStatus: nil,
+                    heightSourcePreference: nil,
+                    weightSourcePreference: nil,
                     onboardingCompleted: true
                 )
             )
             try await authStore.refreshSession()
         } catch {
-            errorMessage = "Could not finish onboarding. Check the backend and try again."
+            errorMessage = "Could not finish setup. Check your connection and try again."
         }
         isSaving = false
     }
@@ -600,6 +703,7 @@ private enum OnboardingStep: CaseIterable {
     case location
     case manualTimezone
     case body
+    case device
 
     var index: Int {
         Self.allCases.firstIndex(of: self) ?? 0
@@ -615,6 +719,8 @@ private enum OnboardingStep: CaseIterable {
             return .location
         case .body:
             return .location
+        case .device:
+            return .body
         }
     }
 
@@ -628,6 +734,8 @@ private enum OnboardingStep: CaseIterable {
             return "Since location is unavailable, choose the timezone to apply."
         case .body:
             return "These values improve estimates that depend on age and body metrics."
+        case .device:
+            return "Scores come from the device you wear. Journal and workouts work without one."
         }
     }
 
@@ -638,6 +746,8 @@ private enum OnboardingStep: CaseIterable {
         case .location:
             return "Use my location"
         case .body:
+            return "Continue"
+        case .device:
             return "Finish"
         }
     }

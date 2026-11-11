@@ -61,6 +61,11 @@ struct DashboardView: View {
             ScrollView {
                 LazyVStack(spacing: 24) {
                     hero
+                    if loadsLiveData, !syncCoordinator.hasActiveSource, let authStore = client.authStore {
+                        ConnectSourceCard(connection: syncCoordinator.connection) {
+                            DataSourcesView(authStore: authStore, coordinator: syncCoordinator)
+                        }
+                    }
                     if let failureMessage = syncCoordinator.failureMessage {
                         syncFailureCard(failureMessage)
                     }

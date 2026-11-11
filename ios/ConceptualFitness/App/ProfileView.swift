@@ -6,14 +6,9 @@ struct ProfileView: View {
     @ObservedObject var authStore: AuthStore
     let userID: String
     var journalReminders: JournalReminders?
-    @State private var connectionAction: ConnectionAction?
-    @State private var isUpdatingConnection = false
+    @State private var confirmsSignOut = false
     @State private var connectionError: String?
 
-    private enum ConnectionAction: String, Identifiable {
-        case disconnect, signOut
-        var id: String { rawValue }
-    }
 
     private var session: AuthSession? {
         if case .authenticated(let session) = authStore.state { return session }
@@ -82,23 +77,9 @@ struct ProfileView: View {
 
             if let journalReminders { JournalReminderSection(reminders: journalReminders) }
 
-            Section("Connections and sync") {
-                LabeledContent("Fitbit", value: connectionTitle)
-                if let connected = DashboardFormatters.parseBackendDateTime(session?.healthConnection.connectedAt) {
-                    LabeledContent("Connected", value: connected.formatted(date: .abbreviated, time: .omitted))
-                }
-                LabeledContent("Last synced", value: coordinator.lastSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not synced yet")
-                if let message = coordinator.failureMessage { Text(message).foregroundStyle(.secondary) }
-                if isUpdatingConnection {
-                    ProgressView("Updating connection…")
-                } else if session?.healthConnection.status == .connected {
-                    Button(coordinator.isSyncing ? "Syncing…" : "Sync now") { Task { await coordinator.retry() } }
-                        .disabled(coordinator.isSyncing)
-                    Button("Disconnect Fitbit", role: .destructive) { connectionAction = .disconnect }
-                } else {
-                    Button(session?.healthConnection.provider == nil ? "Connect Fitbit" : "Reconnect Fitbit") {
-                        Task { await connect() }
-                    }
+            Section("Data sources") {
+                NavigationLink { DataSourcesView(authStore: authStore, coordinator: coordinator) } label: {
+                    profileLink(sourceTitle, subtitle: connectionTitle, icon: session?.healthConnection.activeDevice?.systemImage ?? "link")
                 }
                 if let connectionError {
                     Text(connectionError).foregroundStyle(.red)
@@ -127,8 +108,7 @@ struct ProfileView: View {
                     Label("Delete account", systemImage: "trash").foregroundStyle(.red)
                 }
                 .accessibilityHint("Review permanent deletion and the 14-day recovery period")
-                Button("Sign out", role: .destructive) { connectionAction = .signOut }
-                    .disabled(isUpdatingConnection)
+                Button("Sign out", role: .destructive) { confirmsSignOut = true }
             }
         }
         .navigationTitle("Profile")
@@ -142,29 +122,24 @@ struct ProfileView: View {
             if store.profile == nil { await store.load() }
             await refreshConnection()
         }
-        .confirmationDialog(
-            connectionAction == .disconnect ? "Disconnect Fitbit?" : "Sign out of this device?",
-            isPresented: Binding(get: { connectionAction != nil }, set: { if !$0 { connectionAction = nil } }),
-            titleVisibility: .visible
-        ) {
-            if connectionAction == .disconnect {
-                Button("Disconnect Fitbit", role: .destructive) { Task { await disconnect() } }
-            } else {
-                Button("Sign out", role: .destructive) { Task { await authStore.signOut() } }
-            }
-            Button("Cancel", role: .cancel) { connectionAction = nil }
+        .confirmationDialog("Sign out of this device?", isPresented: $confirmsSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { Task { await authStore.signOut() } }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text(connectionAction == .disconnect
-                ? "Future imports will stop. Saved health data stays in your account, and you can reconnect here."
-                : "Your account and saved health data will remain available when you sign in again.")
+            Text("Your account and saved health data will remain available when you sign in again.")
         }
+    }
+
+    private var sourceTitle: String {
+        session?.healthConnection.activeDevice?.title ?? "Connect a source"
     }
 
     private var connectionTitle: String {
         switch session?.healthConnection.status {
-        case .connected: "Connected"
+        case .connected:
+            coordinator.lastSyncAt.map { "Last synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Connected"
         case .errored: "Needs attention"
-        case .disconnected: session?.healthConnection.provider == nil ? "Not connected" : "Disconnected"
+        case .disconnected: "No device connected"
         case nil: "Status unavailable"
         }
     }
@@ -186,29 +161,6 @@ struct ProfileView: View {
         } icon: { Image(systemName: icon) }
     }
 
-    @MainActor private func disconnect() async {
-        isUpdatingConnection = true
-        connectionError = nil
-        defer { isUpdatingConnection = false }
-        do {
-            let _: [String: String] = try await authStore.authenticatedJSON(
-                path: "/connections/google-health/disconnect", method: "POST", body: ["revoke": true]
-            )
-            try await authStore.refreshSession()
-        } catch {
-            store.logFailure("disconnect", error: error)
-            connectionError = "The connection couldn’t update. Check its status before trying again."
-        }
-    }
-
-    @MainActor private func connect() async {
-        guard !isUpdatingConnection else { return }
-        isUpdatingConnection = true
-        connectionError = nil
-        defer { isUpdatingConnection = false }
-        connectionError = await authStore.connectFitbit()
-    }
-
     @MainActor private func refreshConnection() async {
         do {
             try await authStore.refreshSession()
@@ -224,7 +176,7 @@ private struct ProfilePrivacyView: View {
     var body: some View {
         Form {
             Section("Your health data") {
-                Text("Fitbit access through Google is read-only. Disconnecting stops future imports; it does not erase records already saved in your account.")
+                Text("Apple Health and Fitbit access are read-only. Disconnecting stops future imports; it does not erase records already saved in your account.")
                 Text("Your account stores imported health data, workouts, journal entries, derived scores, and your profile preferences. Daily briefs and unfinished workout drafts may also be stored on this device. Daily notes sync to your account and are encrypted when stored on the server.")
             }
             Section("Location") {

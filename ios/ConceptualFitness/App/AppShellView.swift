@@ -45,7 +45,7 @@ struct AppShellView: View {
         _syncCoordinator = StateObject(
             wrappedValue: AppSyncCoordinator(
                 client: DashboardAPIClient(authStore: authStore),
-                initialLastSyncAt: session.healthConnection.lastSyncAt
+                connection: session.healthConnection
             )
         )
     }
@@ -113,6 +113,7 @@ struct AppShellView: View {
         .onChange(of: notificationRouter.openRequested) { _, _ in presentCheckInIfNeeded() }
         .onChange(of: selectedTab) { _, _ in presentCheckInIfNeeded() }
         .onChange(of: profileStore.revision) { _, _ in syncCoordinator.profileDidChange() }
+        .onChange(of: session.healthConnection) { _, connection in syncCoordinator.updateConnection(connection) }
         .task {
             await syncCoordinator.syncIfNeeded()
         }
@@ -192,6 +193,7 @@ final class AppSyncCoordinator: ObservableObject {
     @Published private(set) var retryingSource: String?
     @Published private(set) var notifyOnCompletion = false
     @Published private(set) var notificationMessage: String?
+    @Published private(set) var connection: HealthConnectionStatus?
     private var accountID: String?
     private var historyRequestRevision = 0
 
@@ -228,7 +230,26 @@ final class AppSyncCoordinator: ObservableObject {
         }
     }
 
+    var hasActiveSource: Bool {
+        connection?.status == .connected && connection?.activeDevice != nil
+    }
+
+    func updateConnection(_ value: HealthConnectionStatus) {
+        let changed = value.activeDevice != connection?.activeDevice || value.status != connection?.status
+        connection = value
+        guard changed else { return }
+        lastSyncAt = DashboardFormatters.parseBackendDateTime(value.lastSyncAt)
+        failureMessage = nil
+        history = nil
+        historyLoaded = false
+        refreshToken += 1
+    }
+
     func checkHistory() async {
+        guard connection?.activeDevice == .fitbit else {
+            historyLoaded = true
+            return
+        }
         historyRequestRevision += 1
         let revision = historyRequestRevision
         do {
@@ -323,9 +344,10 @@ final class AppSyncCoordinator: ObservableObject {
     private let maxPollAttempts = 120
     private let logger = Logger(subsystem: "ConceptualFitness", category: "Sync")
 
-    init(client: DashboardAPIClient, initialLastSyncAt: String? = nil) {
+    init(client: DashboardAPIClient, connection: HealthConnectionStatus? = nil) {
         self.client = client
-        self.lastSyncAt = DashboardFormatters.parseBackendDateTime(initialLastSyncAt)
+        self.connection = connection
+        self.lastSyncAt = DashboardFormatters.parseBackendDateTime(connection?.lastSyncAt)
     }
 
     func updateFromDashboard(_ data: DashboardData) {
@@ -350,6 +372,7 @@ final class AppSyncCoordinator: ObservableObject {
     }
 
     private func performSyncIfNeeded() async {
+        guard hasActiveSource, connection?.activeDevice == .fitbit else { return }
         isSyncing = true
         failureMessage = nil
         defer { isSyncing = false }

@@ -16,7 +16,10 @@ struct ConceptualFitnessApp: App {
             rootView
         }
         .backgroundTask(.appRefresh("com.conceptualfitness.history")) {
-            let coordinator = await AppSyncCoordinator(client: DashboardAPIClient(authStore: authStore))
+            let coordinator = await AppSyncCoordinator(
+                client: DashboardAPIClient(authStore: authStore),
+                connection: authStore.connectedSession?.healthConnection
+            )
             await coordinator.checkHistory()
             await coordinator.scheduleHistoryCheck()
         }
