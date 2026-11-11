@@ -1040,6 +1040,46 @@ class SyncCursor(Base):
     )
 
 
+class DeviceSyncProgress(Base):
+    __tablename__ = "device_sync_progress"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "data_type", "phase", name="uq_device_sync_progress"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("health_connections.id", ondelete="CASCADE"), index=True
+    )
+    data_type: Mapped[str] = mapped_column(String(80))
+    phase: Mapped[str] = mapped_column(String(16))
+    range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.running)
+    samples_received: Mapped[int] = mapped_column(Integer, default=0)
+    deletions_received: Mapped[int] = mapped_column(Integer, default=0)
+    pending_rebuild_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    pending_rebuild_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class DeletedDeviceRecord(Base):
+    __tablename__ = "deleted_device_records"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "source_record_id", name="uq_deleted_device_record"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("health_connections.id", ondelete="CASCADE"), index=True
+    )
+    source_record_id: Mapped[str] = mapped_column(String(64))
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class HistoricalBackfill(Base):
     __tablename__ = "historical_backfills"
     __table_args__ = (

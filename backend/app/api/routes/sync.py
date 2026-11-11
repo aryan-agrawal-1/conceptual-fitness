@@ -23,6 +23,7 @@ from app.services.sync import (
     sync_google_health_range,
     sync_window_from_cursors,
 )
+from app.services.oauth import GOOGLE_HEALTH_PROVIDER
 from app.tasks.sync import enqueue_historical_backfill
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 
@@ -44,6 +45,7 @@ def current_sync(session: DbSession, user: CurrentUser) -> dict[str, object]:
     account = _current_connected_account(session, user.id)
     if account is None:
         raise HTTPException(status_code=404, detail="Connected Google Health account not found")
+    _require_google_connection(account)
     cursors = _account_cursors(session, account.id)
     failed_types = tuple(
         cursor.data_type for cursor in cursors
@@ -110,6 +112,7 @@ def retry_current_historical_backfill(
     account = _current_connected_account(session, user.id)
     if account is None:
         raise HTTPException(status_code=404, detail="Connected Google Health account not found")
+    _require_google_connection(account)
     if data_type is not None and data_type not in MVP_SYNC_DATA_TYPES:
         raise HTTPException(status_code=422, detail="Unknown historical source")
     rows = _historical_backfills(session, account.id)
@@ -135,6 +138,7 @@ async def manual_sync(
     account = session.get(HealthConnection, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Google account not found")
+    _require_google_connection(account)
     today = date.today()
     requested_types = tuple(data_type or MVP_SYNC_DATA_TYPES)
     if start is None and end is None:
@@ -187,6 +191,11 @@ def sync_status(session: DbSession, account_id: str | None = Query(default=None)
         }
         for cursor in cursors
     ]
+
+
+def _require_google_connection(account: HealthConnection) -> None:
+    if account.provider != GOOGLE_HEALTH_PROVIDER:
+        raise HTTPException(status_code=409, detail={"code": "device_upload_connection"})
 
 
 def _current_connected_account(session: DbSession, user_id: str) -> HealthConnection | None:
