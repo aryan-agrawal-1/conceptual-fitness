@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.security import utcnow
-from app.models import MetricSample, UserProfile
+from app.models import MetricSample, UserProfile, Workout
 from app.services.body_metrics import preferred_body_sample
 from app.services.health_dates import get_or_create_profile, local_date_for_profile, timezone_for_profile
 from app.services.scores import rebuild_after_health_edit
@@ -113,10 +113,21 @@ def update_body_metrics(
             profile.weight_kg = payload.weight_kg
             profile.weight_source_preference = "manual"
     session.add(profile)
-    rebuild_after_health_edit(session, user_id=user.id, days={civil_date})
+    rebuild_after_health_edit(
+        session,
+        user_id=user.id,
+        days={civil_date},
+        include_scores=payload.weight_kg is not None and _has_workout(session, user.id, civil_date),
+    )
     session.commit()
     session.refresh(profile)
     return _body_metrics_payload(session, user_id=user.id, profile=profile, start=None, end=None)
+
+
+def _has_workout(session, user_id, day):
+    return session.scalar(
+        select(Workout.id).where(Workout.user_id == user_id, Workout.civil_date == day).limit(1)
+    ) is not None
 
 
 def _body_metrics_payload(

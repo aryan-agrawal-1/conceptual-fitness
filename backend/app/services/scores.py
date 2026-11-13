@@ -111,7 +111,7 @@ def rebuild_derived_scores(
     )
 
 
-def rebuild_after_health_edit(session: Session, *, user_id: str, days: set[date]) -> None:
+def rebuild_after_health_edit(session: Session, *, user_id: str, days: set[date], include_scores=True) -> None:
     """Publish edited inputs and their dependent scores in the caller's transaction."""
     session.execute(select(User.id).where(User.id == user_id).with_for_update())
     session.flush()
@@ -119,6 +119,8 @@ def rebuild_after_health_edit(session: Session, *, user_id: str, days: set[date]
     dates = sorted(day for day in days if day <= today)
     for day in dates:
         rebuild_daily_summaries(session, user_id=user_id, start=day, end=day)
+    if not include_scores:
+        return
     rebuilt_through = date.min
     for day in dates:
         if day > rebuilt_through:
