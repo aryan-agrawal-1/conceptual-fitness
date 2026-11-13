@@ -10,7 +10,7 @@ HRV_PAYLOAD_FIELDS = (
     ("averageHeartRateVariabilityMilliseconds", RMSSD),
     ("standardDeviationMilliseconds", SDNN),
 )
-APPROVED_HRV_PLATFORMS = {"FITBIT"}
+APPROVED_HRV_PLATFORMS = {"FITBIT", "APPLE_HEALTH"}
 RMSSD_CALIBRATED_NIGHTS = 28
 RMSSD_CALIBRATION_WINDOW_DAYS = 60
 
