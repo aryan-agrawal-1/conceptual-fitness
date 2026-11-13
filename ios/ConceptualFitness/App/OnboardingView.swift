@@ -11,6 +11,7 @@ struct OnboardingView: View {
     @State private var firstName: String
     @State private var lastName: String
     @State private var isLoadingProfile = true
+    @State private var asksName: Bool
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -37,6 +38,7 @@ struct OnboardingView: View {
         _lastName = State(initialValue: session.user.lastName ?? "")
         let knowsName = !(session.user.firstName ?? "").trimmingCharacters(in: .whitespaces).isEmpty
         _step = State(initialValue: knowsName ? .location : .name)
+        _asksName = State(initialValue: !knowsName)
         _device = State(initialValue: session.healthConnection.activeDevice)
     }
 
@@ -319,7 +321,7 @@ struct OnboardingView: View {
     }
 
     private var firstStep: OnboardingStep {
-        (session.user.firstName ?? "").trimmingCharacters(in: .whitespaces).isEmpty ? .name : .location
+        asksName ? .name : .location
     }
 
     private var progressSteps: [OnboardingStep] {
