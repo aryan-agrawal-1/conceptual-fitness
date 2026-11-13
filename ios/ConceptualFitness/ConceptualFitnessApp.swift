@@ -37,15 +37,6 @@ struct ConceptualFitnessApp: App {
             accountExportPreview.view
         } else if let historyPreview = HistoryPreviewState.current {
             historyPreview.view
-        } else if ProcessInfo.processInfo.arguments.contains("-DeviceRenderPreview") {
-            ZStack {
-                Color(red: 0.05, green: 0.07, blue: 0.16).ignoresSafeArea()
-                VStack {
-                    DeviceSlot(device: .appleWatch).frame(height: 320)
-                    DeviceSlot(device: .fitbit).frame(height: 320)
-                }
-                .deviceStage()
-            }
         } else if ProcessInfo.processInfo.arguments.contains("-FoundationModelsSmokeTest") {
             FoundationModelsSmokeTestView()
         } else if ProcessInfo.processInfo.arguments.contains("-VO2MaxDetailPreview") {
