@@ -23,6 +23,10 @@
 		010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000001 /* ConceptualFitnessApp.swift */; };
 		010000000000000000B00000 /* DataSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00000 /* DataSources.swift */; };
 		010000000000000000B00002 /* AppleHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00002 /* AppleHealth.swift */; };
+		010000000000000000B00004 /* DeviceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00004 /* DeviceModels.swift */; };
+		010000000000000000B00005 /* OnboardingDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00005 /* OnboardingDesign.swift */; };
+		010000000000000000B00006 /* EarthLand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00006 /* EarthLand.swift */; };
+		010000000000000000B00007 /* AppleWatch.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00007 /* AppleWatch.usdz */; };
 		010000000000000000000002 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000002 /* AppRoute.swift */; };
 		010000000000000000000003 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000003 /* AppShellView.swift */; };
 		010000000000000000000004 /* PlaceholderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000004 /* PlaceholderViews.swift */; };
@@ -116,6 +120,10 @@
 		020000000000000000000001 /* ConceptualFitnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConceptualFitnessApp.swift; sourceTree = "<group>"; };
 		020000000000000000B00000 /* DataSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataSources.swift; sourceTree = "<group>"; };
 		020000000000000000B00002 /* AppleHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleHealth.swift; sourceTree = "<group>"; };
+		020000000000000000B00004 /* DeviceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceModels.swift; sourceTree = "<group>"; };
+		020000000000000000B00005 /* OnboardingDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingDesign.swift; sourceTree = "<group>"; };
+		020000000000000000B00006 /* EarthLand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EarthLand.swift; sourceTree = "<group>"; };
+		020000000000000000B00007 /* AppleWatch.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = AppleWatch.usdz; sourceTree = "<group>"; };
 		020000000000000000000002 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
 		020000000000000000000003 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		020000000000000000000004 /* PlaceholderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderViews.swift; sourceTree = "<group>"; };
@@ -269,6 +277,10 @@
 			children = (
 				020000000000000000B00000 /* DataSources.swift */,
 				020000000000000000B00002 /* AppleHealth.swift */,
+				020000000000000000B00004 /* DeviceModels.swift */,
+				020000000000000000B00005 /* OnboardingDesign.swift */,
+				020000000000000000B00006 /* EarthLand.swift */,
+				020000000000000000B00007 /* AppleWatch.usdz */,
 				020000000000000000000002 /* AppRoute.swift */,
 				020000000000000000000003 /* AppShellView.swift */,
 				020000000000000000000041 /* AccountExportView.swift */,
@@ -480,6 +492,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				010000000000000000000034 /* bodyPaths.json in Resources */,
+				010000000000000000B00007 /* AppleWatch.usdz in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -520,6 +533,9 @@
 				010000000000000000000001 /* ConceptualFitnessApp.swift in Sources */,
 				010000000000000000B00000 /* DataSources.swift in Sources */,
 				010000000000000000B00002 /* AppleHealth.swift in Sources */,
+				010000000000000000B00004 /* DeviceModels.swift in Sources */,
+				010000000000000000B00005 /* OnboardingDesign.swift in Sources */,
+				010000000000000000B00006 /* EarthLand.swift in Sources */,
 				010000000000000000000002 /* AppRoute.swift in Sources */,
 				010000000000000000000003 /* AppShellView.swift in Sources */,
 				010000000000000000000041 /* AccountExportView.swift in Sources */,

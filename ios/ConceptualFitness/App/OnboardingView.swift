@@ -7,10 +7,9 @@ struct OnboardingView: View {
     let session: AuthSession
 
     @StateObject private var locationProvider: LocationProvider
-    @State private var step: OnboardingStep = .name
+    @State private var step: OnboardingStep
     @State private var firstName: String
     @State private var lastName: String
-    @State private var profile: UserProfilePayload?
     @State private var isLoadingProfile = true
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -21,11 +20,12 @@ struct OnboardingView: View {
     @State private var sex: OnboardingSex?
     @State private var heightUnit: HeightUnit = .defaultUnit
     @State private var weightUnit: WeightUnit = .defaultUnit
-    @State private var heightCm = ""
-    @State private var heightFeet = ""
-    @State private var heightInches = ""
-    @State private var weightKg = ""
-    @State private var weightPounds = ""
+    @State private var heightCm = 170
+    @State private var heightFeet = 5
+    @State private var heightInches = 7
+    @State private var weightKg = 70
+    @State private var weightTenths = 0
+    @State private var weightPounds = 154
     @State private var device: DataSourceDevice?
 
     @MainActor
@@ -42,41 +42,43 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            AppBackground()
+            OnboardingSky(scene: step.scene, level: skyLevel)
+                .animation(.easeInOut(duration: 0.6), value: step.scene)
 
             VStack(spacing: 0) {
                 header
-
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 28) {
                         if isLoadingProfile {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 80)
+                            ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 120)
                         } else {
+                            OnboardingHeadline(title: step.title, subtitle: step.subtitle)
+                                .padding(.top, step.headlineInset)
                             content
+                                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
                         }
-
                         if let errorMessage {
-                            Text(errorMessage)
-                                .font(.footnote.weight(.medium))
-                                .foregroundStyle(.red)
+                            Label(errorMessage, systemImage: "exclamationmark.circle.fill")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(14)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .onboardingGlass(cornerRadius: 16)
                         }
                     }
-                    .padding(.horizontal, 22)
-                    .padding(.top, 22)
-                    .padding(.bottom, 116)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .id(step)
                 }
                 .scrollIndicators(.hidden)
-            }
-
-            VStack {
-                Spacer()
+                .scrollBounceBehavior(.basedOnSize)
                 footer
             }
         }
+        .environment(\.colorScheme, .dark)
+        .animation(.snappy(duration: 0.35), value: step)
         .task {
+            DeviceModels.prepare()
             await loadProfileIfNeeded()
         }
         .onChange(of: locationProvider.authorizationStatus) { _, status in
@@ -85,300 +87,234 @@ struct OnboardingView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Set up your profile")
-                    .font(.title2.weight(.bold))
-                Spacer()
-                Text("\(progressPosition) of \(progressSteps.count)")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 14) {
+            Button {
+                errorMessage = nil
+                step = step.previous
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .onboardingGlass(cornerRadius: 20)
             }
-
-            ProgressView(value: Double(progressPosition), total: Double(progressSteps.count))
-                .tint(.blue)
-
-            Text(step.subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .opacity(step == firstStep ? 0 : 1)
+            .disabled(step == firstStep || isSaving)
+            .accessibilityLabel("Back")
+            OnboardingProgressBar(position: progressPosition, total: progressSteps.count)
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 22)
-        .padding(.bottom, 16)
-        .background(.white.opacity(0.72))
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
 
     @ViewBuilder
     private var content: some View {
         switch step {
-        case .name:
-            nameStep
-        case .location:
-            locationStep
-        case .manualTimezone:
-            manualTimezoneStep
-        case .body:
-            bodyStep
-        case .device:
-            deviceStep
-        }
-    }
-
-    private var deviceStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            OnboardingStepTitle(title: "Which device do you wear?")
-            DeviceChoiceList(
-                selection: Binding(get: { device }, set: { device = $0; errorMessage = nil }),
-                connected: session.healthConnection.status == .connected ? session.healthConnection.activeDevice : nil
-            )
-            Text("You can change this later in Profile.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        case .name: nameStep
+        case .location: locationStep
+        case .manualTimezone: manualTimezoneStep
+        case .birthday: birthdayStep
+        case .sex: sexStep
+        case .height: heightStep
+        case .weight: weightStep
+        case .device: deviceStep
         }
     }
 
     private var nameStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            OnboardingStepTitle(
-                title: "What should we call you?"
-            )
-
-            VStack(spacing: 12) {
-                LargeTextField(
-                    title: "First name",
-                    text: $firstName,
-                    textContentType: .givenName,
-                    submitLabel: .next
-                ) {
-                    Task { await saveNameAndContinue() }
-                }
-                .onChange(of: firstName) { _, _ in errorMessage = nil }
-
-                LargeTextField(
-                    title: "Last name",
-                    text: $lastName,
-                    textContentType: .familyName,
-                    submitLabel: .done
-                )
+        VStack(spacing: 12) {
+            GlassTextField(title: "First name", text: $firstName, textContentType: .givenName, submitLabel: .next) {
+                Task { await saveNameAndContinue() }
             }
+            .onChange(of: firstName) { _, _ in errorMessage = nil }
+            GlassTextField(title: "Last name", text: $lastName, textContentType: .familyName, submitLabel: .done)
         }
     }
 
     private var locationStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            OnboardingStepTitle(
-                title: "Use your location for accurate days"
-            )
-
-            Text("Location keeps your timezone, local dates, and dashboard weather aligned with where you are.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Timezone-aware sleep and workout dates", systemImage: "clock")
-                Label("Weather-matched dashboard background", systemImage: "cloud.sun")
-                Label("No location means a plain dashboard background", systemImage: "rectangle")
-            }
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.primary.opacity(0.86))
-        }
+        Color.clear.frame(height: 260)
     }
 
     private var manualTimezoneStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            OnboardingStepTitle(
-                title: "Choose your timezone"
-            )
-
-            Text("Weather backgrounds will stay off. Pick the country and timezone the app should use for your health data.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Country", selection: $selectedCountry) {
-                    ForEach(TimezoneCountry.all) { country in
-                        Text(country.name).tag(country)
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("Country", selection: $selectedCountry) {
+                ForEach(TimezoneCountry.all) { country in
+                    Text(country.name).tag(country)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(.white)
+            .onChange(of: selectedCountry) { _, country in
+                selectedTimezone = country.timezones[0]
+            }
+            if selectedCountry.timezones.count > 1 {
+                Divider().overlay(.white.opacity(0.2))
+                Picker("Timezone", selection: $selectedTimezone) {
+                    ForEach(selectedCountry.timezones) { timezone in
+                        Text(timezone.name).tag(timezone)
                     }
                 }
                 .pickerStyle(.menu)
-                .onChange(of: selectedCountry) { _, country in
-                    selectedTimezone = country.timezones[0]
-                }
-
-                if selectedCountry.timezones.count > 1 {
-                    Picker("Timezone", selection: $selectedTimezone) {
-                        ForEach(selectedCountry.timezones) { timezone in
-                            Text(timezone.name).tag(timezone)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
+                .tint(.white)
             }
-            .padding(16)
-            .panelSurface(cornerRadius: 18)
         }
+        .padding(16)
+        .onboardingGlass()
     }
 
-    private var bodyStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            OnboardingStepTitle(
-                title: "Confirm your body details"
-            )
-
-            DatePicker(
-                "Date of birth",
-                selection: $dateOfBirth,
-                in: dateRange,
-                displayedComponents: .date
-            )
-            .datePickerStyle(.compact)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Sex")
-                    .font(.subheadline.weight(.semibold))
-                Picker("Sex", selection: sexBinding) {
-                    Text("Select").tag(OnboardingSex?.none)
-                    ForEach(OnboardingSex.allCases) { option in
-                        Text(option.title).tag(Optional(option))
-                    }
-                }
-                .pickerStyle(.menu)
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-                .padding(.horizontal, 14)
-                .background(.white.opacity(0.74), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
-                }
-            }
-
-            measurementFields
-        }
+    private var birthdayStep: some View {
+        DatePicker("Date of birth", selection: $dateOfBirth, in: dateRange, displayedComponents: .date)
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .onboardingGlass(cornerRadius: 28)
     }
 
-    private var measurementFields: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Height")
-                    .font(.subheadline.weight(.semibold))
-                Picker("Height unit", selection: $heightUnit) {
-                    ForEach(HeightUnit.allCases) { unit in
-                        Text(unit.title).tag(unit)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                if heightUnit == .centimeters {
-                    TextField("Height in cm", text: $heightCm)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.roundedBorder)
-                } else {
+    private var sexStep: some View {
+        VStack(spacing: 10) {
+            ForEach(OnboardingSex.allCases) { option in
+                let selected = sex == option
+                Button {
+                    sex = option
+                    errorMessage = nil
+                } label: {
                     HStack {
-                        TextField("ft", text: $heightFeet)
-                            .keyboardType(.numberPad)
-                            .textFieldStyle(.roundedBorder)
-                        TextField("in", text: $heightInches)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.roundedBorder)
+                        Text(option.title).font(.title3.weight(.semibold))
+                        Spacer()
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(selected ? .white : .white.opacity(0.4))
                     }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 64)
+                    .background(.white.opacity(selected ? 0.18 : 0.07), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(selected ? 0.9 : 0.14), lineWidth: selected ? 2 : 1))
+                    .contentShape(RoundedRectangle(cornerRadius: 20))
                 }
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Weight")
-                    .font(.subheadline.weight(.semibold))
-                Picker("Weight unit", selection: $weightUnit) {
-                    ForEach(WeightUnit.allCases) { unit in
-                        Text(unit.title).tag(unit)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                if weightUnit == .kilograms {
-                    TextField("Weight in kg", text: $weightKg)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.roundedBorder)
-                } else {
-                    TextField("Weight in lb", text: $weightPounds)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.roundedBorder)
-                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .animation(.snappy, value: sex)
+    }
+
+    private var heightStep: some View {
+        VStack(spacing: 18) {
+            BigReading(value: heightReading, unit: heightUnit == .centimeters ? "cm" : nil)
+            HStack(spacing: 0) {
+                if heightUnit == .centimeters {
+                    wheel(selection: $heightCm, range: 120...230, suffix: "")
+                } else {
+                    wheel(selection: $heightFeet, range: 3...8, suffix: "ft")
+                    wheel(selection: $heightInches, range: 0...11, suffix: "in")
+                }
+            }
+            .padding(.vertical, 4)
+            .onboardingGlass(cornerRadius: 28)
+            unitPicker(selection: $heightUnit)
+        }
+        .onChange(of: heightUnit) { _, unit in convertHeight(to: unit) }
+    }
+
+    private var weightStep: some View {
+        VStack(spacing: 18) {
+            BigReading(value: weightReading, unit: weightUnit == .kilograms ? "kg" : "lb")
+            HStack(spacing: 0) {
+                if weightUnit == .kilograms {
+                    wheel(selection: $weightKg, range: 30...250, suffix: "")
+                    wheel(selection: $weightTenths, range: 0...9, suffix: "", prefix: ".")
+                } else {
+                    wheel(selection: $weightPounds, range: 66...550, suffix: "")
+                }
+            }
+            .padding(.vertical, 4)
+            .onboardingGlass(cornerRadius: 28)
+            unitPicker(selection: $weightUnit)
+        }
+        .onChange(of: weightUnit) { _, unit in convertWeight(to: unit) }
+    }
+
+    private var deviceStep: some View {
+        let connected = session.healthConnection.status == .connected ? session.healthConnection.activeDevice : nil
+        let cards = ForEach(DataSourceDevice.allCases) { option in
+            DeviceShowcaseCard(device: option, selected: device == option, connected: connected == option) {
+                device = option
+                errorMessage = nil
+            }
+        }
+        return VStack(spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { cards }.fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 12) { cards }
+            }
+            .deviceStage()
+            Text("You can change this later in Profile.")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.65))
+        }
+    }
+
+    private func wheel(selection: Binding<Int>, range: ClosedRange<Int>, suffix: String, prefix: String = "") -> some View {
+        Picker("", selection: selection) {
+            ForEach(Array(range), id: \.self) { value in
+                Text("\(prefix)\(value)\(suffix.isEmpty ? "" : " \(suffix)")").tag(value)
+            }
+        }
+        .pickerStyle(.wheel)
+        .labelsHidden()
+        .frame(maxWidth: .infinity)
+    }
+
+    private func unitPicker<Unit: Hashable & Identifiable & CaseIterable>(selection: Binding<Unit>) -> some View where Unit.AllCases: RandomAccessCollection, Unit: OnboardingUnit {
+        Picker("Unit", selection: selection) {
+            ForEach(Unit.allCases) { unit in
+                Text(unit.title).tag(unit)
+            }
+        }
+        .pickerStyle(.segmented)
     }
 
     private var footer: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             Button {
                 Task { await continueTapped() }
             } label: {
                 if isSaving {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
+                    ProgressView().tint(Color(red: 0.08, green: 0.10, blue: 0.24))
                 } else {
                     Text(primaryActionTitle)
-                        .frame(maxWidth: .infinity)
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isSaving || !canContinue)
+            .buttonStyle(OnboardingPrimaryButtonStyle())
+            .disabled(isSaving || !canContinue || isLoadingProfile)
 
             if step == .device {
-                Button {
+                Button("Not now") {
                     Task { await completeOnboarding() }
-                } label: {
-                    Text("Not now").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+                .buttonStyle(OnboardingQuietButtonStyle())
                 .disabled(isSaving)
                 .accessibilityHint("Finishes setup without a device. Scores stay empty until you connect one.")
             }
-
-            if step.index > firstStep.index {
-                Button {
-                    errorMessage = nil
-                    step = step.previous
-                } label: {
-                    Text("Back")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .disabled(isSaving)
-            }
         }
-        .padding(18)
-        .background(.white.opacity(0.88))
-    }
-
-    private var sexBinding: Binding<OnboardingSex?> {
-        Binding(
-            get: { sex },
-            set: {
-                sex = $0
-                errorMessage = nil
-            }
-        )
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
 
     private var canContinue: Bool {
         switch step {
         case .name:
             return !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .location:
-            return true
-        case .manualTimezone:
-            return !selectedTimezone.identifier.isEmpty
-        case .body:
-            return sex != nil && parsedHeightCm != nil && parsedWeightKg != nil
+        case .sex:
+            return sex != nil
         case .device:
             return device != nil
+        case .location, .manualTimezone, .birthday, .height, .weight:
+            return true
         }
     }
 
@@ -387,7 +323,7 @@ struct OnboardingView: View {
     }
 
     private var progressSteps: [OnboardingStep] {
-        (firstStep == .name ? [.name] : []) + [.location, .body, .device]
+        (firstStep == .name ? [.name] : []) + [.location, .birthday, .sex, .height, .weight, .device]
     }
 
     private var progressPosition: Int {
@@ -402,26 +338,29 @@ struct OnboardingView: View {
         return "Connect \(device.shortName)"
     }
 
-    private var parsedHeightCm: Double? {
-        switch heightUnit {
-        case .centimeters:
-            return positiveDouble(heightCm)
-        case .feetInches:
-            guard let feet = positiveDouble(heightFeet) else { return nil }
-            let inches = Double(heightInches.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-            guard inches >= 0 else { return nil }
-            return feet * 30.48 + inches * 2.54
+    private var skyLevel: Double {
+        switch step {
+        case .sex: sex?.cardioCoefficient ?? 1.795
+        case .height: parsedHeightCm
+        case .weight: weightUnit == .kilograms ? Double(weightKg) + Double(weightTenths) / 10 : Double(weightPounds)
+        default: 0
         }
     }
 
-    private var parsedWeightKg: Double? {
-        switch weightUnit {
-        case .kilograms:
-            return positiveDouble(weightKg)
-        case .pounds:
-            guard let pounds = positiveDouble(weightPounds) else { return nil }
-            return pounds * 0.45359237
-        }
+    private var heightReading: String {
+        heightUnit == .centimeters ? "\(heightCm)" : "\(heightFeet)′ \(heightInches)″"
+    }
+
+    private var weightReading: String {
+        weightUnit == .kilograms ? "\(weightKg).\(weightTenths)" : "\(weightPounds)"
+    }
+
+    private var parsedHeightCm: Double {
+        heightUnit == .centimeters ? Double(heightCm) : Double(heightFeet) * 30.48 + Double(heightInches) * 2.54
+    }
+
+    private var parsedWeightKg: Double {
+        weightUnit == .kilograms ? Double(weightKg) + Double(weightTenths) / 10 : Double(weightPounds) * 0.45359237
     }
 
     private var dateRange: ClosedRange<Date> {
@@ -430,33 +369,58 @@ struct OnboardingView: View {
         return start...Date()
     }
 
+    private func convertHeight(to unit: HeightUnit) {
+        let centimetres = unit == .centimeters
+            ? Double(heightFeet) * 30.48 + Double(heightInches) * 2.54
+            : Double(heightCm)
+        setHeight(centimetres)
+    }
+
+    private func convertWeight(to unit: WeightUnit) {
+        let kilograms = unit == .kilograms
+            ? Double(weightPounds) * 0.45359237
+            : Double(weightKg) + Double(weightTenths) / 10
+        setWeight(kilograms)
+    }
+
+    private func setHeight(_ centimetres: Double) {
+        heightCm = min(230, max(120, Int(centimetres.rounded())))
+        let totalInches = Int((centimetres / 2.54).rounded())
+        heightFeet = min(8, max(3, totalInches / 12))
+        heightInches = totalInches % 12
+    }
+
+    private func setWeight(_ kilograms: Double) {
+        let tenths = Int((kilograms * 10).rounded())
+        weightKg = min(250, max(30, tenths / 10))
+        weightTenths = tenths % 10
+        weightPounds = min(550, max(66, Int((kilograms / 0.45359237).rounded())))
+    }
+
     @MainActor
     private func loadProfileIfNeeded() async {
         guard isLoadingProfile else { return }
         do {
             let loaded: UserProfilePayload = try await authStore.authenticatedRequest(path: "/profile")
-            profile = loaded
             prefill(from: loaded)
-            isLoadingProfile = false
         } catch {
-            errorMessage = "Could not load your profile. Check the backend and try again."
-            isLoadingProfile = false
+            errorMessage = "Your profile couldn’t load. Check your connection and try again."
         }
+        isLoadingProfile = false
     }
 
     @MainActor
     private func continueTapped() async {
+        errorMessage = nil
         switch step {
-        case .name:
-            await saveNameAndContinue()
-        case .location:
-            requestLocation()
-        case .manualTimezone:
-            await saveManualTimezone()
-        case .body:
-            await saveBodyAndContinue()
-        case .device:
-            await connectDeviceAndFinish()
+        case .name: await saveNameAndContinue()
+        case .location: requestLocation()
+        case .manualTimezone: await saveManualTimezone()
+        case .birthday: step = .sex
+        case .sex: step = .height
+        case .height: step = .weight
+        case .weight: await saveBodyAndContinue()
+        case .device: await connectDeviceAndFinish()
         }
     }
 
@@ -469,22 +433,17 @@ struct OnboardingView: View {
             return
         }
         isSaving = true
-        errorMessage = nil
         do {
-            try await authStore.updateName(
-                firstName: cleanedFirst,
-                lastName: cleanedLast.isEmpty ? nil : cleanedLast
-            )
+            try await authStore.updateName(firstName: cleanedFirst, lastName: cleanedLast.isEmpty ? nil : cleanedLast)
             step = .location
         } catch {
-            errorMessage = "Could not save your name. Try again."
+            errorMessage = "Your name couldn’t save. Try again."
         }
         isSaving = false
     }
 
     @MainActor
     private func requestLocation() {
-        errorMessage = nil
         switch locationProvider.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
             Task { await saveAuthorizedLocation() }
@@ -514,27 +473,18 @@ struct OnboardingView: View {
 
     @MainActor
     private func saveAuthorizedLocation() async {
+        guard !isSaving else { return }
         isSaving = true
-        errorMessage = nil
         do {
-            let _: UserProfilePayload = try await authStore.authenticatedJSON(
-                path: "/profile",
-                method: "PATCH",
-                body: ProfileUpdateRequest(
-                    timezone: TimeZone.current.identifier,
-                    dateOfBirth: nil,
-                    sex: nil,
-                    weatherEnabled: true,
-                    locationPermissionStatus: "authorized",
-                    heightSourcePreference: nil,
-                    weightSourcePreference: nil,
-                    onboardingCompleted: nil
-                )
-            )
+            try await updateProfile(ProfileUpdateRequest(
+                timezone: TimeZone.current.identifier, dateOfBirth: nil, sex: nil, weatherEnabled: true,
+                locationPermissionStatus: "authorized", heightSourcePreference: nil, weightSourcePreference: nil,
+                onboardingCompleted: nil
+            ))
             locationProvider.requestLocation()
-            step = .body
+            step = .birthday
         } catch {
-            errorMessage = "Could not save your location preference. Try again."
+            errorMessage = "Your location preference couldn’t save. Try again."
         }
         isSaving = false
     }
@@ -542,60 +492,40 @@ struct OnboardingView: View {
     @MainActor
     private func saveManualTimezone() async {
         isSaving = true
-        errorMessage = nil
         do {
-            let _: UserProfilePayload = try await authStore.authenticatedJSON(
-                path: "/profile",
-                method: "PATCH",
-                body: ProfileUpdateRequest(
-                    timezone: selectedTimezone.identifier,
-                    dateOfBirth: nil,
-                    sex: nil,
-                    weatherEnabled: false,
-                    locationPermissionStatus: "denied",
-                    heightSourcePreference: nil,
-                    weightSourcePreference: nil,
-                    onboardingCompleted: nil
-                )
-            )
-            step = .body
+            try await updateProfile(ProfileUpdateRequest(
+                timezone: selectedTimezone.identifier, dateOfBirth: nil, sex: nil, weatherEnabled: false,
+                locationPermissionStatus: "denied", heightSourcePreference: nil, weightSourcePreference: nil,
+                onboardingCompleted: nil
+            ))
+            step = .birthday
         } catch {
-            errorMessage = "Could not save your timezone. Try again."
+            errorMessage = "Your timezone couldn’t save. Try again."
         }
         isSaving = false
     }
 
     @MainActor
     private func saveBodyAndContinue() async {
-        guard let sex, let height = parsedHeightCm, let weight = parsedWeightKg else {
-            errorMessage = "Complete each body detail to continue."
+        guard let sex else {
+            step = .sex
             return
         }
         isSaving = true
-        errorMessage = nil
         do {
             let _: BodyMetricsPayload = try await authStore.authenticatedJSON(
                 path: "/body-metrics",
                 method: "POST",
-                body: BodyMetricsUpdateRequest(heightCm: height, weightKg: weight)
+                body: BodyMetricsUpdateRequest(heightCm: parsedHeightCm, weightKg: parsedWeightKg)
             )
-            let _: UserProfilePayload = try await authStore.authenticatedJSON(
-                path: "/profile",
-                method: "PATCH",
-                body: ProfileUpdateRequest(
-                    timezone: nil,
-                    dateOfBirth: Self.apiDateFormatter.string(from: dateOfBirth),
-                    sex: sex.backendValue,
-                    weatherEnabled: nil,
-                    locationPermissionStatus: nil,
-                    heightSourcePreference: "manual",
-                    weightSourcePreference: "manual",
-                    onboardingCompleted: nil
-                )
-            )
+            try await updateProfile(ProfileUpdateRequest(
+                timezone: nil, dateOfBirth: Self.apiDateFormatter.string(from: dateOfBirth), sex: sex.backendValue,
+                weatherEnabled: nil, locationPermissionStatus: nil, heightSourcePreference: "manual",
+                weightSourcePreference: "manual", onboardingCompleted: nil
+            ))
             step = .device
         } catch {
-            errorMessage = "Could not save your body details. Check your connection and try again."
+            errorMessage = "Your body details couldn’t save. Check your connection and try again."
         }
         isSaving = false
     }
@@ -604,7 +534,6 @@ struct OnboardingView: View {
     private func connectDeviceAndFinish() async {
         guard let device else { return }
         isSaving = true
-        errorMessage = nil
         let connection = authStore.connectedSession?.healthConnection
         if connection?.status != .connected || connection?.activeDevice != device {
             if let message = await authStore.connect(device) {
@@ -627,59 +556,30 @@ struct OnboardingView: View {
         isSaving = true
         errorMessage = nil
         do {
-            let _: UserProfilePayload = try await authStore.authenticatedJSON(
-                path: "/profile",
-                method: "PATCH",
-                body: ProfileUpdateRequest(
-                    timezone: nil,
-                    dateOfBirth: nil,
-                    sex: nil,
-                    weatherEnabled: nil,
-                    locationPermissionStatus: nil,
-                    heightSourcePreference: nil,
-                    weightSourcePreference: nil,
-                    onboardingCompleted: true
-                )
-            )
+            try await updateProfile(ProfileUpdateRequest(
+                timezone: nil, dateOfBirth: nil, sex: nil, weatherEnabled: nil, locationPermissionStatus: nil,
+                heightSourcePreference: nil, weightSourcePreference: nil, onboardingCompleted: true
+            ))
             try await authStore.refreshSession()
         } catch {
-            errorMessage = "Could not finish setup. Check your connection and try again."
+            errorMessage = "Setup couldn’t finish. Check your connection and try again."
         }
         isSaving = false
     }
 
+    private func updateProfile(_ request: ProfileUpdateRequest) async throws {
+        let _: UserProfilePayload = try await authStore.authenticatedJSON(path: "/profile", method: "PATCH", body: request)
+    }
+
     private func prefill(from profile: UserProfilePayload) {
-        if let dateString = profile.dateOfBirth,
-           let date = Self.apiDateFormatter.date(from: dateString) {
+        if let dateString = profile.dateOfBirth, let date = Self.apiDateFormatter.date(from: dateString) {
             dateOfBirth = date
         }
         if let sexValue = profile.sex {
             sex = OnboardingSex(backendValue: sexValue)
         }
-        if let height = profile.heightCm {
-            if heightUnit == .centimeters {
-                heightCm = Self.measurementFormatter.string(from: NSNumber(value: height)) ?? ""
-            } else {
-                let totalInches = height / 2.54
-                let feet = floor(totalInches / 12)
-                let inches = totalInches - feet * 12
-                heightFeet = String(Int(feet))
-                heightInches = Self.measurementFormatter.string(from: NSNumber(value: inches)) ?? ""
-            }
-        }
-        if let weight = profile.weightKg {
-            if weightUnit == .kilograms {
-                weightKg = Self.measurementFormatter.string(from: NSNumber(value: weight)) ?? ""
-            } else {
-                weightPounds = Self.measurementFormatter.string(from: NSNumber(value: weight / 0.45359237)) ?? ""
-            }
-        }
-    }
-
-    private func positiveDouble(_ value: String) -> Double? {
-        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let number = Double(cleaned), number > 0 else { return nil }
-        return number
+        if let height = profile.heightCm { setHeight(height) }
+        if let weight = profile.weightKg { setWeight(weight) }
     }
 
     private static let apiDateFormatter: DateFormatter = {
@@ -689,95 +589,117 @@ struct OnboardingView: View {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
-
-    private static let measurementFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.maximumFractionDigits = 1
-        formatter.minimumFractionDigits = 0
-        return formatter
-    }()
 }
 
 private enum OnboardingStep: CaseIterable {
     case name
     case location
     case manualTimezone
-    case body
+    case birthday
+    case sex
+    case height
+    case weight
     case device
 
-    var index: Int {
-        Self.allCases.firstIndex(of: self) ?? 0
+    var scene: OnboardingScene {
+        switch self {
+        case .name: .welcome
+        case .location: .location
+        case .manualTimezone: .timezone
+        case .birthday: .birthday
+        case .sex: .sex
+        case .height: .height
+        case .weight: .weight
+        case .device: .device
+        }
     }
 
     var previous: OnboardingStep {
         switch self {
-        case .name:
-            return .name
-        case .location:
-            return .name
-        case .manualTimezone:
-            return .location
-        case .body:
-            return .location
-        case .device:
-            return .body
+        case .name, .location: .name
+        case .manualTimezone, .birthday: .location
+        case .sex: .birthday
+        case .height: .sex
+        case .weight: .height
+        case .device: .weight
         }
     }
 
-    var subtitle: String {
+    var headlineInset: CGFloat {
         switch self {
-        case .name:
-            return "Start with the account details used across the app."
-        case .location:
-            return "Location helps the app match your local day and dashboard weather."
-        case .manualTimezone:
-            return "Since location is unavailable, choose the timezone to apply."
-        case .body:
-            return "These values improve estimates that depend on age and body metrics."
-        case .device:
-            return "Scores come from the device you wear. Journal and workouts work without one."
+        case .location: 300
+        case .birthday, .sex, .height, .weight: 150
+        case .name, .manualTimezone, .device: 16
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .name: "What should we call you?"
+        case .location: "Make every day line up"
+        case .manualTimezone: "Choose your timezone"
+        case .birthday: "When were you born?"
+        case .sex: "What’s your sex?"
+        case .height: "How tall are you?"
+        case .weight: "What do you weigh?"
+        case .device: "Which device do you wear?"
+        }
+    }
+
+    var subtitle: String? {
+        switch self {
+        case .name: nil
+        case .location: "Your location keeps sleep and workouts on your local day, and matches the dashboard sky to your weather."
+        case .manualTimezone: "Weather stays off without location."
+        case .birthday: "Age sets your heart-rate zones."
+        case .sex: "Sets how heart-rate effort counts toward Strain."
+        case .height: "Saved to your profile."
+        case .weight: "The load for bodyweight exercises in Strain."
+        case .device: "Scores come from your device. Journal and workouts work without one."
         }
     }
 
     var primaryActionTitle: String {
         switch self {
-        case .name, .manualTimezone:
-            return "Continue"
-        case .location:
-            return "Use my location"
-        case .body:
-            return "Continue"
-        case .device:
-            return "Finish"
+        case .location: "Use my location"
+        case .device: "Finish"
+        default: "Continue"
         }
     }
-
 }
 
-private struct OnboardingStepTitle: View {
-    let title: String
+private protocol OnboardingUnit {
+    var title: String { get }
+}
+
+private struct BigReading: View {
+    let value: String
+    let unit: String?
 
     var body: some View {
-        Text(title)
-            .font(.title3.weight(.bold))
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(value)
+                .font(.system(size: 64, weight: .bold, design: .rounded))
+                .contentTransition(.numericText())
+            if let unit {
+                Text(unit).font(.title2.weight(.semibold)).foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity)
+        .animation(.snappy, value: value)
+        .accessibilityElement(children: .combine)
     }
 }
 
-private struct LargeTextField: View {
+private struct GlassTextField: View {
     let title: String
     @Binding var text: String
     let textContentType: UITextContentType
     let submitLabel: SubmitLabel
     var onSubmit: (() -> Void)?
 
-    init(
-        title: String,
-        text: Binding<String>,
-        textContentType: UITextContentType,
-        submitLabel: SubmitLabel,
-        onSubmit: (() -> Void)? = nil
-    ) {
+    init(title: String, text: Binding<String>, textContentType: UITextContentType, submitLabel: SubmitLabel, onSubmit: (() -> Void)? = nil) {
         self.title = title
         _text = text
         self.textContentType = textContentType
@@ -788,17 +710,14 @@ private struct LargeTextField: View {
     var body: some View {
         TextField(title, text: $text)
             .font(.title3.weight(.semibold))
+            .foregroundStyle(.white)
             .textContentType(textContentType)
             .textInputAutocapitalization(.words)
             .submitLabel(submitLabel)
             .onSubmit { onSubmit?() }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 20)
             .frame(minHeight: 64)
-            .background(.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
-            }
+            .onboardingGlass(cornerRadius: 20)
     }
 }
 
@@ -834,6 +753,14 @@ private enum OnboardingSex: String, CaseIterable, Identifiable {
         }
     }
 
+    var cardioCoefficient: Double {
+        switch self {
+        case .female: 1.67
+        case .male: 1.92
+        case .other, .preferNotToSay: 1.795
+        }
+    }
+
     init?(backendValue: String) {
         switch backendValue {
         case "female":
@@ -848,7 +775,7 @@ private enum OnboardingSex: String, CaseIterable, Identifiable {
     }
 }
 
-private enum HeightUnit: String, CaseIterable, Identifiable {
+private enum HeightUnit: String, CaseIterable, Identifiable, OnboardingUnit {
     case centimeters
     case feetInches
 
@@ -860,7 +787,7 @@ private enum HeightUnit: String, CaseIterable, Identifiable {
     }
 }
 
-private enum WeightUnit: String, CaseIterable, Identifiable {
+private enum WeightUnit: String, CaseIterable, Identifiable, OnboardingUnit {
     case kilograms
     case pounds
 
