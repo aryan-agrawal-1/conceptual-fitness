@@ -3,6 +3,7 @@ import simd
 
 enum OnboardingScene: Equatable {
     case welcome
+    case name
     case location
     case timezone
     case birthday
@@ -13,14 +14,14 @@ enum OnboardingScene: Equatable {
 
     var colors: [Color] {
         switch self {
-        case .welcome:
+        case .welcome, .name:
             [Color(red: 0.05, green: 0.06, blue: 0.20), Color(red: 0.24, green: 0.16, blue: 0.42), Color(red: 0.86, green: 0.47, blue: 0.42)]
         case .location, .timezone:
             [Color(red: 0.07, green: 0.12, blue: 0.30), Color(red: 0.55, green: 0.30, blue: 0.48), Color(red: 0.98, green: 0.66, blue: 0.40)]
         case .birthday, .sex, .height, .weight:
             [Color(red: 0.02, green: 0.11, blue: 0.14), Color(red: 0.04, green: 0.27, blue: 0.30), Color(red: 0.12, green: 0.50, blue: 0.50)]
         case .device:
-            [Color(red: 0.03, green: 0.04, blue: 0.13), Color(red: 0.08, green: 0.11, blue: 0.30), Color(red: 0.22, green: 0.26, blue: 0.56)]
+            [Color(red: 0.03, green: 0.035, blue: 0.05), Color(red: 0.06, green: 0.065, blue: 0.09), Color(red: 0.10, green: 0.105, blue: 0.14)]
         }
     }
 }
@@ -74,14 +75,15 @@ private struct OnboardingSkyArt: View {
             let value = eased.advance(toward: level, instantly: reduceMotion)
             Canvas { context, size in
                 switch scene {
-                case .welcome: drawWelcome(time, &context, size)
+                case .welcome: drawWelcome(time, &context, size, CGPoint(x: size.width / 2, y: size.height * 0.30), 1)
+                case .name: drawWelcome(time, &context, size, CGPoint(x: size.width / 2, y: 196), 0.62)
                 case .location: drawEarth(time, &context, size, CGPoint(x: size.width / 2, y: 262))
                 case .timezone: drawEarth(time, &context, size, CGPoint(x: size.width / 2, y: size.height * 0.64))
                 case .birthday: drawPulse(time, &context, size)
                 case .sex: drawEffort(time, value, &context, size)
                 case .height: drawHeight(value, &context, size)
                 case .weight: drawScale(value, &context, size)
-                case .device: drawNight(time, &context, size)
+                case .device: drawStudio(time, &context, size)
                 }
             }
         }
@@ -110,11 +112,10 @@ private struct OnboardingSkyArt: View {
         }
     }
 
-    private func drawWelcome(_ time: Double, _ context: inout GraphicsContext, _ size: CGSize) {
+    private func drawWelcome(_ time: Double, _ context: inout GraphicsContext, _ size: CGSize, _ center: CGPoint, _ scale: CGFloat) {
         stars(time, 70, size.height * 0.55, &context, size)
         glow(CGPoint(x: size.width / 2, y: size.height * 1.02), size.width * 0.9, Color(red: 1, green: 0.72, blue: 0.5), 0.55, &context)
-        let center = CGPoint(x: size.width / 2, y: size.height * 0.30)
-        glow(center, 150, .white, 0.10, &context)
+        glow(center, 150 * scale, .white, 0.10, &context)
         let rings: [(Color, CGFloat, Double, Double)] = [
             (OnboardingPalette.readiness, 92, 0.78, 0.16), (OnboardingPalette.sleep, 70, 0.64, -0.22), (OnboardingPalette.strain, 48, 0.52, 0.3)
         ]
@@ -122,14 +123,14 @@ private struct OnboardingSkyArt: View {
             let breathe = 0.06 * sin(time * 0.6 + Double(index))
             let start = Angle(radians: time * ring.3 - .pi / 2)
             var track = Path()
-            track.addArc(center: center, radius: ring.1, startAngle: .zero, endAngle: .degrees(360), clockwise: false)
-            context.stroke(track, with: .color(ring.0.opacity(0.18)), style: StrokeStyle(lineWidth: 14))
+            track.addArc(center: center, radius: ring.1 * scale, startAngle: .zero, endAngle: .degrees(360), clockwise: false)
+            context.stroke(track, with: .color(ring.0.opacity(0.18)), style: StrokeStyle(lineWidth: 14 * scale))
             var arc = Path()
-            arc.addArc(center: center, radius: ring.1, startAngle: start, endAngle: start + .radians(2 * .pi * (ring.2 + breathe)), clockwise: false)
+            arc.addArc(center: center, radius: ring.1 * scale, startAngle: start, endAngle: start + .radians(2 * .pi * (ring.2 + breathe)), clockwise: false)
             var glowContext = context
-            glowContext.addFilter(.blur(radius: 8))
-            glowContext.stroke(arc, with: .color(ring.0.opacity(0.7)), style: StrokeStyle(lineWidth: 16, lineCap: .round))
-            context.stroke(arc, with: .color(ring.0), style: StrokeStyle(lineWidth: 14, lineCap: .round))
+            glowContext.addFilter(.blur(radius: 8 * scale))
+            glowContext.stroke(arc, with: .color(ring.0.opacity(0.7)), style: StrokeStyle(lineWidth: 16 * scale, lineCap: .round))
+            context.stroke(arc, with: .color(ring.0), style: StrokeStyle(lineWidth: 14 * scale, lineCap: .round))
         }
     }
 
@@ -337,21 +338,10 @@ private struct OnboardingSkyArt: View {
         context.fill(cap, with: .color(.white))
     }
 
-    private func drawNight(_ time: Double, _ context: inout GraphicsContext, _ size: CGSize) {
-        stars(time, 110, size.height * 0.85, &context, size)
-        for band in 0..<3 {
-            var path = Path()
-            let base = size.height * (0.16 + CGFloat(band) * 0.05)
-            path.move(to: CGPoint(x: 0, y: base))
-            for step in stride(from: 0.0, through: Double(size.width), by: 6) {
-                let wave = sin(step / 90 + time * (0.18 + Double(band) * 0.07) + Double(band)) * 18
-                path.addLine(to: CGPoint(x: step, y: base + wave))
-            }
-            var aurora = context
-            aurora.addFilter(.blur(radius: 22))
-            let color = band == 1 ? OnboardingPalette.sleep : Color(red: 0.35, green: 0.95, blue: 0.75)
-            aurora.stroke(path, with: .color(color.opacity(0.22)), lineWidth: 34)
-        }
+    private func drawStudio(_ time: Double, _ context: inout GraphicsContext, _ size: CGSize) {
+        let breathe = 0.02 * sin(time * 0.4)
+        glow(CGPoint(x: size.width / 2, y: -size.height * 0.05), size.height * 0.75, .white, 0.13 + breathe, &context)
+        glow(CGPoint(x: size.width / 2, y: size.height * 0.52), size.width * 0.85, Color(red: 0.75, green: 0.8, blue: 1), 0.07, &context)
     }
 }
 
@@ -440,6 +430,13 @@ struct DeviceShowcaseCard: View {
                 DeviceSlot(device: device)
                     .frame(height: 240)
                     .frame(maxWidth: .infinity)
+                    .background(alignment: .bottom) {
+                        Ellipse()
+                            .fill(.white.opacity(0.2))
+                            .frame(width: 124, height: 20)
+                            .blur(radius: 14)
+                            .padding(.bottom, 22)
+                    }
                 VStack(spacing: 4) {
                     Text(device == .fitbit ? "Fitbit" : device.title)
                         .font(.headline)

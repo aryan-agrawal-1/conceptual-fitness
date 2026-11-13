@@ -605,7 +605,7 @@ private enum OnboardingStep: CaseIterable {
 
     var scene: OnboardingScene {
         switch self {
-        case .name: .welcome
+        case .name: .name
         case .location: .location
         case .manualTimezone: .timezone
         case .birthday: .birthday
@@ -630,8 +630,8 @@ private enum OnboardingStep: CaseIterable {
     var headlineInset: CGFloat {
         switch self {
         case .location: 300
-        case .birthday, .sex, .height, .weight: 150
-        case .name, .manualTimezone, .device: 16
+        case .name, .birthday, .sex, .height, .weight: 150
+        case .manualTimezone, .device: 16
         }
     }
 
