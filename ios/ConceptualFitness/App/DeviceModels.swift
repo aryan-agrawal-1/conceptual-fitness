@@ -3,6 +3,7 @@ import RealityKit
 import SwiftUI
 import UIKit
 
+#if DEBUG
 enum MeshSweep {
     static func strip(path: [SIMD3<Float>], closed: Bool, widthAxis: SIMD3<Float>, width: Float, thickness: Float) -> MeshDescriptor {
         let frames = sweepFrames(path: path, closed: closed, widthAxis: widthAxis)
@@ -180,6 +181,7 @@ enum MeshSweep {
         return descriptor
     }
 }
+#endif
 
 struct DeviceReach: Component {
     var value: Float
@@ -193,18 +195,16 @@ struct PreparedDevices {
 @MainActor
 enum DeviceModels {
     private static var preparation: Task<PreparedDevices, Never>?
+    private static let bakedName = "Devices"
+    private static let bakedDevices: [DataSourceDevice] = [.appleWatch, .fitbit]
 
     @discardableResult
     static func prepare() -> Task<PreparedDevices, Never> {
         if let preparation { return preparation }
         let task = Task { @MainActor in
-            var prepared = PreparedDevices()
-            if let studio = studioEnvironment() {
-                prepared.environment = try? await EnvironmentResource(equirectangular: studio)
-            }
-            prepared.models[.appleWatch] = await appleWatch()
-            prepared.models[.fitbit] = await fitbitAir()
-            return prepared
+            async let environment = studioLighting()
+            async let models = bakedModels()
+            return await PreparedDevices(models: models, environment: environment)
         }
         preparation = task
         return task
@@ -225,6 +225,39 @@ enum DeviceModels {
         }
         stage.addChild(lighting(for: stage, environment: prepared.environment))
         return stage
+    }
+
+    private static func studioLighting() async -> EnvironmentResource? {
+        guard let studio = studioEnvironment() else { return nil }
+        return try? await EnvironmentResource(equirectangular: studio)
+    }
+
+    private static func bakedModels() async -> [DataSourceDevice: Entity] {
+        guard let url = Bundle.main.url(forResource: bakedName, withExtension: "reality"),
+              let baked = try? await Entity(contentsOf: url) else { return [:] }
+        var models: [DataSourceDevice: Entity] = [:]
+        for device in bakedDevices {
+            models[device] = baked.findEntity(named: device.rawValue)
+        }
+        return models
+    }
+
+    #if DEBUG
+    static func bake() async {
+        let root = Entity()
+        let watch = await appleWatch()
+        watch.name = DataSourceDevice.appleWatch.rawValue
+        root.addChild(watch)
+        let fitbit = await fitbitAir()
+        fitbit.name = DataSourceDevice.fitbit.rawValue
+        root.addChild(fitbit)
+        let url = URL.documentsDirectory.appending(path: "\(bakedName).reality")
+        do {
+            try await root.write(to: url)
+            print("Baked device models to \(url.path)")
+        } catch {
+            print("Baking device models failed: \(error)")
+        }
     }
 
     private static func appleWatch() async -> Entity {
@@ -374,6 +407,8 @@ enum DeviceModels {
         return root
     }
 
+    #endif
+
     private static func lighting(for root: Entity, environment: EnvironmentResource?) -> Entity {
         let rig = Entity()
         if let environment {
@@ -394,6 +429,7 @@ enum DeviceModels {
         return rig
     }
 
+    #if DEBUG
     private static func model(_ descriptor: MeshDescriptor, _ material: any RealityKit.Material) async -> ModelEntity {
         let mesh = (try? await MeshResource(from: [descriptor])) ?? .generateBox(size: 0.001)
         return ModelEntity(mesh: mesh, materials: [material])
@@ -538,6 +574,8 @@ enum DeviceModels {
         }
         return image.cgImage
     }
+
+    #endif
 
     private static func studioEnvironment() -> CGImage? {
         let size = CGSize(width: 512, height: 256)

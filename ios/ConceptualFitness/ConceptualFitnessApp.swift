@@ -12,6 +12,11 @@ struct ConceptualFitnessApp: App {
         let store = AuthStore()
         _authStore = StateObject(wrappedValue: store)
         AppleHealthSync.shared.resumeIfEnabled(authStore: store)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-BakeDeviceModels") {
+            Task { await DeviceModels.bake() }
+        }
+        #endif
     }
 
     var body: some Scene {

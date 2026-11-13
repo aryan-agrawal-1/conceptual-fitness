@@ -27,6 +27,7 @@
 		010000000000000000B00005 /* OnboardingDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00005 /* OnboardingDesign.swift */; };
 		010000000000000000B00006 /* EarthLand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00006 /* EarthLand.swift */; };
 		010000000000000000B00007 /* AppleWatch.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00007 /* AppleWatch.usdz */; };
+		010000000000000000B00008 /* Devices.reality in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00008 /* Devices.reality */; };
 		010000000000000000000002 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000002 /* AppRoute.swift */; };
 		010000000000000000000003 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000003 /* AppShellView.swift */; };
 		010000000000000000000004 /* PlaceholderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000004 /* PlaceholderViews.swift */; };
@@ -124,6 +125,7 @@
 		020000000000000000B00005 /* OnboardingDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingDesign.swift; sourceTree = "<group>"; };
 		020000000000000000B00006 /* EarthLand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EarthLand.swift; sourceTree = "<group>"; };
 		020000000000000000B00007 /* AppleWatch.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = AppleWatch.usdz; sourceTree = "<group>"; };
+		020000000000000000B00008 /* Devices.reality */ = {isa = PBXFileReference; lastKnownFileType = file; path = Devices.reality; sourceTree = "<group>"; };
 		020000000000000000000002 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
 		020000000000000000000003 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		020000000000000000000004 /* PlaceholderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderViews.swift; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				020000000000000000B00005 /* OnboardingDesign.swift */,
 				020000000000000000B00006 /* EarthLand.swift */,
 				020000000000000000B00007 /* AppleWatch.usdz */,
+				020000000000000000B00008 /* Devices.reality */,
 				020000000000000000000002 /* AppRoute.swift */,
 				020000000000000000000003 /* AppShellView.swift */,
 				020000000000000000000041 /* AccountExportView.swift */,
@@ -493,6 +496,7 @@
 			files = (
 				010000000000000000000034 /* bodyPaths.json in Resources */,
 				010000000000000000B00007 /* AppleWatch.usdz in Resources */,
+				010000000000000000B00008 /* Devices.reality in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -782,6 +786,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ConceptualFitness/ConceptualFitness.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				EXCLUDED_SOURCE_FILE_NAMES = AppleWatch.usdz;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"ConceptualFitness/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
