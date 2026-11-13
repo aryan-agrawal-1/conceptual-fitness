@@ -189,7 +189,7 @@ struct DeviceReach: Component {
 
 struct PreparedDevices {
     var models: [DataSourceDevice: Entity] = [:]
-    var environment: EnvironmentResource?
+    var lighting: Entity?
 }
 
 @MainActor
@@ -197,14 +197,20 @@ enum DeviceModels {
     private static var preparation: Task<PreparedDevices, Never>?
     private static let bakedName = "Devices"
     private static let bakedDevices: [DataSourceDevice] = [.appleWatch, .fitbit]
+    private static let lightingName = "lighting"
 
     @discardableResult
     static func prepare() -> Task<PreparedDevices, Never> {
         if let preparation { return preparation }
         let task = Task { @MainActor in
-            async let environment = studioLighting()
-            async let models = bakedModels()
-            return await PreparedDevices(models: models, environment: environment)
+            var prepared = PreparedDevices()
+            guard let url = Bundle.main.url(forResource: bakedName, withExtension: "reality"),
+                  let baked = try? await Entity(contentsOf: url) else { return prepared }
+            for device in bakedDevices {
+                prepared.models[device] = baked.findEntity(named: device.rawValue)
+            }
+            prepared.lighting = baked.findEntity(named: lightingName)
+            return prepared
         }
         preparation = task
         return task
@@ -223,23 +229,8 @@ enum DeviceModels {
             pivot.addChild(copy)
             stage.addChild(pivot)
         }
-        stage.addChild(lighting(for: stage, environment: prepared.environment))
+        stage.addChild(lighting(for: stage, light: prepared.lighting?.clone(recursive: true)))
         return stage
-    }
-
-    private static func studioLighting() async -> EnvironmentResource? {
-        guard let studio = studioEnvironment() else { return nil }
-        return try? await EnvironmentResource(equirectangular: studio)
-    }
-
-    private static func bakedModels() async -> [DataSourceDevice: Entity] {
-        guard let url = Bundle.main.url(forResource: bakedName, withExtension: "reality"),
-              let baked = try? await Entity(contentsOf: url) else { return [:] }
-        var models: [DataSourceDevice: Entity] = [:]
-        for device in bakedDevices {
-            models[device] = baked.findEntity(named: device.rawValue)
-        }
-        return models
     }
 
     #if DEBUG
@@ -251,6 +242,12 @@ enum DeviceModels {
         let fitbit = await fitbitAir()
         fitbit.name = DataSourceDevice.fitbit.rawValue
         root.addChild(fitbit)
+        let light = Entity()
+        light.name = lightingName
+        if let studio = studioEnvironment(), let environment = try? await EnvironmentResource(equirectangular: studio) {
+            light.components.set(ImageBasedLightComponent(source: .single(environment), intensityExponent: 0.7))
+        }
+        root.addChild(light)
         let url = URL.documentsDirectory.appending(path: "\(bakedName).reality")
         do {
             try await root.write(to: url)
@@ -409,11 +406,9 @@ enum DeviceModels {
 
     #endif
 
-    private static func lighting(for root: Entity, environment: EnvironmentResource?) -> Entity {
+    private static func lighting(for root: Entity, light: Entity?) -> Entity {
         let rig = Entity()
-        if let environment {
-            let light = Entity()
-            light.components.set(ImageBasedLightComponent(source: .single(environment), intensityExponent: 0.7))
+        if let light, light.components.has(ImageBasedLightComponent.self) {
             rig.addChild(light)
             root.visit { $0.components.set(ImageBasedLightReceiverComponent(imageBasedLight: light)) }
         }
@@ -575,8 +570,6 @@ enum DeviceModels {
         return image.cgImage
     }
 
-    #endif
-
     private static func studioEnvironment() -> CGImage? {
         let size = CGSize(width: 512, height: 256)
         let format = UIGraphicsImageRendererFormat()
@@ -601,6 +594,7 @@ enum DeviceModels {
         }
         return image.cgImage
     }
+    #endif
 }
 
 private extension UIFont {
@@ -648,6 +642,7 @@ extension View {
             GeometryReader { proxy in
                 DeviceStageView(slots: anchors.mapValues { proxy[$0] }, size: proxy.size)
             }
+            .clipped()
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
@@ -662,9 +657,12 @@ private struct DeviceStageView: View {
 
     private static let cameraDistance: Float = 1
     private static let fieldOfView: Float = 15
+    private static let restingScale: Float = 0.0005
+
+    private var showing: Bool { !slots.isEmpty }
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { timeline in
+        TimelineView(.animation(paused: reduceMotion || !showing)) { timeline in
             let yaw = Float(-0.55 + (reduceMotion ? 0 : timeline.date.timeIntervalSince(appeared) * 0.32))
             RealityView { content in
                 content.camera = .virtual
@@ -678,13 +676,21 @@ private struct DeviceStageView: View {
             } update: { content in
                 guard size.height > 0, let stage = content.entities.first(where: { $0.name == "stage" }) else { return }
                 let pointsPerMetre = Float(size.height) / (2 * Self.cameraDistance * tan(Self.fieldOfView * .pi / 360))
-                for (device, slot) in slots {
+                for device in DataSourceDevice.allCases {
                     guard let pivot = stage.findEntity(named: device.rawValue), let reach = pivot.components[DeviceReach.self] else { continue }
+                    guard let slot = slots[device] else {
+                        pivot.position = .zero
+                        pivot.scale = SIMD3(repeating: Self.restingScale)
+                        continue
+                    }
                     pivot.position = [Float(slot.midX - size.width / 2) / pointsPerMetre, Float(size.height / 2 - slot.midY) / pointsPerMetre, 0]
                     pivot.scale = SIMD3(repeating: Float(min(slot.width, slot.height)) * 1.12 / (2 * reach.value * pointsPerMetre))
                     pivot.orientation = simd_quatf(angle: 0.18, axis: [1, 0, 0]) * simd_quatf(angle: yaw, axis: [0, 1, 0])
                 }
             }
         }
+        .opacity(showing ? 1 : 0.01)
+        .animation(.easeInOut(duration: 0.3), value: showing)
+        .onChange(of: showing) { appeared = Date() }
     }
 }

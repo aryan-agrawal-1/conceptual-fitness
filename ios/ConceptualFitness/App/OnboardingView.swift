@@ -72,6 +72,7 @@ struct OnboardingView: View {
                 }
                 .scrollIndicators(.hidden)
                 .scrollBounceBehavior(.basedOnSize)
+                .deviceStage()
                 footer
             }
         }
@@ -250,7 +251,6 @@ struct OnboardingView: View {
                 HStack(spacing: 12) { cards }.fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 12) { cards }
             }
-            .deviceStage()
             Text("You can change this later in Profile.")
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.65))
