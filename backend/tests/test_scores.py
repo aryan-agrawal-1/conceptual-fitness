@@ -1117,6 +1117,12 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
         {"stage": "REM", "duration_minutes": 95},
     ]
     assert payload["metric_summaries"]["steps"]["current"]["value"] == 6500.0
+    steps_week = payload["metric_summaries"]["steps"]["week_points"]
+    assert [point["date"] for point in steps_week] == [
+        (day - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)
+    ]
+    assert [point["value"] for point in steps_week] == [None] * 6 + [6500.0]
+    assert len(payload["metric_summaries"]["sleep"]["week_points"]) == 7
     assert payload["data_quality"]["sections"]["sync"] == "strong"
 
 
