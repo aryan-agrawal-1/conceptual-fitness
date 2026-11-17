@@ -12,89 +12,65 @@ struct MetricHeroPanel: View {
     var accessibilityLabel: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 14) {
-                VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(eyebrow)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(accent)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
                         .lineLimit(1)
-
-                    HStack(spacing: 8) {
-                        Text(headline)
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundStyle(.primary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(value ?? "--")
+                            .font(.system(size: 44, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(HealthTheme.ink)
+                        if !unit.isEmpty {
+                            Text(unit)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(HealthTheme.secondaryInk)
+                        }
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+                    Text(headline)
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(accent.opacity(0.14), in: Capsule())
+                        .lineLimit(1)
+                    if !caption.isEmpty, caption != "--" {
+                        Text(caption)
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.secondaryInk)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.62)
-
-                        Circle()
-                            .fill(accent)
-                            .frame(width: 8, height: 8)
+                            .minimumScaleFactor(0.76)
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityLabel ?? "\(headline), \(value ?? "no value") \(unit)")
 
                 Spacer(minLength: 8)
 
                 if let ring {
-                    ring
-                        .frame(width: 88, height: 88)
-                        .accessibilityLabel(accessibilityLabel ?? "\(headline), \(value ?? "no value") \(unit)")
-                } else {
-                    heroValue
+                    ring.frame(width: 104, height: 104)
                 }
             }
 
-            HStack(spacing: 0) {
-                ForEach(Array(stats.enumerated()), id: \.offset) { index, stat in
-                    if index > 0 {
-                        Divider().opacity(0.28)
+            if !stats.isEmpty {
+                Rectangle()
+                    .fill(HealthTheme.hairline)
+                    .frame(height: 1)
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(Array(stats.enumerated()), id: \.offset) { _, stat in
+                        stat
                     }
-                    stat
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .background(.white.opacity(0.34), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
         }
-        .padding(20)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    accent.opacity(0.22),
-                    accent.opacity(0.08),
-                    .white.opacity(0.36)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(0.48), lineWidth: 1)
-        )
-    }
-
-    private var heroValue: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(value ?? "--")
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.58)
-            if !unit.isEmpty {
-                Text(unit)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-            Text(caption)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.76)
-        }
-        .accessibilityLabel(accessibilityLabel ?? "\(headline), \(value ?? "no value") \(unit)")
+        .panelSurface(cornerRadius: 24)
     }
 }
 
@@ -104,17 +80,13 @@ struct MetricHeroRing: View {
     let caption: String
     let progress: Double
     let tint: Color
-    var overflowTint: Color? = HealthTheme.color(for: .risk)
     var accessibilityLabel: String?
 
     var body: some View {
         CircularProgressMetric(
             progress: progress,
             tint: tint,
-            trackColor: .white.opacity(0.58),
-            overflowTint: overflowTint,
             lineWidth: 10,
-            overflowLineWidth: 5,
             accessibilityLabel: accessibilityLabel ?? "\(value ?? "no value") \(unit)"
         ) {
             VStack(spacing: 1) {
@@ -145,21 +117,40 @@ struct MetricHeroStat: View {
     let value: String
     let tint: Color
 
+    private var parts: (number: String, unit: String) {
+        let tokens = value.split(separator: " ")
+        let trailing = tokens.reversed().prefix { token in !token.contains(where: \.isNumber) }.count
+        guard trailing > 0, trailing < tokens.count else { return (value, "") }
+        return (
+            tokens.dropLast(trailing).joined(separator: " "),
+            tokens.suffix(trailing).joined(separator: " ")
+        )
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(parts.number)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(HealthTheme.ink)
+                    .monospacedDigit()
+                    .layoutPriority(1)
+                if !parts.unit.isEmpty {
+                    Text(parts.unit)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(HealthTheme.secondaryInk)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
-            Text(value)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(tint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.58)
-                .monospacedDigit()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 

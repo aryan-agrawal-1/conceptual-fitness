@@ -55,7 +55,7 @@ private struct StepsSummaryPanel: View {
     }
 
     private var goalTarget: Double {
-        dailyGoal * Double(max(timeframe == .day ? 1 : rawDailyValues.count, 1))
+        dailyGoal * Double(max(timeframe == .day ? 1 : rawDailyValues.count, timeframe == .week ? 7 : 1))
     }
 
     private var goalProgress: Double {
@@ -221,7 +221,7 @@ private struct StepsHourlyBarChart: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let yAxisWidth: CGFloat = 34
+            let yAxisWidth: CGFloat = 38
             let xAxisHeight: CGFloat = 28
             let plot = CGRect(
                 x: yAxisWidth,
@@ -240,6 +240,8 @@ private struct StepsHourlyBarChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     if tick > 0 {
@@ -351,6 +353,8 @@ private struct StepsDailyBarChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     if tick > 0 {

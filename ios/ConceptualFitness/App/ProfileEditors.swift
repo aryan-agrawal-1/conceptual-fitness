@@ -13,29 +13,41 @@ struct ProfileSaveForm<Content: View>: View {
 
     var body: some View {
         Form {
-            content().disabled(isSaving)
-            if let validationMessage {
-                Section { Text(validationMessage).font(.footnote).foregroundStyle(.secondary) }
-            }
-            if let errorMessage {
-                Section {
-                    Label("Changes couldn’t be saved", systemImage: "exclamationmark.triangle")
-                    Text(errorMessage)
-                    Button("Try saving again") { Task { await submit() } }
-                        .disabled(isSaving || validationMessage != nil)
+            Group {
+                content().disabled(isSaving)
+                if let validationMessage {
+                    Section { Text(validationMessage).font(.footnote).foregroundStyle(HealthTheme.secondaryInk) }
+                }
+                if let errorMessage {
+                    Section {
+                        Text("Changes couldn’t be saved").fontWeight(.semibold)
+                        Text(errorMessage)
+                    }
                 }
             }
-            if isSaving { Section { ProgressView("Saving changes…") } }
+            .listRowBackground(HealthTheme.card)
         }
+        .scrollContentBackground(.hidden)
+        .background(HealthTheme.page)
+        .tint(HealthTheme.ink)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .scrollDismissesKeyboard(.interactively)
         .navigationBarBackButtonHidden(isSaving)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { Task { await submit() } }
-                    .disabled(isSaving || validationMessage != nil)
+        .safeAreaInset(edge: .bottom) {
+            let isDisabled = isSaving || validationMessage != nil
+            Button {
+                Task { await submit() }
+            } label: {
+                PrimaryActionLabel(title: isSaving ? "Saving" : "Save")
             }
+            .buttonStyle(.pressScale)
+            .disabled(isDisabled)
+            .opacity(isDisabled ? 0.4 : 1)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .background(HealthTheme.page)
         }
     }
 

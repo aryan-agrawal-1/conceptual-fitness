@@ -55,14 +55,14 @@ struct JournalLedgerRow: View {
             default: return "Not answered"
             }
         }
-        guard let answer = response?.answer, behaviour.answer.inputType == "rating",
-              case .number(let value) = answer.value else { return nil }
+        guard behaviour.answer.inputType == "rating" else { return nil }
+        guard let answer = response?.answer, case .number(let value) = answer.value else { return "Tap to rate" }
         let index = Int(value) - Int(behaviour.answer.minimum ?? 1)
         return behaviour.answer.ratingLabels.indices.contains(index) ? behaviour.answer.ratingLabels[index] : nil
     }
 
     private var statusColor: Color {
-        response?.missingReason == nil ? HealthTheme.color(for: .recovery) : .secondary
+        response?.answer != nil && response?.missingReason == nil ? HealthTheme.color(for: .recovery) : HealthTheme.secondaryInk
     }
 
     @ViewBuilder private var control: some View {
@@ -141,12 +141,10 @@ struct JournalYesNo: View {
     let choose: (Bool) -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
             option("No", false)
             option("Yes", true)
         }
-        .padding(2)
-        .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .sensoryFeedback(.selection, trigger: value)
     }
 
@@ -154,15 +152,17 @@ struct JournalYesNo: View {
         let selected = value == .boolean(choice)
         return Button { choose(choice) } label: {
             Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(selected ? HealthTheme.color(for: .sleep) : .primary.opacity(0.75))
-                .frame(maxWidth: .infinity, minHeight: 40)
+                .font(.subheadline.weight(selected ? .bold : .semibold))
+                .foregroundStyle(selected ? HealthTheme.inverseInk : HealthTheme.ink)
+                .frame(maxWidth: .infinity, minHeight: 38)
                 .background {
                     if selected {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(.white).shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                        Capsule().fill(HealthTheme.ink)
+                    } else {
+                        Capsule().strokeBorder(HealthTheme.ink.opacity(0.24), lineWidth: 1.5)
                     }
                 }
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -177,6 +177,7 @@ struct JournalRatingScale: View {
     let value: JournalScalar?
     let choose: (Double) -> Void
     private var tint: Color { HealthTheme.color(for: .recovery) }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 4) {
@@ -185,8 +186,9 @@ struct JournalRatingScale: View {
                 let filled: Bool = { if case .number(let current) = value { return step <= current } else { return false } }()
                 Button { choose(step) } label: {
                     Capsule()
-                        .fill(filled ? tint : Color.primary.opacity(0.14))
+                        .fill(filled ? tint : HealthTheme.ink.opacity(0.2))
                         .frame(height: 10)
+                        .animation(reduceMotion ? nil : .smooth(duration: 0.2).delay(Double(index) * 0.04), value: filled)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
                 }
@@ -295,7 +297,7 @@ private struct JournalDetailField: View {
                             .lineLimit(2).minimumScaleFactor(0.8)
                             .foregroundStyle(selected ? HealthTheme.color(for: .sleep) : .primary)
                             .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(selected ? HealthTheme.color(for: .sleep).opacity(0.13) : .white.opacity(0.7),
+                            .background(selected ? HealthTheme.color(for: .sleep).opacity(0.13) : HealthTheme.card,
                                         in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                             .overlay {
                                 RoundedRectangle(cornerRadius: 11, style: .continuous)

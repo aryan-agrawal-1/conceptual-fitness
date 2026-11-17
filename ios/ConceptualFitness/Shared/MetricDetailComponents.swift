@@ -215,3 +215,14 @@ private struct MonospacedDigitsModifier: ViewModifier {
         }
     }
 }
+
+extension ClosedRange where Bound == Double {
+    func roundedOutward(to step: Double) -> ClosedRange<Double> {
+        let lower = (lowerBound / step).rounded(.down) * step
+        var upper = (upperBound / step).rounded(.up) * step
+        if Int(((upper - lower) / step).rounded()) % 2 != 0 {
+            upper += step
+        }
+        return lower...upper
+    }
+}

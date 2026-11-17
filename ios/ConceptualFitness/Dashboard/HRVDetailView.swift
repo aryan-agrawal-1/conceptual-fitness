@@ -144,7 +144,7 @@ private struct HRVBaselineChart: View {
         guard let minValue = values.min(), let maxValue = values.max() else { return 0...1 }
         let span = max(maxValue - minValue, 8)
         let padding = span * 0.18
-        return (minValue - padding)...(maxValue + padding)
+        return ((minValue - padding)...(maxValue + padding)).roundedOutward(to: 5)
     }
 
     private var tickValues: [Double] {
@@ -161,7 +161,7 @@ private struct HRVBaselineChart: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let yAxisWidth: CGFloat = 34
+            let yAxisWidth: CGFloat = 38
             let xAxisHeight: CGFloat = 28
             let plot = CGRect(
                 x: yAxisWidth,
@@ -178,6 +178,8 @@ private struct HRVBaselineChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     Rectangle()
@@ -209,7 +211,7 @@ private struct HRVBaselineChart: View {
                         .position(x: x, y: plot.midY)
                     if let value = selectedPoint.value {
                         Circle()
-                            .fill(Color.white)
+                            .fill(HealthTheme.card)
                             .frame(width: 13, height: 13)
                             .overlay(
                                 Circle().stroke(HealthTheme.color(for: .recovery), lineWidth: 3)

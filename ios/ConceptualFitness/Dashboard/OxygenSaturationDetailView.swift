@@ -208,6 +208,8 @@ private struct SpO2BaselineChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     Rectangle()
@@ -239,7 +241,7 @@ private struct SpO2BaselineChart: View {
                         .position(x: x, y: plot.midY)
                     if let value = selectedPoint.value {
                         Circle()
-                            .fill(Color.white)
+                            .fill(HealthTheme.card)
                             .frame(width: 13, height: 13)
                             .overlay(
                                 Circle().stroke(spo2ReadoutColor(for: selectedPoint), lineWidth: 3)
@@ -415,7 +417,7 @@ private struct SpO2ContextPanel: View {
     }
 
     var body: some View {
-        SpO2Section(title: "Breathing Context", systemImage: "lungs.fill") {
+        SpO2Section(title: "Breathing context", systemImage: "lungs.fill") {
             VStack(spacing: 10) {
                 SpO2ContextRow(title: "Interpretation", value: interpretationText)
                 SpO2ContextRow(title: lowCountTitle, value: countText(lowCount))

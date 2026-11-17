@@ -759,7 +759,34 @@ def dashboard_metric_summaries(
             "higher_is_better": config.higher_is_better,
             "preview_points": preview_points,
         }
+    if preview_style == "detail_default":
+        for metric_name in metric_names:
+            payload[metric_name]["week_points"] = _dashboard_week_points(session, user_id, metric_name, end)
     return payload
+
+
+def _dashboard_week_points(
+    session: DbSession,
+    user_id: str,
+    metric_name: str,
+    end: date,
+) -> list[dict[str, object]]:
+    start = end - timedelta(days=6)
+    if metric_name == "sleep":
+        main_by_date = _main_sleeps_by_date(_sleep_sessions_for_range(session, user_id, start, end))
+        return [
+            {
+                "date": day,
+                "value": main_by_date[day].minutes_asleep if day in main_by_date else None,
+                "unit": "minutes",
+            }
+            for day in _date_range(start, end)
+        ]
+    config = METRIC_DETAIL_CONFIGS[metric_name]
+    summaries = _daily_summaries_by_date(session, user_id, start, end)
+    points = _daily_metric_points(session, user_id, config, start, end, summaries)
+    baselines = _baselines_by_date(session, user_id, config, start, end)
+    return _dashboard_preview_points([_series_point_payload(point, baselines) for point in points], limit=7)
 
 
 def _dashboard_summary_window(
@@ -2397,6 +2424,7 @@ def _workout_summary_payload(
 
     payload = {
         "id": workout.id,
+        "title": workout.title,
         "workout_type": workout.workout_type,
         "start_time": workout.start_time,
         "end_time": workout.end_time,

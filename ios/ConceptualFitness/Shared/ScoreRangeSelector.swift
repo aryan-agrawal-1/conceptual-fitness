@@ -30,13 +30,14 @@ struct ScoreRangeNavigator: View {
     private let calendar = ScoreDateFormatters.calendar
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 0) {
             Button {
                 selectedDate = shiftedDate(by: -1)
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.headline.weight(.bold))
-                    .frame(width: 34, height: 34)
+                    .font(.subheadline.weight(.bold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Previous \(timeframe.rawValue)")
@@ -44,18 +45,12 @@ struct ScoreRangeNavigator: View {
             Button {
                 calendarSelection = ScoreCalendarSelection(timeframe: timeframe, date: selectedDate)
             } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "calendar")
-                        .font(.subheadline.weight(.bold))
-                    Text(rangeTitle)
-                        .font(.subheadline.weight(.bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
-                .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(rangeTitle)
+                    .font(.system(.body, design: .rounded, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Select \(metricName) \(timeframe.rawValue)")
@@ -64,16 +59,16 @@ struct ScoreRangeNavigator: View {
                 selectedDate = shiftedDate(by: 1)
             } label: {
                 Image(systemName: "chevron.right")
-                    .font(.headline.weight(.bold))
-                    .frame(width: 34, height: 34)
+                    .font(.subheadline.weight(.bold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!canMoveForward)
             .opacity(canMoveForward ? 1 : 0.35)
             .accessibilityLabel("Next \(timeframe.rawValue)")
         }
-        .padding(10)
-        .panelSurface(cornerRadius: 18)
+        .panelSurface(cornerRadius: 23)
     }
 
     private var rangeTitle: String {

@@ -33,7 +33,7 @@ struct DailyBriefCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .center) {
-                Text(data.dateContext == .yesterday ? "Yesterday's scores" : "Daily Status")
+                Text(data.dateContext == .yesterday ? "Yesterday's scores" : "Daily status")
                     .font(.headline)
                     .foregroundStyle(.primary.opacity(0.86))
 
@@ -73,7 +73,7 @@ struct DailyBriefCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelSurface(cornerRadius: 26)
+        .scenePanelSurface(cornerRadius: 26)
     }
 
     private var statusPillTitle: String {
@@ -100,7 +100,7 @@ struct DailyBriefCard: View {
         case "Low":
             return HealthTheme.color(for: .caution)
         case "Syncing", "No data yet", "Out of date", "Calibrating", "Partial data":
-            return HealthTheme.color(for: .missing)
+            return HealthTheme.ink.opacity(0.72)
         default:
             return HealthTheme.color(for: .stable)
         }
@@ -124,7 +124,7 @@ struct DailyBriefSkeleton: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .panelSurface(cornerRadius: 26)
+        .scenePanelSurface(cornerRadius: 26)
         .redacted(reason: .placeholder)
     }
 }
@@ -146,7 +146,7 @@ struct ScoreRingItem {
         return ScoreRingItem(
             title: "Strain",
             valueText: ratio != nil && percentage.isFinite ? "\(Int(percentage.rounded()))%" : "--",
-            progress: min(max(ratio ?? 0, 0), 1.35),
+            progress: min(max(ratio ?? 0, 0), 2),
             color: HealthTheme.color(for: .strain),
             routeMetric: "strain"
         )
@@ -185,10 +185,7 @@ struct ScoreRingView: View {
                 CircularProgressMetric(
                     progress: item.progress,
                     tint: item.color,
-                    trackColor: .white.opacity(0.34),
-                    overflowTint: HealthTheme.color(for: .risk),
                     lineWidth: 9,
-                    overflowLineWidth: 5,
                     accessibilityLabel: "\(item.title), \(item.valueText)"
                 ) {
                     VStack(spacing: 0) {
@@ -214,8 +211,8 @@ struct RecentWorkoutsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Your recent workouts")
-                .font(.title3.bold())
+            Text("Recent workouts")
+                .font(.system(.title3, design: .rounded, weight: .bold))
 
             if workouts.isEmpty {
                 EmptyDashboardCard(title: "No recent workouts", message: "Workouts from the last 30 days will appear here after sync.")
@@ -224,7 +221,7 @@ struct RecentWorkoutsSection: View {
                     NavigationLink(value: AppRoute.workout(workout.id)) {
                         WorkoutCard(workout: workout)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressScale)
                 }
             }
         }
@@ -262,7 +259,7 @@ struct WorkoutSummaryRow: View {
             iconView
 
             VStack(alignment: .leading, spacing: presentation == .card ? 5 : 4) {
-                Text(workoutPresentation.displayName)
+                Text(workout.summaryDisplayName)
                     .font(titleFont)
                     .lineLimit(1)
                 Text(workout.summarySubtitle(units: units))
@@ -355,15 +352,15 @@ struct HealthMetricsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Health Metrics")
-                .font(.title3.bold())
+            Text("Health metrics")
+                .font(.system(.title3, design: .rounded, weight: .bold))
 
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(items) { item in
                     NavigationLink(value: AppRoute.metric(item.metricKey)) {
                         MetricCard(item: item)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressScale)
                 }
             }
         }
@@ -375,33 +372,35 @@ struct MetricCard: View {
     let item: MetricCardItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .center, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 7) {
                 Image(systemName: item.systemImage)
-                    .font(.subheadline.weight(.bold))
+                    .font(.footnote.weight(.bold))
                     .foregroundStyle(item.tint)
-
                 Text(item.title)
-                    .font(.subheadline.weight(.bold))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(HealthTheme.secondaryInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.74)
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary.opacity(0.55))
             }
 
-            Text(item.valueText)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.64)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(item.valueText)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(HealthTheme.ink)
+                if !item.unitText.isEmpty {
+                    Text(item.unitText)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.64)
 
-            MiniMetricChart(points: item.previewPoints, kind: item.chartKind, tint: item.tint)
-                .padding(.vertical, 2)
-
-            Spacer(minLength: 0)
+            WeekMetricChart(points: item.weekPoints, drawsBars: item.chartKind == .bars || item.chartKind == .sleepStages, tint: item.tint)
+                .padding(.top, 2)
+                .padding(.bottom, 6)
 
             Text(item.status)
                 .font(.caption.weight(.semibold))
@@ -410,13 +409,12 @@ struct MetricCard: View {
                 .minimumScaleFactor(0.75)
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .panelSurface(cornerRadius: 20)
+        .panelSurface(cornerRadius: 22)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.title), \(item.valueText), \(item.status)")
+        .accessibilityLabel("\(item.title), \(item.valueText) \(item.unitText), \(item.status)")
     }
 }
 
@@ -443,12 +441,13 @@ struct MetricCardItem: Identifiable {
     let metricKey: String
     let title: String
     let valueText: String
+    let unitText: String
     let status: String
     let systemImage: String
     let tint: Color
     let statusColor: Color
     let chartKind: MiniMetricChartKind
-    let previewPoints: [MiniMetricChartPoint]
+    let weekPoints: [MiniMetricChartPoint]
 
     static func items(from data: DashboardData, units: ProfileUnits = .metric) -> [MetricCardItem] {
         let metrics = data.snapshot.metrics
@@ -494,33 +493,38 @@ struct MetricCardItem: Identifiable {
     ) -> MetricCardItem {
         let presentation = HealthMetricPresentation.presentation(for: key)
         let unit = presentation.unit
-        let valueText: String
+        var valueText = "--"
+        var unitText = ""
         if let value {
             if key == "steps" {
                 valueText = "\(Int(value.rounded()))"
+            } else if key == "sleep" {
+                let minutes = Int(value.rounded())
+                valueText = minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
             } else if key == "distance" {
-                valueText = units.distanceText(value * 1000)
+                let parts = units.distanceText(value * 1000).split(separator: " ", maxSplits: 1)
+                valueText = parts.first.map(String.init) ?? "--"
+                unitText = parts.count > 1 ? String(parts[1]) : ""
             } else if key == "skin_temperature_variation" {
-                valueText = "\(units.temperatureVariationText(value) ?? "--") \(units.temperatureSymbol)"
-            } else if unit.isEmpty {
-                valueText = value.clean
+                valueText = units.temperatureVariationText(value) ?? "--"
+                unitText = units.temperatureSymbol
             } else {
-                valueText = "\(value.clean) \(unit)"
+                valueText = value.clean
+                unitText = unit
             }
-        } else {
-            valueText = "--"
         }
 
         return MetricCardItem(
             metricKey: key,
             title: presentation.title,
             valueText: valueText,
+            unitText: unitText,
             status: statusText(key: key, value: value, quality: quality, summary: data.metricSummaries[key], presentation: presentation),
             systemImage: presentation.systemImage,
             tint: presentation.tint,
             statusColor: statusColor(value: value, summary: data.metricSummaries[key], presentation: presentation),
             chartKind: presentation.chartKind,
-            previewPoints: data.metricSummaries[key]?.previewPoints ?? []
+            weekPoints: data.metricSummaries[key]?.weekPoints ?? []
         )
     }
 
@@ -601,7 +605,9 @@ extension WorkoutSummary {
     }
 
     var summaryDisplayName: String {
-        presentation.displayName
+        guard let title, !title.isEmpty else { return presentation.displayName }
+        let suffix = " Workout"
+        return title.hasSuffix(suffix) && title.count > suffix.count ? String(title.dropLast(suffix.count)) : title
     }
 }
 

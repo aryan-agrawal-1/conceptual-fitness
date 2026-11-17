@@ -338,14 +338,29 @@ private struct HeartRateRangeChart: View {
                 let topPadding: CGFloat = 14
                 let bottomPadding: CGFloat = 28
                 let plotHeight = max(1, proxy.size.height - topPadding - bottomPadding)
-                let plotWidth = max(1, proxy.size.width)
-                let bounds = heartRateBounds(points.compactMap(\.value))
+                let plotWidth = max(1, proxy.size.width - 36)
+                let bounds = heartRateBounds(points.compactMap(\.value)).roundedOutward(to: 5)
+                let guides = [bounds.upperBound, (bounds.lowerBound + bounds.upperBound) / 2, bounds.lowerBound]
                 let plottable = points.enumerated().compactMap { index, point -> HeartRateAveragePlotPoint? in
                     guard let value = point.value else { return nil }
                     return HeartRateAveragePlotPoint(index: index, point: point, value: value)
                 }
 
                 ZStack(alignment: .topLeading) {
+                    ForEach(guides, id: \.self) { guide in
+                        let y = yPosition(for: guide, bounds: bounds, plotHeight: plotHeight, topPadding: topPadding)
+                        Rectangle()
+                            .fill(HealthTheme.hairline)
+                            .frame(width: plotWidth, height: 1)
+                            .position(x: plotWidth / 2, y: y)
+                        Text(guide.clean)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(HealthTheme.secondaryInk)
+                            .monospacedDigit()
+                            .frame(width: 30, alignment: .trailing)
+                            .position(x: proxy.size.width - 15, y: y)
+                    }
+
                     Path { path in
                         for (offset, item) in plottable.enumerated() {
                             let location = CGPoint(
@@ -526,7 +541,7 @@ private struct HeartRateDriversPanel: View {
                 }
             }
             .padding(14)
-            .background(.white.opacity(0.34), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -555,7 +570,7 @@ private struct HeartRateSleepDriverCard: View {
             }
         }
         .padding(14)
-        .background(.white.opacity(0.34), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var scoreText: String {

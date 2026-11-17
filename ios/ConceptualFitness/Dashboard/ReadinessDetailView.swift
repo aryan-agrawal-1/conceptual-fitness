@@ -49,7 +49,6 @@ private struct ReadinessSummaryPanel: View {
                 caption: detail.timeframe == "day" ? "score" : "avg score",
                 progress: scoreProgress,
                 tint: HealthTheme.readiness,
-                overflowTint: nil,
                 accessibilityLabel: "Readiness score \(detail.summary.primaryValue?.clean ?? "no score")"
             ),
             accessibilityLabel: "Readiness \(detail.summary.primaryValue?.clean ?? "no score")"
@@ -145,7 +144,7 @@ private struct ComponentScoreChart: View {
                     GeometryReader { proxy in
                         ZStack(alignment: .leading) {
                             Capsule()
-                                .fill(.white.opacity(0.5))
+                                .fill(HealthTheme.track)
                             Capsule()
                                 .fill(componentColor(item.key).gradient)
                                 .frame(width: proxy.size.width * CGFloat(min(max(item.score / 100, 0), 1)))
@@ -192,7 +191,7 @@ private struct ReadinessLineChart: View {
                 let topPadding: CGFloat = 18
                 let bottomPadding: CGFloat = 36
                 let plotHeight = max(1, proxy.size.height - topPadding - bottomPadding)
-                let plotWidth = max(1, proxy.size.width)
+                let plotWidth = max(1, proxy.size.width - 40)
 
                 ZStack(alignment: .topLeading) {
                     thresholdLine(value: 80, title: "High", proxy: proxy, topPadding: topPadding, plotHeight: plotHeight)
@@ -236,7 +235,7 @@ private struct ReadinessLineChart: View {
                             selectedID = point.id
                         } label: {
                             Circle()
-                                .fill(point.id == selectedPoint?.id ? readinessColor(point.readinessBand ?? "") : Color.white)
+                                .fill(point.id == selectedPoint?.id ? readinessColor(point.readinessBand ?? "") : HealthTheme.card)
                                 .overlay {
                                     Circle()
                                         .stroke(readinessColor(point.readinessBand ?? ""), lineWidth: nodeStrokeWidth(for: point))
@@ -296,17 +295,15 @@ private struct ReadinessLineChart: View {
         return ZStack(alignment: .topLeading) {
             Path { path in
                 path.move(to: CGPoint(x: 0, y: y))
-                path.addLine(to: CGPoint(x: proxy.size.width, y: y))
+                path.addLine(to: CGPoint(x: proxy.size.width - 40, y: y))
             }
             .stroke(.secondary.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
             Text(title)
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(.white.opacity(0.72), in: Capsule())
-                .position(x: proxy.size.width - 24, y: max(10, y - 10))
+                .frame(width: 34, alignment: .trailing)
+                .position(x: proxy.size.width - 17, y: y)
         }
     }
 
@@ -469,7 +466,7 @@ private struct ReadinessDriverPanel: View {
     private var displayedItems: [ReadinessComponentItem] { components.averageItems }
 
     var body: some View {
-        ReadinessSection(title: "Average Drivers", systemImage: "slider.horizontal.3") {
+        ReadinessSection(title: "Average drivers", systemImage: "slider.horizontal.3") {
             if displayedItems.isEmpty {
                 Text("Readiness drivers will appear when recovery data is available.")
                     .font(.subheadline)
@@ -486,7 +483,7 @@ private struct ReadinessContextPanel: View {
     let timeframe: ScoreTimeframe
 
     var body: some View {
-        ReadinessSection(title: "Recovery Context", systemImage: "waveform.path.ecg") {
+        ReadinessSection(title: "Recovery context", systemImage: "waveform.path.ecg") {
             VStack(spacing: 10) {
                 ReadinessContextRow(title: sleepDebtTitle, value: sleepDebtText(context.sleepDebtValue))
                 ReadinessContextRow(title: "HRV", value: baselineText(context.hrvBaselineRelation))

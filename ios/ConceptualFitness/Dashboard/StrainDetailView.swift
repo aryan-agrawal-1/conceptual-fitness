@@ -46,7 +46,7 @@ private struct StrainSummaryPanel: View {
                 unit: ringUnit,
                 caption: ringCaption,
                 progress: ringProgress,
-                tint: HealthTheme.strain,
+                tint: ringTint,
                 accessibilityLabel: "Strain \(ringValueText ?? "no data")"
             ),
             accessibilityLabel: "Strain load \(primaryLoadText ?? "no data")"
@@ -113,12 +113,19 @@ private struct StrainSummaryPanel: View {
 
     private var ringProgress: Double {
         if let ratio = detail.summary.progressRatio {
-            return min(max(ratio, 0), 1.25)
+            return min(max(ratio, 0), 2)
         }
         if let current = primaryLoad, let target = detail.summary.targetLoadPoints, target > 0 {
-            return min(max(current / target, 0), 1.25)
+            return min(max(current / target, 0), 2)
         }
         return min(max((primaryLoad ?? 0) / 100, 0), 1)
+    }
+
+    private var ringTint: Color {
+        switch detail.summary.loadBand ?? detail.trainingContext.latestLoadBand {
+        case "above", "well_above": HealthTheme.color(for: .risk)
+        default: HealthTheme.strain
+        }
     }
 
     private var paceHeadline: String? {
@@ -215,16 +222,8 @@ private struct StrainChartPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(chartTitle)
-                    .font(.headline)
-                Spacer()
-                if let target = detail.chart.targetLoadPoints {
-                    Text("Target \(target.clean)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text(chartTitle)
+                .font(.headline)
 
             if detail.chart.kind == "component_bar" {
                 ComponentStackBar(items: detail.components.items)
@@ -294,42 +293,54 @@ private struct WeeklyStrainLineChart: View {
                 let chartPoints = cumulativePoints
                 let guides = guideValues(for: chartPoints)
                 let maxValue = max((guides + chartPoints.map(\.cumulativeLoad)).max() ?? 1, 1)
-                let topPadding: CGFloat = 18
+                let topPadding: CGFloat = 26
                 let bottomPadding: CGFloat = 34
-                let labelGutter: CGFloat = 84
                 let plotHeight = proxy.size.height - topPadding - bottomPadding
+                let labelGutter: CGFloat = 50
                 let plotWidth = max(1, proxy.size.width - labelGutter)
+                let targetY = targetLoadPoints.map {
+                    yPosition(for: $0, maxValue: maxValue, plotHeight: plotHeight, topPadding: topPadding)
+                }
+                let line = Path { path in
+                    for (index, point) in chartPoints.enumerated() {
+                        let location = location(
+                            for: point,
+                            totalCount: chartPoints.count,
+                            plotWidth: plotWidth,
+                            plotHeight: plotHeight,
+                            maxValue: maxValue,
+                            topPadding: topPadding
+                        )
+                        if index == 0 {
+                            path.move(to: location)
+                        } else {
+                            path.addLine(to: location)
+                        }
+                    }
+                }
+                let lineStyle = StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
 
                 ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .fill(HealthTheme.hairline)
+                        .frame(width: plotWidth, height: 1)
+                        .offset(y: topPadding + plotHeight)
                     ForEach(guides, id: \.self) { guide in
                         guideLine(
                             value: guide,
-                            maxValue: maxValue,
-                            plotHeight: plotHeight,
+                            y: yPosition(for: guide, maxValue: maxValue, plotHeight: plotHeight, topPadding: topPadding),
                             plotWidth: plotWidth,
-                            labelGutter: labelGutter,
-                            topPadding: topPadding
+                            labelGutter: labelGutter
                         )
                     }
 
-                    Path { path in
-                        for (index, point) in chartPoints.enumerated() {
-                            let location = location(
-                                for: point,
-                                totalCount: chartPoints.count,
-                                plotWidth: plotWidth,
-                                plotHeight: plotHeight,
-                                maxValue: maxValue,
-                                topPadding: topPadding
-                            )
-                            if index == 0 {
-                                path.move(to: location)
-                            } else {
-                                path.addLine(to: location)
+                    line.stroke(HealthTheme.strain, style: lineStyle)
+                    if let targetY {
+                        line.stroke(HealthTheme.color(for: .risk), style: lineStyle)
+                            .mask(alignment: .top) {
+                                Rectangle().frame(width: plotWidth + 20, height: max(targetY, 0)).offset(x: -10)
                             }
-                        }
                     }
-                    .stroke(.orange.gradient, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
 
                     if let selectedPoint {
                         let selectedX = xPosition(for: selectedPoint.index, totalCount: chartPoints.count, width: plotWidth)
@@ -348,13 +359,16 @@ private struct WeeklyStrainLineChart: View {
                         Button {
                             selectedID = point.id
                         } label: {
+                            let tint = pointTint(point)
                             Circle()
-                                .fill(point.id == selectedID ? Color.orange : Color.white)
+                                .fill(point.id == selectedID ? tint : HealthTheme.card)
                                 .overlay {
                                     Circle()
-                                        .stroke(Color.orange, lineWidth: point.id == selectedID ? 3 : 2)
+                                        .stroke(tint, lineWidth: 2.5)
                                 }
-                                .frame(width: point.id == selectedID ? 16 : 12, height: point.id == selectedID ? 16 : 12)
+                                .frame(width: point.id == selectedID ? 14 : 10, height: point.id == selectedID ? 14 : 10)
+                                .frame(width: 32, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .position(location)
@@ -363,8 +377,8 @@ private struct WeeklyStrainLineChart: View {
 
                     ForEach(chartPoints) { point in
                         Text(point.label)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(point.id == selectedID ? HealthTheme.ink : HealthTheme.secondaryInk)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .position(
@@ -429,34 +443,37 @@ private struct WeeklyStrainLineChart: View {
             .sorted(by: >)
     }
 
-    private func guideLine(
-        value: Double,
-        maxValue: Double,
-        plotHeight: CGFloat,
-        plotWidth: CGFloat,
-        labelGutter: CGFloat,
-        topPadding: CGFloat
-    ) -> some View {
-        let y = yPosition(for: value, maxValue: maxValue, plotHeight: plotHeight, topPadding: topPadding)
+    private func guideLine(value: Double, y: CGFloat, plotWidth: CGFloat, labelGutter: CGFloat) -> some View {
+        let isTarget = targetLoadPoints.map { abs($0 - value) < 0.06 } ?? false
         return ZStack(alignment: .topLeading) {
             Path { path in
                 path.move(to: CGPoint(x: 0, y: y))
                 path.addLine(to: CGPoint(x: plotWidth, y: y))
             }
-            .stroke(.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-
-            Text(guideLabel(for: value))
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(.white.opacity(0.72), in: Capsule())
-                .position(x: plotWidth + (labelGutter / 2), y: max(10, y - 10))
+            .stroke(
+                HealthTheme.ink.opacity(isTarget ? 0.28 : 0.12),
+                style: StrokeStyle(lineWidth: isTarget ? 1.5 : 1, dash: [4, 5])
+            )
+            if isTarget {
+                Text("Target")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(HealthTheme.secondaryInk)
+                    .offset(y: y - 19)
+            }
+            Text(value.clean)
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(isTarget ? HealthTheme.ink : HealthTheme.secondaryInk)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: labelGutter - 6, alignment: .trailing)
+                .offset(x: plotWidth + 6, y: y - 8)
         }
     }
 
-    private func guideLabel(for value: Double) -> String {
-        return value.clean
+    private func pointTint(_ point: WeeklyLinePoint) -> Color {
+        guard let targetLoadPoints, point.cumulativeLoad > targetLoadPoints else { return HealthTheme.strain }
+        return HealthTheme.color(for: .risk)
     }
 
     private func location(
@@ -741,7 +758,7 @@ private struct StrainTrainingContextPanel: View {
     let timeframe: StrainTimeframe
 
     var body: some View {
-        StrainDetailSection(title: "Training Context", systemImage: "waveform.path.ecg") {
+        StrainDetailSection(title: "Training context", systemImage: "waveform.path.ecg") {
             VStack(spacing: 10) {
                 ContextRow(title: "Total load", value: context.totalLoadPoints?.clean)
                 ContextRow(title: "Average daily load", value: context.averageDailyLoad?.clean)
@@ -886,14 +903,14 @@ private struct WorkoutContributorGroupSheet: View {
                             WorkoutSummaryRow(workout: workout, presentation: .compact)
                                 .padding(14)
                                 .frame(maxWidth: .infinity)
-                                .background(.white.opacity(0.46), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(18)
             }
-            .background(Color(.systemGroupedBackground).opacity(0.35))
+            .background(HealthTheme.page)
             .navigationTitle(group.label)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

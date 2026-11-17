@@ -1,15 +1,15 @@
 import SwiftUI
 
 enum JournalFirePalette {
-    static let ember = Color(red: 0.56, green: 0.08, blue: 0.02)
-    static let glow = Color(red: 0.93, green: 0.29, blue: 0.04)
-    static let top = Color(red: 0.79, green: 0.16, blue: 0.03)
-    static let bottom = Color(red: 0.87, green: 0.23, blue: 0.03)
+    static let ember = Color(light: 0x8F1405, dark: 0x1E0704)
+    static let glow = Color(light: 0xED4A0A, dark: 0x9C300A)
+    static let top = Color(light: 0xC92908, dark: 0x420E06)
+    static let bottom = Color(light: 0xDE3B08, dark: 0x6E1C07)
     static let deep = Color(red: 0.74, green: 0.15, blue: 0.03)
     static let flame = Color(red: 0.96, green: 0.34, blue: 0.04)
     static let orange = Color(red: 1.0, green: 0.55, blue: 0.0)
-    static let amber = Color(red: 1.0, green: 0.73, blue: 0.0)
-    static let gold = Color(red: 1.0, green: 0.89, blue: 0.36)
+    static let amber = Color(light: 0xFFBA00, dark: 0xEB8A00)
+    static let gold = Color(light: 0xFFE35C, dark: 0xF2A93B)
     static let ash = Color(red: 0.25, green: 0.07, blue: 0.04)
     static let coal = Color(red: 0.36, green: 0.09, blue: 0.04)
     static let smoulder = Color(red: 0.62, green: 0.14, blue: 0.03)
@@ -25,6 +25,7 @@ struct JournalFireBackground: View {
     var reach: Double = 1
     var rises = false
     var base = true
+    var isEven = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var risen = false
 
@@ -102,7 +103,9 @@ struct JournalFireBackground: View {
     }
 
     private func envelope(_ position: Double) -> Double {
-        lean + (1 - lean) * pow(min(max(position, 0), 1), 1.5)
+        let clamped = min(max(position, 0), 1)
+        guard isEven else { return lean + (1 - lean) * pow(clamped, 1.5) }
+        return lean + (1 - lean) * (0.3 + 0.5 * pow(sin(clamped * .pi * 2.3 + 0.5), 2))
     }
 
     private func drawEmbers(time: Double, in context: inout GraphicsContext, size: CGSize) {
@@ -331,7 +334,7 @@ struct JournalStreakHero<Calendar: View>: View {
     private var fire: some View {
         GeometryReader { proxy in
             let total = proxy.size.height + Self.overscroll
-            JournalFireBackground(lean: 0.4, reach: 1, base: false)
+            JournalFireBackground(lean: 0.4, reach: 1, base: false, isEven: true)
                 .frame(height: proxy.size.height)
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .frame(height: total)

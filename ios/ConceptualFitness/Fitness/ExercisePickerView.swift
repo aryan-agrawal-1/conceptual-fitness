@@ -14,34 +14,36 @@ struct ExercisePickerView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if isLoading && results.isEmpty {
-                    ForEach(0..<5, id: \.self) { _ in
-                        exercisePlaceholder.redacted(reason: .placeholder)
-                    }
-                } else if results.isEmpty {
-                    ContentUnavailableView(
-                        query.isEmpty ? "No exercises available" : "No exercises found",
-                        systemImage: "dumbbell",
-                        description: Text(errorMessage ?? "Try another name or create a private custom exercise.")
-                    )
-                } else {
-                    if query.isEmpty {
-                        let favorites = results.filter(\.isFavorite)
-                        if !favorites.isEmpty {
-                            Section("Favorites") {
-                                ForEach(favorites) { exerciseRow($0) }
+            ZStack {
+                AppBackground()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        if isLoading && results.isEmpty {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(HealthTheme.track)
+                                .frame(height: 290)
+                                .accessibilityHidden(true)
+                        } else if results.isEmpty {
+                            ContentUnavailableView(
+                                query.isEmpty ? "No exercises available" : "No exercises found",
+                                systemImage: "dumbbell",
+                                description: Text(errorMessage ?? "Try another name or create a private custom exercise.")
+                            )
+                        } else {
+                            let favorites = query.isEmpty ? results.filter(\.isFavorite) : []
+                            if !favorites.isEmpty {
+                                section("Favorites", exercises: favorites)
                             }
+                            section(
+                                query.isEmpty ? "Popular exercises" : "Results",
+                                exercises: results.filter { query.isEmpty ? !$0.isFavorite : true }
+                            )
                         }
                     }
-                    Section(query.isEmpty ? "Popular exercises" : "Results") {
-                        ForEach(results.filter { query.isEmpty ? !$0.isFavorite : true }) { exercise in
-                            exerciseRow(exercise)
-                        }
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
                 }
             }
-            .listStyle(.plain)
             .searchable(
                 text: $query,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -60,13 +62,13 @@ struct ExercisePickerView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
+                    Button("Custom") {
                         customExerciseEditor = .create
-                    } label: {
-                        Label("Custom", systemImage: "plus")
                     }
+                    .fontWeight(.semibold)
                 }
             }
+            .tint(HealthTheme.ink)
         }
         .sheet(item: $customExerciseEditor) { editor in
             CustomExerciseSheet(client: client, exercise: editor.exercise) { exercise in
@@ -80,23 +82,49 @@ struct ExercisePickerView: View {
     }
 
     @ViewBuilder
+    private func section(_ title: String, exercises: [FitnessExercise]) -> some View {
+        if !exercises.isEmpty {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(HealthTheme.secondaryInk)
+                .padding(.horizontal, 4)
+                .padding(.top, 8)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 0) {
+                ForEach(Array(exercises.enumerated()), id: \.element.id) { index, exercise in
+                    if index > 0 {
+                        Rectangle()
+                            .fill(HealthTheme.hairline)
+                            .frame(height: 1)
+                            .padding(.leading, 86)
+                    }
+                    exerciseRow(exercise)
+                }
+            }
+            .panelSurface(cornerRadius: 22)
+        }
+    }
+
     private func exerciseRow(_ exercise: FitnessExercise) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             Button {
                 select(exercise)
             } label: {
-                HStack(spacing: 13) {
+                HStack(spacing: 12) {
                     exerciseImage(exercise)
                     exerciseDetails(exercise)
-                    Spacer()
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(HealthTheme.color(for: .activity))
+                    Spacer(minLength: 4)
+                    Image(systemName: "plus")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(HealthTheme.ink)
+                        .frame(width: 44, height: 44)
                 }
+                .padding(.leading, 10)
+                .padding(.vertical, 10)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Adds this exercise to the workout")
+            .buttonStyle(.pressScale)
+            .accessibilityLabel("Add \(exercise.name)")
 
             if exercise.isCustom {
                 Menu {
@@ -106,68 +134,62 @@ struct ExercisePickerView: View {
                         Label("Edit exercise", systemImage: "pencil")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36, height: 44)
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                        .frame(width: 40, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Custom exercise actions")
             }
         }
+        .padding(.trailing, 6)
     }
 
-    @ViewBuilder
     private func exerciseImage(_ exercise: FitnessExercise) -> some View {
-        if let media = exercise.media.first, let url = URL(string: media.url) {
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFit()
-                } else {
-                    Image(systemName: "figure.strengthtraining.traditional")
-                        .foregroundStyle(.secondary)
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return ZStack {
+            shape.fill(HealthTheme.track)
+            Image(systemName: "dumbbell.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(HealthTheme.secondaryInk)
+            if let media = exercise.media.first, let url = URL(string: media.url) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    }
                 }
             }
-            .frame(width: 58, height: 58)
-            .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-        } else {
-            Image(systemName: "figure.strengthtraining.traditional")
-                .foregroundStyle(HealthTheme.color(for: .activity))
-                .frame(width: 58, height: 58)
-                .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
         }
+        .frame(width: 64, height: 43)
+        .clipShape(shape)
     }
 
     private func exerciseDetails(_ exercise: FitnessExercise) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
                 Text(exercise.name)
                     .font(.body.weight(.semibold))
+                    .foregroundStyle(HealthTheme.ink)
+                    .lineLimit(1)
                 if exercise.isFavorite {
                     Image(systemName: "star.fill")
                         .font(.caption2)
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(Color(light: 0xB7791F, dark: 0xF2C14E))
+                        .accessibilityLabel("Favorite")
                 }
             }
-            Text(exerciseSubtitle(exercise))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(exerciseSummary(exercise))
+                .font(.subheadline)
+                .foregroundStyle(HealthTheme.secondaryInk)
                 .lineLimit(1)
-            if exercise.useCount > 0 {
-                Text("Used \(exercise.useCount) time\(exercise.useCount == 1 ? "" : "s")")
-                    .font(.caption2)
-                    .foregroundStyle(HealthTheme.color(for: .activity))
-            }
         }
     }
 
-    private var exercisePlaceholder: some View {
-        HStack {
-            RoundedRectangle(cornerRadius: 12).frame(width: 58, height: 58)
-            VStack(alignment: .leading) {
-                Text("Exercise name")
-                Text("Equipment · muscle")
-            }
-        }
+    private func exerciseSummary(_ exercise: FitnessExercise) -> String {
+        let base = exerciseSubtitle(exercise)
+        guard exercise.useCount > 0 else { return base }
+        return "\(base) · \(exercise.useCount) session\(exercise.useCount == 1 ? "" : "s")"
     }
 
     private func search() async {
@@ -191,7 +213,7 @@ struct ExercisePickerView: View {
     }
 
     private func exerciseSubtitle(_ exercise: FitnessExercise) -> String {
-        let values = [exercise.equipment?.capitalized, exercise.primaryMuscles.first?.displayTitle]
+        let values = [exercise.primaryMuscles.first?.displayTitle, exercise.equipment?.capitalized]
             .compactMap { $0 }
         return values.isEmpty ? exercise.measurementSchema.displayTitle : values.joined(separator: " · ")
     }
