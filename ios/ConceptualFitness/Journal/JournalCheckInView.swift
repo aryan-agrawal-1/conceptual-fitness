@@ -59,14 +59,14 @@ struct JournalCheckInView: View {
             .safeAreaInset(edge: .bottom) {
                 if !completed && !typeSize.isAccessibilitySize {
                     completeControls
-                        .padding(.horizontal, 16).padding(.vertical, 10)
-                        .background(.bar)
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .background(HealthTheme.page)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if !completed {
-                    ToolbarItem(placement: .cancellationAction) { Button("Not now") { dismiss() } }
+                    ToolbarItem(placement: .cancellationAction) { Button("Not now") { dismiss() }.tint(HealthTheme.ink) }
                 }
             }
             .sheet(item: $selection) { JournalEntryEditor(store: store, selection: $0) }
@@ -126,23 +126,40 @@ struct JournalCheckInView: View {
     }
 
     private var completeControls: some View {
-        let remaining = max(0, JournalDailyList.dailyTarget - logged)
-        return VStack(spacing: 8) {
-            ProgressView(value: Double(min(logged, JournalDailyList.dailyTarget)),
-                         total: Double(JournalDailyList.dailyTarget))
-                .tint(HealthTheme.color(for: .activity))
-                .accessibilityLabel("\(logged) of \(JournalDailyList.dailyTarget) answered")
+        let target = JournalDailyList.dailyTarget
+        let remaining = max(0, target - logged)
+        let isDisabled = remaining > 0 || store.storageBlocked
+        return VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(HealthTheme.track)
+                        .overlay(alignment: .leading) {
+                            Capsule()
+                                .fill(HealthTheme.ink)
+                                .frame(width: proxy.size.width * CGFloat(min(logged, target)) / CGFloat(max(target, 1)))
+                        }
+                        .animation(.smooth(duration: 0.25), value: logged)
+                }
+                .frame(height: 6)
+                Text("\(min(logged, target)) of \(target)")
+                    .font(.system(.footnote, design: .rounded, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(HealthTheme.secondaryInk)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(logged) of \(target) answered")
             Button(action: complete) {
-                Text("Complete check-in").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                Text(remaining > 0 ? "Answer \(remaining) more to finish" : "Complete check-in")
+                    .font(.system(.body, design: .rounded, weight: .bold))
+                    .foregroundStyle(isDisabled ? HealthTheme.secondaryInk : HealthTheme.inverseInk)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(isDisabled ? HealthTheme.track : HealthTheme.ink,
+                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HealthTheme.color(for: .activity))
-            .disabled(remaining > 0 || store.storageBlocked)
+            .buttonStyle(.pressScale)
+            .disabled(isDisabled)
             .accessibilityIdentifier("journal.checkin.complete")
-            if remaining > 0 {
-                Text("Answer \(remaining) more to complete. No counts as an answer.")
-                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            }
         }
     }
 
