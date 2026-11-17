@@ -19,6 +19,13 @@ from app.models import (
     SyncStatus,
     User,
 )
+from app.services.apple_health_mapping import (
+    APPLE_HEALTH_PLATFORM,
+    DATED_BY_END,
+    SLEEP_ANALYSIS,
+    normalize_apple_sample,
+    remove_apple_records,
+)
 from app.services.health_dates import get_or_create_profile, local_date_for_profile
 from app.services.normalization import remove_normalized_records
 from app.services.oauth import disconnect_other_connections, revoke_replaced_tokens
@@ -26,8 +33,6 @@ from app.services.oauth import disconnect_other_connections, revoke_replaced_tok
 logger = logging.getLogger(__name__)
 
 APPLE_HEALTH_PROVIDER = "apple_health"
-APPLE_HEALTH_PLATFORM = "APPLE_HEALTH"
-SLEEP_ANALYSIS = "HKCategoryTypeIdentifierSleepAnalysis"
 WORKOUT = "HKWorkoutTypeIdentifier"
 APPLE_HEALTH_DATA_TYPES = frozenset(
     {
@@ -142,6 +147,7 @@ def ingest_device_batch(session: Session, connection: HealthConnection, batch: D
     }
 
     stored = unchanged = ignored = 0
+    changed_records: list[RawHealthRecord] = []
     for sample in batch.samples:
         if sample["id"] in tombstoned:
             ignored += 1
@@ -170,11 +176,15 @@ def ingest_device_batch(session: Session, connection: HealthConnection, batch: D
         record.start_time = start_time
         record.end_time = end_time
         record.civil_date = local_date_for_profile(
-            profile, end_time if batch.data_type == SLEEP_ANALYSIS else start_time
+            profile, end_time if batch.data_type in DATED_BY_END else start_time
         )
         affected_dates.add(record.civil_date)
         session.add(record)
+        changed_records.append(record)
         stored += 1
+    session.flush()
+    for record in changed_records:
+        normalize_apple_sample(session, connection, record)
 
     new_tombstones = [record_id for record_id in dict.fromkeys(batch.deleted_ids) if record_id not in tombstoned]
     deleted_records = session.scalars(
@@ -184,6 +194,7 @@ def ingest_device_batch(session: Session, connection: HealthConnection, batch: D
         )
     ).all() if batch.deleted_ids else []
     affected_dates.update(record.civil_date for record in deleted_records if record.civil_date)
+    remove_apple_records(session, [record.id for record in deleted_records])
     remove_normalized_records(session, [record.id for record in deleted_records])
     if deleted_records:
         session.execute(

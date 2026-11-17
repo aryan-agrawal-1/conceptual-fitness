@@ -365,6 +365,7 @@ final class AuthStore: ObservableObject {
         }
         keychain.clearTokens()
         accessToken = nil
+        AppleHealthSync.shared.disable()
         state = .signedOut
     }
 
@@ -609,7 +610,8 @@ final class AuthStore: ObservableObject {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
             where key.hasPrefix("dailyInsight.v10.") || key.hasPrefix("history")
-                || key.hasPrefix("journalReminder") || key.hasPrefix("journalPrompted") {
+                || key.hasPrefix("journalReminder") || key.hasPrefix("journalPrompted")
+                || key.hasPrefix(AppleHealthState.keyPrefix) {
             defaults.removeObject(forKey: key)
         }
         if let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
@@ -964,6 +966,7 @@ struct AuthGateView: View {
 
     private var authContent: some View {
         authStates
+            .modifier(AppleHealthAccessModifier())
             .onReceive(appleCredentialRevocations) { _ in
                 Task { await authStore.handleAppleCredentialRevoked() }
             }
@@ -987,46 +990,39 @@ struct AuthGateView: View {
             if session.profile.onboardingCompletedAt != nil {
                 AppShellView(authStore: authStore, session: session)
                     .id(session.user.id)
-            } else if session.healthConnection.status == .connected {
-                OnboardingView(authStore: authStore, session: session)
             } else {
-                ConnectFitbitView(authStore: authStore, needsAttention: session.healthConnection.status == .errored)
+                OnboardingView(authStore: authStore, session: session)
             }
         }
     }
 
     private func signInView(errorMessage: String?) -> some View {
         ZStack {
-            AppBackground()
-
+            OnboardingSky(scene: .welcome)
             GeometryReader { geometry in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        Spacer(minLength: 0)
-
-                        VStack(alignment: .leading, spacing: 16) {
-                            Image(systemName: "heart.text.square.fill")
-                                .font(.system(size: 58, weight: .semibold))
-                                .foregroundStyle(.blue)
-                                .symbolRenderingMode(.hierarchical)
-
+                    VStack(alignment: .leading, spacing: 22) {
+                        Spacer(minLength: geometry.size.height * 0.42)
+                        VStack(alignment: .leading, spacing: 10) {
                             Text("Conceptual Fitness")
-                                .font(.system(size: 38, weight: .bold, design: .rounded))
-                                .foregroundStyle(.primary)
-
-                            Text("Sign in, then connect your Fitbit to turn your recovery, sleep, and training data into a daily dashboard.")
+                                .font(.system(size: 40, weight: .bold, design: .rounded))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityAddTraits(.isHeader)
+                            Text("Sleep, recovery and training, turned into one clear daily picture.")
                                 .font(.body.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .lineSpacing(3)
+                                .foregroundStyle(.white.opacity(0.8))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        .foregroundStyle(.white)
 
                         VStack(spacing: 12) {
                             if let errorMessage {
-                                Text(errorMessage)
+                                Label(errorMessage, systemImage: "exclamationmark.circle.fill")
                                     .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.red)
-                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(.white)
+                                    .padding(14)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .onboardingGlass(cornerRadius: 16)
                                     .accessibilityLabel("Sign-in error: \(errorMessage)")
                             }
 
@@ -1045,12 +1041,12 @@ struct AuthGateView: View {
                             .buttonStyle(.plain)
                             .foregroundStyle(.black)
                             .background(.white, in: Capsule())
-                            .overlay(Capsule().strokeBorder(.black, lineWidth: 1))
 
                             Button("Restore an account scheduled for deletion") {
                                 isChoosingRestoreMethod = true
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(OnboardingQuietButtonStyle())
+                            .font(.subheadline)
                             .accessibilityHint("Signs in and restores the account if it is still within the 14-day recovery period")
                             .confirmationDialog(
                                 "How did you sign in to that account?",
@@ -1064,21 +1060,17 @@ struct AuthGateView: View {
                                     Task { await authStore.restoreDeletedAccount(using: .google) }
                                 }
                             }
-
-                            Text("Your health data stays tied to your authenticated app session.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
                         }
-
-                        Spacer(minLength: 0)
                     }
-                    .padding(28)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
                     .frame(minHeight: geometry.size.height)
                 }
+                .scrollIndicators(.hidden)
                 .scrollBounceBehavior(.basedOnSize)
             }
         }
+        .environment(\.colorScheme, .dark)
     }
 
     private func deletionScheduledView(deadline: Date, message: String?) -> some View {
@@ -1163,7 +1155,7 @@ private struct AppleSignInButton: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
-        let button = ASAuthorizationAppleIDButton(authorizationButtonType: .continue, authorizationButtonStyle: .black)
+        let button = ASAuthorizationAppleIDButton(authorizationButtonType: .continue, authorizationButtonStyle: .white)
         button.cornerRadius = SignInButtonMetrics.height / 2
         button.addTarget(context.coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
         return button
@@ -1183,68 +1175,6 @@ private struct AppleSignInButton: UIViewRepresentable {
         @objc func tapped() {
             action()
         }
-    }
-}
-
-private struct ConnectFitbitView: View {
-    @ObservedObject var authStore: AuthStore
-    let needsAttention: Bool
-    @State private var isConnecting = false
-    @State private var errorMessage: String?
-
-    var body: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            Image(systemName: "link.badge.plus")
-                .font(.system(size: 48, weight: .semibold))
-                .foregroundStyle(.blue)
-                .accessibilityHidden(true)
-            Text(needsAttention ? "Reconnect your Fitbit" : "Connect your Fitbit")
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-            Text(needsAttention
-                 ? "Your Fitbit connection stopped working. Reconnect it to keep importing your data."
-                 : "You’re signed in. Connect the Google account your Fitbit uses so the app can read your sleep, recovery and training data.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .accessibilityLabel("Connection error: \(errorMessage)")
-            }
-            Button {
-                Task { await connect() }
-            } label: {
-                if isConnecting {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else {
-                    Label(needsAttention ? "Reconnect Fitbit" : "Connect Fitbit", systemImage: "link")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isConnecting)
-            .accessibilityHint("Opens Google to give read-only access to your Fitbit data")
-            Button("Sign out") {
-                Task { await authStore.signOut() }
-            }
-            .buttonStyle(.bordered)
-            .disabled(isConnecting)
-            Spacer()
-        }
-        .padding(28)
-    }
-
-    private func connect() async {
-        isConnecting = true
-        errorMessage = nil
-        errorMessage = await authStore.connectFitbit()
-        isConnecting = false
     }
 }
 

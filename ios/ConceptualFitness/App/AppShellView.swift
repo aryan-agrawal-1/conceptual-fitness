@@ -45,7 +45,7 @@ struct AppShellView: View {
         _syncCoordinator = StateObject(
             wrappedValue: AppSyncCoordinator(
                 client: DashboardAPIClient(authStore: authStore),
-                initialLastSyncAt: session.healthConnection.lastSyncAt
+                connection: session.healthConnection
             )
         )
     }
@@ -113,6 +113,7 @@ struct AppShellView: View {
         .onChange(of: notificationRouter.openRequested) { _, _ in presentCheckInIfNeeded() }
         .onChange(of: selectedTab) { _, _ in presentCheckInIfNeeded() }
         .onChange(of: profileStore.revision) { _, _ in syncCoordinator.profileDidChange() }
+        .onChange(of: session.healthConnection) { _, connection in syncCoordinator.updateConnection(connection) }
         .task {
             await syncCoordinator.syncIfNeeded()
         }
@@ -192,6 +193,9 @@ final class AppSyncCoordinator: ObservableObject {
     @Published private(set) var retryingSource: String?
     @Published private(set) var notifyOnCompletion = false
     @Published private(set) var notificationMessage: String?
+    @Published private(set) var connection: HealthConnectionStatus?
+    @Published private(set) var appleHealthLooksEmpty = false
+    private var appleHealthFailedType: String?
     private var accountID: String?
     private var historyRequestRevision = 0
 
@@ -228,7 +232,33 @@ final class AppSyncCoordinator: ObservableObject {
         }
     }
 
+    var hasActiveSource: Bool {
+        connection?.status == .connected && connection?.activeDevice != nil
+    }
+
+    func updateConnection(_ value: HealthConnectionStatus) {
+        let changed = value.activeDevice != connection?.activeDevice || value.status != connection?.status
+        connection = value
+        guard changed else { return }
+        lastSyncAt = DashboardFormatters.parseBackendDateTime(value.lastSyncAt)
+        failureMessage = nil
+        history = nil
+        historyLoaded = false
+        refreshToken += 1
+    }
+
     func checkHistory() async {
+        if connection?.activeDevice == .appleWatch, let userID = client.authStore?.connectedSession?.user.id {
+            let state = AppleHealthSync.shared.state(for: userID)
+            history = state.progress.backfillStatus(window: state.window(), failedType: appleHealthFailedType)
+            historyLoaded = true
+            historyError = nil
+            return
+        }
+        guard connection?.activeDevice == .fitbit else {
+            historyLoaded = true
+            return
+        }
         historyRequestRevision += 1
         let revision = historyRequestRevision
         do {
@@ -323,9 +353,10 @@ final class AppSyncCoordinator: ObservableObject {
     private let maxPollAttempts = 120
     private let logger = Logger(subsystem: "ConceptualFitness", category: "Sync")
 
-    init(client: DashboardAPIClient, initialLastSyncAt: String? = nil) {
+    init(client: DashboardAPIClient, connection: HealthConnectionStatus? = nil) {
         self.client = client
-        self.lastSyncAt = DashboardFormatters.parseBackendDateTime(initialLastSyncAt)
+        self.connection = connection
+        self.lastSyncAt = DashboardFormatters.parseBackendDateTime(connection?.lastSyncAt)
     }
 
     func updateFromDashboard(_ data: DashboardData) {
@@ -350,6 +381,11 @@ final class AppSyncCoordinator: ObservableObject {
     }
 
     private func performSyncIfNeeded() async {
+        guard hasActiveSource else { return }
+        if connection?.activeDevice == .appleWatch {
+            await syncAppleHealth()
+            return
+        }
         isSyncing = true
         failureMessage = nil
         defer { isSyncing = false }
@@ -387,6 +423,26 @@ final class AppSyncCoordinator: ObservableObject {
 
     func retry() async {
         await syncIfNeeded()
+    }
+
+    private func syncAppleHealth() async {
+        guard let authStore = client.authStore, let session = authStore.connectedSession else { return }
+        isSyncing = true
+        failureMessage = nil
+        defer { isSyncing = false }
+        do {
+            try await AppleHealthSync.shared.sync(authStore: authStore, userID: session.user.id)
+            appleHealthFailedType = nil
+            lastSyncAt = Date()
+            refreshToken += 1
+        } catch AppleHealthSyncError.notConnected {
+            _ = try? await authStore.refreshSession()
+        } catch {
+            logger.error("Apple Health sync failed: \(String(describing: type(of: error)), privacy: .public)")
+            failureMessage = "Apple Health data couldn’t upload. Check your connection and try again."
+        }
+        appleHealthLooksEmpty = AppleHealthSync.shared.state(for: session.user.id).samplesReceived == 0
+        await checkHistory()
     }
 
     func profileDidChange() { refreshToken += 1 }

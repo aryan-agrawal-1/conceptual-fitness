@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.core.security import utcnow
 from app.db.session import SessionLocal
 from app.models import ConnectionStatus, HealthConnection, HistoricalBackfill, SyncStatus
+from app.services.apple_health_mapping import rebuild_apple_health_derived
 from app.services.metric_rollups import cleanup_high_volume_storage
 from app.services.oauth import GOOGLE_HEALTH_PROVIDER
 from app.services.scores import rebuild_derived_scores
@@ -125,6 +126,7 @@ def historical_backfill(account_id: str, data_type: str | None = None) -> dict[s
 def rebuild_scores(user_id: str, start: str, end: str) -> dict[str, object]:
     first, last = date.fromisoformat(start), date.fromisoformat(end)
     with SessionLocal() as session:
+        last = rebuild_apple_health_derived(session, user_id=user_id, start=first, end=last)
         rebuild_daily_summaries(session, user_id=user_id, start=first, end=last)
         result = rebuild_derived_scores(session, user_id=user_id, start=first, end=last, include_dependents=True)
         session.commit()

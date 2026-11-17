@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import MetricSample, User, UserProfile
+from app.models import DailyScore, MetricSample, User, UserProfile, Workout
 
 
 def test_body_metrics_returns_profile_values_and_bmi(session, auth_headers) -> None:
@@ -144,6 +144,51 @@ def test_manual_body_metrics_update_creates_history_and_updates_profile(session,
     profile = session.query(UserProfile).filter_by(user_id=user.id).one()
     assert profile.height_cm == 181
     assert profile.weight_kg == 78.5
+
+
+def test_manual_body_metrics_update_skips_scores_without_a_workout(session, auth_headers):
+    user = User()
+    session.add(user)
+    session.commit()
+
+    response = TestClient(app).post(
+        "/body-metrics",
+        headers=auth_headers(user),
+        json={"date": "2026-06-19", "height_cm": 181, "weight_kg": 78.5},
+    )
+
+    assert response.status_code == 200
+    assert session.query(DailyScore).filter_by(user_id=user.id).count() == 0
+
+
+def test_manual_weight_update_rebuilds_scores_for_a_workout_day(session, auth_headers):
+    user = User()
+    session.add(user)
+    session.commit()
+    start = datetime(2026, 6, 19, 17, 0, tzinfo=UTC)
+    session.add(
+        Workout(
+            user_id=user.id,
+            workout_type="strength",
+            start_time=start,
+            end_time=start + timedelta(minutes=30),
+            civil_date=start.date(),
+            duration_seconds=1800,
+            origin="manual",
+            status="completed",
+            raw_summary={},
+        )
+    )
+    session.commit()
+
+    response = TestClient(app).post(
+        "/body-metrics",
+        headers=auth_headers(user),
+        json={"date": "2026-06-19", "weight_kg": 78.5},
+    )
+
+    assert response.status_code == 200
+    assert session.query(DailyScore).filter_by(user_id=user.id, score_date=date(2026, 6, 19)).count() > 0
 
 
 def test_manual_body_metrics_update_reuses_same_day_manual_sample(session, auth_headers) -> None:

@@ -5,10 +5,18 @@ import UserNotifications
 
 @main
 struct ConceptualFitnessApp: App {
-    @StateObject private var authStore = AuthStore()
+    @StateObject private var authStore: AuthStore
 
     init() {
         UNUserNotificationCenter.current().delegate = JournalNotificationRouter.shared
+        let store = AuthStore()
+        _authStore = StateObject(wrappedValue: store)
+        AppleHealthSync.shared.resumeIfEnabled(authStore: store)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-BakeDeviceModels") {
+            Task { await DeviceModels.bake() }
+        }
+        #endif
     }
 
     var body: some Scene {
@@ -16,7 +24,10 @@ struct ConceptualFitnessApp: App {
             rootView
         }
         .backgroundTask(.appRefresh("com.conceptualfitness.history")) {
-            let coordinator = await AppSyncCoordinator(client: DashboardAPIClient(authStore: authStore))
+            let coordinator = await AppSyncCoordinator(
+                client: DashboardAPIClient(authStore: authStore),
+                connection: authStore.connectedSession?.healthConnection
+            )
             await coordinator.checkHistory()
             await coordinator.scheduleHistoryCheck()
         }
