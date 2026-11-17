@@ -126,14 +126,37 @@ struct MetricTimeframePicker: View {
     @Binding var selection: ScoreTimeframe
     let timeframes: [ScoreTimeframe]
     let accessibilityLabel: String
+    @Namespace private var pill
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Picker("Timeframe", selection: $selection) {
+        HStack(spacing: 2) {
             ForEach(timeframes) { item in
-                Text(item.title).tag(item)
+                let isSelected = item == selection
+                Button {
+                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) { selection = item }
+                } label: {
+                    Text(item.title)
+                        .font(.subheadline.weight(isSelected ? .bold : .medium))
+                        .foregroundStyle(HealthTheme.ink)
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                        .background {
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(HealthTheme.raised)
+                                    .matchedGeometryEffect(id: "selection", in: pill)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .pickerStyle(.segmented)
+        .padding(3)
+        .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .sensoryFeedback(.selection, trigger: selection)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
     }
 }
