@@ -71,6 +71,7 @@ struct MiniMetricChart: View {
     let points: [MiniMetricChartPoint]
     let kind: MiniMetricChartKind
     let tint: Color
+    var fillsHeight = false
 
     var body: some View {
         Group {
@@ -91,8 +92,53 @@ struct MiniMetricChart: View {
                 }
             }
         }
-        .frame(height: 42)
+        .frame(minHeight: 42, maxHeight: fillsHeight ? .infinity : 42)
         .accessibilityHidden(true)
+    }
+}
+
+struct WeekMetricChart: View {
+    let points: [MiniMetricChartPoint]
+    let drawsBars: Bool
+    let tint: Color
+
+    var body: some View {
+        Group {
+            if points.compactMap(\.value).isEmpty {
+                MiniEmptyChart(tint: tint)
+            } else if drawsBars {
+                WeekBarChart(points: points, tint: tint)
+            } else {
+                MiniLineChart(points: points, tint: tint, showsBand: true, marksLatest: true)
+            }
+        }
+        .frame(minHeight: 42, maxHeight: .infinity)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WeekBarChart: View {
+    let points: [MiniMetricChartPoint]
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let peak = max(points.compactMap(\.value).max() ?? 1, 1)
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                    Capsule()
+                        .fill(tint.opacity(fillOpacity(index: index, value: point.value)))
+                        .frame(height: max(5, CGFloat((point.value ?? 0) / peak) * proxy.size.height))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        }
+    }
+
+    private func fillOpacity(index: Int, value: Double?) -> Double {
+        if value == nil { return 0.14 }
+        return index == points.count - 1 ? 1 : 0.42
     }
 }
 
@@ -100,10 +146,11 @@ private struct MiniLineChart: View {
     let points: [MiniMetricChartPoint]
     let tint: Color
     let showsBand: Bool
+    var marksLatest = false
 
     var body: some View {
         GeometryReader { proxy in
-            let rect = CGRect(origin: .zero, size: proxy.size)
+            let rect = CGRect(origin: .zero, size: proxy.size).insetBy(dx: marksLatest ? 4 : 0, dy: 0)
             let bounds = valueBounds
 
             ZStack {
@@ -116,6 +163,17 @@ private struct MiniLineChart: View {
 
                 linePath(in: rect, bounds: bounds, value: \.value)
                     .stroke(tint, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+
+                if marksLatest {
+                    let positions = valuePositions(in: rect, bounds: bounds)
+                    ForEach(Array(positions.enumerated()), id: \.offset) { index, position in
+                        let size: CGFloat = index == positions.count - 1 ? 8 : 5
+                        Circle()
+                            .fill(tint)
+                            .frame(width: size, height: size)
+                            .position(position)
+                    }
+                }
             }
         }
     }
@@ -127,6 +185,17 @@ private struct MiniLineChart: View {
         guard let minValue = values.min(), let maxValue = values.max() else { return 0...1 }
         let span = max(maxValue - minValue, 1)
         return (minValue - span * 0.18)...(maxValue + span * 0.18)
+    }
+
+    private func valuePositions(in rect: CGRect, bounds: ClosedRange<Double>) -> [CGPoint] {
+        let denominator = CGFloat(max(points.count - 1, 1))
+        return points.enumerated().compactMap { index, point in
+            guard let value = point.value else { return nil }
+            return CGPoint(
+                x: rect.minX + CGFloat(index) / denominator * rect.width,
+                y: yPosition(value, in: rect, bounds: bounds)
+            )
+        }
     }
 
     private func linePath(

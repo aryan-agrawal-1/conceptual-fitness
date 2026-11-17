@@ -64,6 +64,7 @@ struct MetricDashboardSummary: Decodable {
     let dataQuality: String?
     let higherIsBetter: Bool?
     let previewPoints: [MiniMetricChartPoint]
+    let weekPoints: [MiniMetricChartPoint]
 
     enum CodingKeys: String, CodingKey {
         case metric
@@ -75,6 +76,7 @@ struct MetricDashboardSummary: Decodable {
         case dataQuality = "data_quality"
         case higherIsBetter = "higher_is_better"
         case previewPoints = "preview_points"
+        case weekPoints = "week_points"
     }
 
     init(
@@ -86,7 +88,8 @@ struct MetricDashboardSummary: Decodable {
         baseline: MetricBaseline? = nil,
         dataQuality: String? = nil,
         higherIsBetter: Bool? = nil,
-        previewPoints: [MiniMetricChartPoint] = []
+        previewPoints: [MiniMetricChartPoint] = [],
+        weekPoints: [MiniMetricChartPoint] = []
     ) {
         self.metric = metric
         self.unit = unit
@@ -97,6 +100,7 @@ struct MetricDashboardSummary: Decodable {
         self.dataQuality = dataQuality
         self.higherIsBetter = higherIsBetter
         self.previewPoints = previewPoints
+        self.weekPoints = weekPoints
     }
 
     init(from decoder: Decoder) throws {
@@ -110,6 +114,7 @@ struct MetricDashboardSummary: Decodable {
         dataQuality = try container.decodeIfPresent(String.self, forKey: .dataQuality)
         higherIsBetter = try container.decodeIfPresent(Bool.self, forKey: .higherIsBetter)
         previewPoints = try container.decodeIfPresent([MiniMetricChartPoint].self, forKey: .previewPoints) ?? []
+        weekPoints = try container.decodeIfPresent([MiniMetricChartPoint].self, forKey: .weekPoints) ?? []
     }
 }
 
@@ -294,9 +299,11 @@ struct WorkoutSummary: Decodable, Identifiable {
     let heartRate: HeartRateSummary?
     let intensity: String?
     let strainLoadPoints: Double?
+    var title: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
+        case title
         case workoutType = "workout_type"
         case startTime = "start_time"
         case endTime = "end_time"

@@ -20,6 +20,7 @@ struct DashboardView: View {
     @State private var showsLocation = false
     @State private var dashboardFailureMessage: String?
     @State private var isPullRefreshing = false
+    @State private var skyBehindBar = true
     @State private var reloadRevision = 0
     #if DEBUG
     @State private var showsWeatherLab = false
@@ -111,7 +112,7 @@ struct DashboardView: View {
                     Text(lastSyncedTitle)
                 }
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(skyBehindBar ? heroTextColor : HealthTheme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
             }
@@ -170,35 +171,40 @@ struct DashboardView: View {
     }
 
     private func syncFailureCard(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(message)
-                .font(.subheadline)
-            Button("Retry") {
-                Task { await syncCoordinator.retry() }
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityHint("Attempts the health data refresh again")
+        inlineNotice(message, actionTitle: "Retry", hint: "Attempts the health data refresh again") {
+            await syncCoordinator.retry()
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panelSurface(cornerRadius: 20)
-        .padding(.horizontal, 20)
-        .accessibilityElement(children: .contain)
     }
 
     private func dashboardFailureCard(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(message)
-                .font(.subheadline)
-            Button("Reload dashboard") {
-                Task { await reload() }
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityHint("Loads the latest dashboard data again")
+        inlineNotice(message, actionTitle: "Reload", hint: "Loads the latest dashboard data again") {
+            await reload()
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panelSurface(cornerRadius: 20)
+    }
+
+    private func inlineNotice(
+        _ message: String,
+        actionTitle: String,
+        hint: String,
+        action: @escaping () async -> Void
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(HealthTheme.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(actionTitle) {
+                Task { await action() }
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(HealthTheme.ink)
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityHint(hint)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .padding(.vertical, 4)
+        .panelSurface(cornerRadius: 16)
         .padding(.horizontal, 20)
         .accessibilityElement(children: .contain)
     }
@@ -207,7 +213,9 @@ struct DashboardView: View {
         ZStack(alignment: .top) {
             if usesWeatherBackground {
                 WeatherBackgroundView(weather: weather)
-                    .frame(height: heroHeight)
+                    .frame(height: heroHeight + Self.skyOverscroll)
+                    .offset(y: -Self.skyOverscroll)
+                    .frame(height: heroHeight, alignment: .top)
             } else {
                 Color.clear
                     .frame(height: heroHeight)
@@ -258,7 +266,10 @@ struct DashboardView: View {
             .padding(.horizontal, 20)
         }
         .frame(height: heroHeight)
+        .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 110 } action: { skyBehindBar = $0 }
     }
+
+    private static let skyOverscroll: CGFloat = 320
 
     @ViewBuilder
     private var content: some View {
@@ -352,7 +363,7 @@ struct DashboardView: View {
     }
 
     private var heroTextColor: Color {
-        guard usesWeatherBackground else { return .black.opacity(0.84) }
+        guard usesWeatherBackground else { return HealthTheme.ink }
         return weather.isDay || weather.scene == .sunrise || weather.scene == .sunset ? Color.black.opacity(0.84) : Color.white
     }
 
@@ -429,9 +440,9 @@ struct DashboardView: View {
 
     private var lastSyncedTitle: String {
         if syncCoordinator.isSyncing {
-            return "Syncing..."
+            return "Syncing"
         }
-        return "Last Synced: \(lastSyncedTime ?? "--:--")"
+        return "Synced \(lastSyncedTime ?? "--:--")"
     }
 
     private var lastSyncedTime: String? {
