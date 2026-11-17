@@ -35,7 +35,7 @@ struct WeatherBackgroundView: View {
             .compositingGroup()
             .overlay(alignment: .bottom) {
                 let bottomColor = state.bottomAtmosphereColor.color
-                let appBackgroundColor = Color(red: 0.98, green: 0.98, blue: 0.95)
+                let appBackgroundColor = HealthTheme.page
                 let midOpacity = state.isNight ? 0.24 : (state.rainAmount > 0.05 || state.stormIntensity > 0.05 ? 0.30 : 0.50)
                 let endOpacity = state.isNight ? 0.98 : (state.rainAmount > 0.05 || state.stormIntensity > 0.05 ? 0.94 : 0.98)
 
