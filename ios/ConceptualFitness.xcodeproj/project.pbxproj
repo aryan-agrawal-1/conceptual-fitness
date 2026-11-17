@@ -78,6 +78,7 @@
 		01000000000000000000002F /* FitnessAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000032 /* FitnessAPIClient.swift */; };
 		010000000000000000000030 /* FitnessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000033 /* FitnessStore.swift */; };
 		010000000000000000000031 /* FitnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000034 /* FitnessView.swift */; };
+		0100000000000000000F0061 /* FitnessScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000F0061 /* FitnessScene.swift */; };
 		010000000000000000000032 /* WorkoutEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000035 /* WorkoutEditorView.swift */; };
 		010000000000000000000033 /* ExercisePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000036 /* ExercisePickerView.swift */; };
 		010000000000000000000034 /* bodyPaths.json in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000037 /* bodyPaths.json */; };
@@ -181,6 +182,7 @@
 		020000000000000000000032 /* FitnessAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessAPIClient.swift; sourceTree = "<group>"; };
 		020000000000000000000033 /* FitnessStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessStore.swift; sourceTree = "<group>"; };
 		020000000000000000000034 /* FitnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessView.swift; sourceTree = "<group>"; };
+		0200000000000000000F0061 /* FitnessScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitnessScene.swift; sourceTree = "<group>"; };
 		020000000000000000000035 /* WorkoutEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutEditorView.swift; sourceTree = "<group>"; };
 		020000000000000000000036 /* ExercisePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExercisePickerView.swift; sourceTree = "<group>"; };
 		020000000000000000000037 /* bodyPaths.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = bodyPaths.json; sourceTree = "<group>"; };
@@ -398,6 +400,7 @@
 				020000000000000000000032 /* FitnessAPIClient.swift */,
 				020000000000000000000033 /* FitnessStore.swift */,
 				020000000000000000000034 /* FitnessView.swift */,
+				0200000000000000000F0061 /* FitnessScene.swift */,
 				020000000000000000000035 /* WorkoutEditorView.swift */,
 				020000000000000000000036 /* ExercisePickerView.swift */,
 				020000000000000000000038 /* AnatomeMuscleMapView.swift */,
@@ -573,6 +576,7 @@
 				01000000000000000000002F /* FitnessAPIClient.swift in Sources */,
 				010000000000000000000030 /* FitnessStore.swift in Sources */,
 				010000000000000000000031 /* FitnessView.swift in Sources */,
+				0100000000000000000F0061 /* FitnessScene.swift in Sources */,
 				010000000000000000000032 /* WorkoutEditorView.swift in Sources */,
 				010000000000000000000033 /* ExercisePickerView.swift in Sources */,
 				010000000000000000000035 /* AnatomeMuscleMapView.swift in Sources */,

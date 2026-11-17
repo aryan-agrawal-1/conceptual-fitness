@@ -4,36 +4,50 @@ struct FitnessView: View {
     @StateObject private var store: FitnessStore
     @State private var showEditor = false
     @State private var showPastWorkout = false
+    @State private var week = FitnessWeek()
+    @State private var sceneBehindStatusBar = true
+    @Environment(\.profileUnits) private var units
+    private let strainClient: DashboardAPIClient
 
     init(authStore: AuthStore, userID: String) {
         _store = StateObject(wrappedValue: FitnessStore(authStore: authStore, userID: userID))
+        strainClient = DashboardAPIClient(authStore: authStore)
     }
 
     var body: some View {
         ZStack {
             AppBackground()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 22) {
-                    header
-                    if let draft = store.draft {
-                        resumeCard(draft)
-                    } else {
-                        startActions
-                    }
-                    if let message = store.syncMessage {
-                        syncBanner(message)
+                LazyVStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        FitnessHero(week: week)
+                            .padding(.bottom, -18)
+                            .onGeometryChange(for: Bool.self) { $0.frame(in: .global).maxY > 110 } action: { sceneBehindStatusBar = $0 }
+                        if let draft = store.draft {
+                            resumeCard(draft)
+                        } else {
+                            startActions
+                        }
+                        if let message = store.syncMessage {
+                            syncBanner(message)
+                        }
                     }
                     matchSection
                     routineSection
                     recentSection
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, FitnessHero.sideInset)
                 .padding(.bottom, 32)
             }
-            .refreshable { await store.refresh() }
+            .refreshable {
+                await store.refresh()
+                await loadWeek()
+            }
         }
-        .navigationTitle("Fitness")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(sceneBehindStatusBar ? .dark : nil, for: .navigationBar)
         .task {
             await store.load()
             #if DEBUG
@@ -41,6 +55,10 @@ struct FitnessView: View {
                 showEditor = true
             }
             #endif
+        }
+        .task { await loadWeek() }
+        .onChange(of: showEditor) { _, isShowing in
+            if !isShowing { Task { await loadWeek() } }
         }
         .fullScreenCover(isPresented: $showEditor) {
             WorkoutEditorView(store: store)
@@ -56,38 +74,29 @@ struct FitnessView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Train, log, repeat.")
-                .font(.title2.weight(.bold))
-            Text("Your live strength log and wearable activities, together in one timeline.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.top, 4)
+    private func loadWeek() async {
+        guard let detail = try? await strainClient.loadStrainDetail(timeframe: .week) else { return }
+        week = FitnessWeek(detail: detail)
     }
 
     private func resumeCard(_ draft: LocalWorkoutDraft) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Label(
-                        draft.isEditingExistingWorkout ? "Editing workout" : "Workout in progress",
-                        systemImage: draft.isEditingExistingWorkout ? "pencil" : "bolt.fill"
-                    )
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(HealthTheme.color(for: .activity))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(draft.isEditingExistingWorkout ? "Editing workout" : "Workout in progress")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
                     Text(draft.title ?? "Strength Workout")
-                        .font(.title3.weight(.bold))
+                        .font(.system(.title3, design: .rounded, weight: .bold))
                     Text(resumeSummary(draft))
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HealthTheme.secondaryInk)
                 }
                 Spacer()
                 if !draft.isRetrospective {
                     TimelineView(.periodic(from: .now, by: 30)) { context in
                         Text(elapsed(from: draft.startTime, to: context.date))
-                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .font(.system(.headline, design: .rounded, weight: .bold))
                             .monospacedDigit()
                     }
                 }
@@ -95,15 +104,9 @@ struct FitnessView: View {
             Button {
                 showEditor = true
             } label: {
-                Label(
-                    draft.isEditingExistingWorkout ? "Continue editing" : "Resume workout",
-                    systemImage: draft.isEditingExistingWorkout ? "pencil" : "play.fill"
-                )
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
+                PrimaryActionLabel(title: draft.isEditingExistingWorkout ? "Continue editing" : "Resume workout")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HealthTheme.color(for: .activity))
+            .buttonStyle(.pressScale)
         }
         .padding(18)
         .panelSurface(cornerRadius: 24)
@@ -111,47 +114,24 @@ struct FitnessView: View {
     }
 
     private var startActions: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Button {
                 if store.startWorkout() {
                     showEditor = true
                 }
             } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: "plus")
-                        .font(.title2.weight(.bold))
-                        .frame(width: 44, height: 44)
-                        .background(.white.opacity(0.2), in: Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Start workout")
-                            .font(.headline)
-                        Text("Log sets as you train")
-                            .font(.caption)
-                            .opacity(0.85)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                }
-                .foregroundStyle(.white)
-                .padding(16)
-                .background(
-                    LinearGradient(
-                        colors: [HealthTheme.color(for: .activity), Color.indigo.opacity(0.85)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: 24, style: .continuous)
-                )
+                PrimaryActionLabel(title: "Start workout")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressScale)
             .accessibilityHint("Opens an empty live strength workout")
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button {
                     showPastWorkout = true
                 } label: {
-                    actionTile("Log past workout", symbol: "calendar.badge.plus")
+                    secondaryAction("Log past", symbol: "calendar.badge.plus")
                 }
+                .buttonStyle(.pressScale)
                 if let last = store.overview?.recentWorkouts.first {
                     Button {
                         Task {
@@ -159,55 +139,62 @@ struct FitnessView: View {
                             if store.draft != nil { showEditor = true }
                         }
                     } label: {
-                        actionTile("Repeat last", symbol: "arrow.counterclockwise")
+                        secondaryAction("Repeat last", symbol: "arrow.counterclockwise")
                     }
+                    .buttonStyle(.pressScale)
                 }
             }
         }
     }
 
-    private func actionTile(_ title: String, symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: symbol)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(HealthTheme.color(for: .activity))
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(15)
-        .panelSurface(cornerRadius: 19)
+    private func secondaryAction(_ title: String, symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(HealthTheme.ink)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .panelSurface(cornerRadius: 16)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(.title3, design: .rounded, weight: .bold))
+            .padding(.horizontal, 4)
+            .accessibilityAddTraits(.isHeader)
     }
 
     @ViewBuilder
     private var matchSection: some View {
         if !store.matchSuggestions.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Needs review")
-                    .font(.title3.weight(.bold))
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Needs review")
                 ForEach(store.matchSuggestions) { suggestion in
                     VStack(alignment: .leading, spacing: 13) {
-                        Label("Possible duplicate workout", systemImage: "square.on.square")
+                        Text("Possible duplicate workout")
                             .font(.headline)
                         Text("\(suggestion.targetWorkout.title) and \(suggestion.candidate.workout.title) overlap in time and may be the same activity.")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Button("Keep separate") {
+                            .foregroundStyle(HealthTheme.secondaryInk)
+                        HStack(spacing: 10) {
+                            Button {
                                 Task { await store.keepSeparate(suggestion) }
+                            } label: {
+                                secondaryAction("Keep separate", symbol: "square.split.2x1")
                             }
-                            .buttonStyle(.bordered)
-                            Spacer()
-                            Button("Combine") {
+                            .buttonStyle(.pressScale)
+                            Button {
                                 Task { await store.merge(suggestion) }
+                            } label: {
+                                Text("Combine")
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(HealthTheme.inverseInk)
+                                    .frame(maxWidth: .infinity, minHeight: 48)
+                                    .background(HealthTheme.ink, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(HealthTheme.color(for: .activity))
+                            .buttonStyle(.pressScale)
                         }
                     }
                     .padding(16)
-                    .panelSurface(cornerRadius: 20)
+                    .panelSurface(cornerRadius: 22)
                 }
             }
         }
@@ -216,152 +203,188 @@ struct FitnessView: View {
     @ViewBuilder
     private var routineSection: some View {
         let routines = store.overview?.routines ?? []
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Saved workouts")
-                    .font(.title3.weight(.bold))
-                Spacer()
-                if !routines.isEmpty {
-                    Text("\(routines.count)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Saved workouts")
             if store.loadState == .loading && routines.isEmpty {
-                routinePlaceholder
-                    .redacted(reason: .placeholder)
+                placeholder(height: 132)
             } else if routines.isEmpty {
-                ContentUnavailableView(
-                    "No saved workouts yet",
-                    systemImage: "bookmark",
-                    description: Text("Finish a workout, then save it as a routine for quick access here.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                Text("Finish a workout and save it as a routine to start it from here.")
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.secondaryInk)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .panelSurface(cornerRadius: 22)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(routines) { routine in
-                            routineCard(routine)
-                        }
+                VStack(spacing: 0) {
+                    ForEach(Array(routines.enumerated()), id: \.element.id) { index, routine in
+                        if index > 0 { rowDivider }
+                        routineRow(routine)
                     }
                 }
-                .contentMargins(.horizontal, 1, for: .scrollContent)
+                .panelSurface(cornerRadius: 22)
             }
         }
     }
 
-    private var routinePlaceholder: some View {
-        RoundedRectangle(cornerRadius: 20)
-            .fill(.white.opacity(0.7))
-            .frame(width: 250, height: 150)
+    private var rowDivider: some View {
+        Rectangle()
+            .fill(HealthTheme.hairline)
+            .frame(height: 1)
+            .padding(.leading, 66)
     }
 
-    private func routineCard(_ routine: FitnessRoutine) -> some View {
-        Button {
+    private func placeholder(height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .fill(HealthTheme.track)
+            .frame(height: height)
+            .accessibilityHidden(true)
+    }
+
+    private func rowIcon(_ symbol: String, tint: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(tint)
+            .frame(width: 40, height: 40)
+            .background(tint.opacity(0.14), in: Circle())
+    }
+
+    private func routineRow(_ routine: FitnessRoutine) -> some View {
+        let isDue = store.overview?.dueRoutines.contains(where: { $0.id == routine.id }) == true
+        let tint = HealthTheme.color(for: .recovery)
+        return Button {
             Task {
                 await store.startRoutine(routine)
                 if store.draft != nil { showEditor = true }
             }
         } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Image(systemName: routine.isFavorite ? "bookmark.fill" : "dumbbell.fill")
-                        .foregroundStyle(HealthTheme.color(for: .activity))
-                    Spacer()
-                    if store.overview?.dueRoutines.contains(where: { $0.id == routine.id }) == true {
-                        Text("TODAY")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(HealthTheme.color(for: .activity).opacity(0.12), in: Capsule())
+            HStack(spacing: 12) {
+                rowIcon("dumbbell.fill", tint: tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(routine.name)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(1)
+                        if isDue {
+                            Text("Today")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(tint)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
                     }
+                    Text(routineSummary(routine))
+                        .font(.subheadline)
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                        .lineLimit(1)
                 }
-                Text(routine.name)
-                    .font(.headline)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Text("\(routine.exercises.count) exercises")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if !routine.scheduledWeekdays.isEmpty {
-                    Text(weekdaySummary(routine.scheduledWeekdays))
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
+                Spacer(minLength: 8)
+                Image(systemName: "play.fill")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(isDue ? HealthTheme.inverseInk : HealthTheme.ink)
+                    .frame(width: 44, height: 44)
+                    .background {
+                        if isDue {
+                            Circle().fill(HealthTheme.ink)
+                        } else {
+                            Circle().strokeBorder(HealthTheme.ink.opacity(0.14), lineWidth: 1)
+                        }
+                    }
             }
-            .frame(width: 220, alignment: .leading)
-            .padding(16)
-            .panelSurface(cornerRadius: 20)
+            .padding(.leading, 14)
+            .padding(.trailing, 10)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressScale)
         .disabled(store.draft != nil)
-        .accessibilityHint("Starts this saved workout")
+        .opacity(store.draft == nil ? 1 : 0.5)
+        .accessibilityLabel("Start \(routine.name)")
+    }
+
+    private func routineSummary(_ routine: FitnessRoutine) -> String {
+        let exercises = "\(routine.exercises.count) exercise\(routine.exercises.count == 1 ? "" : "s")"
+        guard !routine.scheduledWeekdays.isEmpty else { return exercises }
+        return "\(exercises) · \(weekdaySummary(routine.scheduledWeekdays))"
     }
 
     @ViewBuilder
     private var recentSection: some View {
         let recent = store.overview?.recentWorkouts ?? []
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent activities")
-                .font(.title3.weight(.bold))
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Recent")
             if store.loadState == .loading && recent.isEmpty {
-                ForEach(0..<3, id: \.self) { _ in
-                    recentPlaceholder.redacted(reason: .placeholder)
-                }
+                placeholder(height: 196)
             } else if case .failed(let message) = store.loadState, recent.isEmpty {
                 ContentUnavailableView("Couldn’t load activities", systemImage: "wifi.slash", description: Text(message))
                     .frame(maxWidth: .infinity)
             } else if recent.isEmpty {
-                ContentUnavailableView(
-                    "No activities yet",
-                    systemImage: "figure.strengthtraining.traditional",
-                    description: Text("Logged and wearable workouts will appear together here.")
-                )
-                .frame(maxWidth: .infinity)
+                Text("Logged and wearable workouts appear here.")
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.secondaryInk)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .panelSurface(cornerRadius: 22)
             } else {
-                ForEach(recent) { workout in
-                    HStack(spacing: 8) {
-                        NavigationLink(value: AppRoute.workout(workout.id)) {
-                            recentRow(workout)
-                        }
-                        .buttonStyle(.plain)
-                        Menu {
-                            Button {
-                                Task {
-                                    await store.editWorkout(workout)
-                                    if store.draft != nil { showEditor = true }
-                                }
-                            } label: {
-                                Label("Edit workout", systemImage: "pencil")
+                ForEach(recentGroups(recent), id: \.title) { group in
+                    Text(group.title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                        .padding(.horizontal, 4)
+                        .padding(.top, 2)
+                    VStack(spacing: 0) {
+                        ForEach(Array(group.workouts.enumerated()), id: \.element.id) { index, workout in
+                            if index > 0 { rowDivider }
+                            NavigationLink(value: AppRoute.workout(workout.id)) {
+                                recentRow(workout)
                             }
-                            Button {
-                                Task {
-                                    await store.repeatWorkout(workout)
-                                    if store.draft != nil { showEditor = true }
+                            .buttonStyle(.pressScale)
+                            .contextMenu {
+                                Button {
+                                    Task {
+                                        await store.editWorkout(workout)
+                                        if store.draft != nil { showEditor = true }
+                                    }
+                                } label: {
+                                    Label("Edit workout", systemImage: "pencil")
                                 }
-                            } label: {
-                                Label("Repeat workout", systemImage: "arrow.counterclockwise")
+                                Button {
+                                    Task {
+                                        await store.repeatWorkout(workout)
+                                        if store.draft != nil { showEditor = true }
+                                    }
+                                } label: {
+                                    Label("Repeat workout", systemImage: "arrow.counterclockwise")
+                                }
                             }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 36, height: 44)
                         }
-                        .accessibilityLabel("Workout actions")
                     }
-                    .padding(15)
-                    .panelSurface(cornerRadius: 19)
+                    .panelSurface(cornerRadius: 22)
                 }
             }
         }
     }
 
-    private var recentPlaceholder: some View {
-        RoundedRectangle(cornerRadius: 19)
-            .fill(.white.opacity(0.7))
-            .frame(height: 92)
+    private func recentGroups(_ workouts: [FitnessWorkout]) -> [(title: String, workouts: [FitnessWorkout])] {
+        var groups: [(title: String, workouts: [FitnessWorkout])] = []
+        for workout in workouts {
+            let title = dayTitle(workout.startTime)
+            if groups.last?.title == title {
+                groups[groups.count - 1].workouts.append(workout)
+            } else {
+                groups.append((title, [workout]))
+            }
+        }
+        return groups
+    }
+
+    private func dayTitle(_ value: String) -> String {
+        guard let date = FitnessDate.parse(value) else { return value }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: .now)).day ?? 7
+        return date.formatted(days < 7 ? .dateTime.weekday(.wide) : .dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 
     private func recentRow(_ workout: FitnessWorkout) -> some View {
@@ -370,43 +393,70 @@ struct FitnessView: View {
             intensity: nil,
             strainLoadPoints: nil
         )
-        return HStack(spacing: 14) {
-            Image(systemName: presentation.symbolName)
-                .font(.title3)
-                .foregroundStyle(presentation.activityAccent)
-                .frame(width: 44, height: 44)
-                .background(presentation.activityAccent.opacity(0.12), in: Circle())
-            VStack(alignment: .leading, spacing: 4) {
-                Text(workout.title)
-                    .font(.headline)
-                HStack(spacing: 7) {
-                    Text(relativeDate(workout.startTime))
-                    Text("·")
-                    Text(duration(workout.durationSeconds))
-                    if workout.summary.completedSetCount > 0 {
-                        Text("·")
-                        Text("\(workout.summary.completedSetCount) sets")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        let extra = week.workouts[workout.id]
+        return HStack(spacing: 12) {
+            rowIcon(presentation.symbolName, tint: presentation.activityAccent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(rowTitle(workout))
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(HealthTheme.ink)
+                    .lineLimit(1)
+                Text(recentSummary(workout, distanceMeters: extra?.distanceMeters))
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.secondaryInk)
+                    .lineLimit(1)
                 if workout.awaitingWearable {
-                    Label("Waiting for wearable data", systemImage: "waveform.path.ecg")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(HealthTheme.color(for: .activity))
+                    Text("Waiting for wearable data")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(HealthTheme.secondaryInk)
                 }
             }
-            Spacer()
+            Spacer(minLength: 8)
+            if let strain = extra?.strain {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(strain.clean)
+                        .font(.system(size: 19, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(HealthTheme.ink)
+                    Text("strain")
+                        .font(.caption)
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                }
+            }
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+
+    private func rowTitle(_ workout: FitnessWorkout) -> String {
+        let suffix = " Workout"
+        guard workout.title.hasSuffix(suffix), workout.title.count > suffix.count else { return workout.title }
+        return String(workout.title.dropLast(suffix.count))
+    }
+
+    private func recentSummary(_ workout: FitnessWorkout, distanceMeters: Double?) -> String {
+        var parts: [String] = []
+        if let date = FitnessDate.parse(workout.startTime) {
+            parts.append(date.formatted(date: .omitted, time: .shortened))
+        }
+        parts.append(duration(workout.durationSeconds))
+        if workout.summary.completedSetCount > 0 {
+            parts.append(workout.summary.completedSetCount == 1 ? "1 set" : "\(workout.summary.completedSetCount) sets")
+        } else if let distanceMeters, distanceMeters > 0 {
+            parts.append(units.distanceText(distanceMeters))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func syncBanner(_ message: String) -> some View {
         Label(message, systemImage: "icloud.and.arrow.up")
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(HealthTheme.secondaryInk)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func completedSets(in draft: LocalWorkoutDraft) -> Int {
@@ -427,12 +477,7 @@ struct FitnessView: View {
     private func duration(_ seconds: Int) -> String {
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
-        return hours > 0 ? "\(hours)h \(minutes)m" : "\(max(1, minutes))m"
-    }
-
-    private func relativeDate(_ value: String) -> String {
-        guard let date = FitnessDate.parse(value) else { return value }
-        return date.formatted(.relative(presentation: .named))
+        return hours > 0 ? "\(hours)h \(minutes)m" : "\(max(1, minutes)) min"
     }
 
     private func weekdaySummary(_ weekdays: [Int]) -> String {
@@ -440,7 +485,7 @@ struct FitnessView: View {
         return weekdays.compactMap { day in
             let index = day == 7 ? 0 : day
             return symbols.indices.contains(index) ? symbols[index] : nil
-        }.joined(separator: " · ")
+        }.joined(separator: ", ")
     }
 }
 
@@ -452,29 +497,45 @@ private struct PastWorkoutSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("When") {
-                    DatePicker("Started", selection: $startDate, in: ...Date())
-                    Stepper("Duration: \(durationMinutes) min", value: $durationMinutes, in: 5...360, step: 5)
-                }
-                Section {
-                    Text("You’ll use the same set-by-set editor as a live workout, with the completed time fixed to this window.")
+            ZStack {
+                AppBackground()
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(spacing: 0) {
+                        DatePicker("Started", selection: $startDate, in: ...Date())
+                            .frame(minHeight: 54)
+                        Rectangle()
+                            .fill(HealthTheme.hairline)
+                            .frame(height: 1)
+                        Stepper("Duration: \(durationMinutes) min", value: $durationMinutes, in: 5...360, step: 5)
+                            .frame(minHeight: 54)
+                    }
+                    .padding(.horizontal, 16)
+                    .panelSurface(cornerRadius: 22)
+
+                    Text("You’ll log sets in the usual editor, with the time fixed to this window.")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                        .padding(.horizontal, 4)
+
+                    Spacer()
+
+                    Button {
+                        onCreate(startDate, TimeInterval(durationMinutes * 60))
+                        dismiss()
+                    } label: {
+                        PrimaryActionLabel(title: "Continue")
+                    }
+                    .buttonStyle(.pressScale)
                 }
+                .padding(16)
+                .tint(HealthTheme.ink)
             }
             .navigationTitle("Log past workout")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Continue") {
-                        onCreate(startDate, TimeInterval(durationMinutes * 60))
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
+                        .tint(HealthTheme.ink)
                 }
             }
         }
