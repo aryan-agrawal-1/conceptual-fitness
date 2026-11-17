@@ -139,7 +139,7 @@ struct WeatherBackgroundDebugControlsView: View {
 
             controls
         }
-        .background(Color(red: 0.98, green: 0.98, blue: 0.95))
+        .background(HealthTheme.page)
         .ignoresSafeArea(edges: .top)
     }
 
@@ -254,22 +254,40 @@ struct WeatherBackgroundDebugControlsView: View {
     }
 
     private var weather: WeatherData {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        scene.weather(at: time, cloudCover: cloudCover, precipitation: precipitation, wind: wind)
+    }
+}
+
+extension WeatherLabScene {
+    func weather(at time: WeatherLabTime, cloudCover: Double? = nil, precipitation: Double? = nil, wind: Double? = nil) -> WeatherData {
+        let today = Calendar.current.startOfDay(for: Date())
         let sunrise = today.addingTimeInterval(6 * 3600)
         let sunset = today.addingTimeInterval(20 * 3600)
         let date = today.addingTimeInterval(time.hour * 3600)
         return WeatherData(
-            weatherCode: scene.weatherCode,
-            cloudCover: cloudCover,
-            precipitationIntensity: precipitation,
+            weatherCode: weatherCode,
+            cloudCover: cloudCover ?? self.cloudCover,
+            precipitationIntensity: precipitation ?? self.precipitation,
             isDay: date >= sunrise && date <= sunset,
             sunrise: sunrise,
             sunset: sunset,
             date: date,
             locationName: "Weather Lab",
-            windSpeed: wind
+            windSpeed: wind ?? self.wind
         )
+    }
+}
+
+extension WeatherData {
+    static var labOverride: WeatherData? {
+        #if DEBUG
+        let defaults = UserDefaults.standard
+        guard let scene = defaults.string(forKey: "WeatherLabScene").flatMap(WeatherLabScene.init) else { return nil }
+        let time = defaults.string(forKey: "WeatherLabTime").flatMap(WeatherLabTime.init) ?? .midday
+        return scene.weather(at: time)
+        #else
+        return nil
+        #endif
     }
 }
 
