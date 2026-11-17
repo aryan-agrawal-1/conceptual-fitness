@@ -2424,6 +2424,7 @@ def _workout_summary_payload(
 
     payload = {
         "id": workout.id,
+        "title": workout.title,
         "workout_type": workout.workout_type,
         "start_time": workout.start_time,
         "end_time": workout.end_time,

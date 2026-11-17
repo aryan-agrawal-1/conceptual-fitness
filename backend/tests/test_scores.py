@@ -1079,6 +1079,7 @@ def test_dashboard_bundle_returns_frontend_dashboard_payload(session, auth_heade
     assert payload["snapshot"]["metrics"]["heart_rate_variability"] == 58.0
     assert set(payload["snapshot"]["scores"]) == {"sleep", "readiness", "strain"}
     assert payload["recent_workouts"][0]["workout_type"] == "running"
+    assert "title" in payload["recent_workouts"][0]
     assert payload["vo2_max"]["current"] == {
         "date": day.isoformat(),
         "value": 48.2,
