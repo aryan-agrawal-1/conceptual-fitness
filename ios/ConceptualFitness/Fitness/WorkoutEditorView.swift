@@ -4,11 +4,11 @@ import UIKit
 struct WorkoutEditorView: View {
     @ObservedObject var store: FitnessStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showExercisePicker = false
     @State private var showReview = false
     @State private var showDiscardConfirmation = false
     @State private var restEnd: Date?
-    @State private var restTotal = 90
 
     var body: some View {
         NavigationStack {
@@ -16,11 +16,12 @@ struct WorkoutEditorView: View {
                 AppBackground()
                 if let draft = store.draft {
                     ScrollView {
-                        LazyVStack(spacing: 16) {
-                            workoutHeader(draft)
+                        LazyVStack(spacing: 12) {
+                            workoutStatus(draft)
                             ForEach(draft.exercises) { exercise in
                                 ExerciseLogCard(
                                     exercise: exercise,
+                                    previousSets: exercise.catalogID.flatMap { store.previousSets[$0] } ?? [],
                                     store: store,
                                     showsRestControls: !draft.isEditingExistingWorkout,
                                     onCompletedSet: {
@@ -32,15 +33,17 @@ struct WorkoutEditorView: View {
                             addExerciseButton
                             finishButton(draft)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, restEnd == nil ? 28 : 96)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 28)
                     }
                     .scrollDismissesKeyboard(.interactively)
+                    .task(id: draft.exercises.compactMap(\.catalogID)) {
+                        await store.loadPreviousSets()
+                    }
                 } else {
                     ContentUnavailableView("Workout finished", systemImage: "checkmark.circle.fill")
                 }
             }
-            .navigationTitle(editorTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -51,6 +54,9 @@ struct WorkoutEditorView: View {
                     }
                     .accessibilityLabel("Close workout")
                 }
+                ToolbarItem(placement: .principal) {
+                    editorHeading
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button(discardActionTitle, role: .destructive) {
@@ -59,19 +65,24 @@ struct WorkoutEditorView: View {
                     } label: {
                         Image(systemName: "ellipsis")
                     }
+                    .accessibilityLabel("More")
                 }
             }
+            .tint(HealthTheme.ink)
             .safeAreaInset(edge: .bottom) {
-                if store.draft?.isEditingExistingWorkout != true, let restEnd {
-                    RestTimerBar(
-                        end: restEnd,
-                        total: restTotal,
-                        onAdjust: adjustRest,
-                        onSkip: { self.restEnd = nil }
-                    )
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                ZStack {
+                    if store.draft?.isEditingExistingWorkout != true, let restEnd {
+                        RestTimerBar(
+                            end: restEnd,
+                            onAdjust: adjustRest,
+                            onSkip: { self.restEnd = nil }
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 4)
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
+                .animation(.smooth(duration: restEnd == nil ? 0.2 : 0.35), value: restEnd != nil)
             }
         }
         .interactiveDismissDisabled()
@@ -104,10 +115,29 @@ struct WorkoutEditorView: View {
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
-    private var editorTitle: String {
-        guard let draft = store.draft else { return "Workout" }
-        if draft.isEditingExistingWorkout { return "Edit workout" }
-        return draft.isRetrospective ? "Log past workout" : "Live workout"
+    @ViewBuilder
+    private var editorHeading: some View {
+        if let draft = store.draft {
+            VStack(spacing: 0) {
+                Text(draft.title ?? "Strength Workout")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(HealthTheme.secondaryInk)
+                    .lineLimit(1)
+                if draft.isEditingExistingWorkout {
+                    Text("Editing").font(.system(.headline, design: .rounded, weight: .bold))
+                } else if draft.isRetrospective {
+                    Text(draft.startTime.formatted(date: .abbreviated, time: .shortened))
+                        .font(.system(.headline, design: .rounded, weight: .bold))
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(elapsed(from: draft.startTime, to: context.date))
+                            .font(.system(.title3, design: .rounded, weight: .bold))
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 
     private var discardActionTitle: String {
@@ -125,77 +155,49 @@ struct WorkoutEditorView: View {
         return "This workout and its local draft will be removed."
     }
 
-    private func workoutHeader(_ draft: LocalWorkoutDraft) -> some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(draft.title ?? "Strength Workout")
-                        .font(.title2.weight(.bold))
-                    Text(draft.startTime.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if draft.isEditingExistingWorkout {
-                    Label("Editing", systemImage: "pencil")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(HealthTheme.color(for: .activity))
-                } else if draft.isRetrospective {
-                    Label("Past", systemImage: "clock.arrow.circlepath")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(HealthTheme.color(for: .activity))
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(elapsed(from: draft.startTime, to: context.date))
-                            .font(.system(.title3, design: .rounded, weight: .semibold))
-                            .monospacedDigit()
-                    }
-                }
+    private func workoutStatus(_ draft: LocalWorkoutDraft) -> some View {
+        let total = draft.exercises.reduce(0) { $0 + $1.sets.count }
+        let exercises = "\(draft.exercises.count) exercise\(draft.exercises.count == 1 ? "" : "s")"
+        return HStack {
+            Text("\(exercises) · \(completedSets(draft)) of \(total) sets")
+            Spacer()
+            if draft.isEditingExistingWorkout {
+                Text("Changes stay local")
+            } else if store.isSyncing {
+                Text("Syncing")
+            } else {
+                Label("Saved", systemImage: "checkmark")
             }
-            HStack(spacing: 18) {
-                Label("\(draft.exercises.count) exercises", systemImage: "dumbbell")
-                Label("\(completedSets(draft)) sets", systemImage: "checkmark.circle")
-                if draft.isEditingExistingWorkout {
-                    Label("Changes stay local", systemImage: "iphone")
-                } else if store.isSyncing {
-                    Label("Syncing", systemImage: "arrow.triangle.2.circlepath")
-                } else {
-                    Label("Saved", systemImage: "checkmark.icloud")
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
-        .padding(17)
-        .panelSurface(cornerRadius: 22)
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(HealthTheme.secondaryInk)
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
     }
 
     private var addExerciseButton: some View {
         Button {
             showExercisePicker = true
         } label: {
-            Label("Add exercise", systemImage: "plus.circle.fill")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
+            Text("Add exercise")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(HealthTheme.ink)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .panelSurface(cornerRadius: 16)
         }
-        .buttonStyle(.bordered)
-        .tint(HealthTheme.color(for: .activity))
+        .buttonStyle(.pressScale)
     }
 
     private func finishButton(_ draft: LocalWorkoutDraft) -> some View {
-        Button {
+        let isDisabled = draft.exercises.isEmpty || completedSets(draft) == 0
+        return Button {
             showReview = true
         } label: {
-            Text(draft.isRetrospective ? "Review & save" : "Finish workout")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
+            PrimaryActionLabel(title: draft.isRetrospective ? "Review and save" : "Finish workout")
         }
-        .buttonStyle(.borderedProminent)
-        .tint(HealthTheme.color(for: .positive))
-        .disabled(draft.exercises.isEmpty || completedSets(draft) == 0)
-        .padding(.top, 4)
+        .buttonStyle(.pressScale)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.4 : 1)
     }
 
     private func completedSets(_ draft: LocalWorkoutDraft) -> Int {
@@ -204,65 +206,83 @@ struct WorkoutEditorView: View {
 
     private func elapsed(from start: Date, to end: Date) -> String {
         let seconds = max(0, Int(end.timeIntervalSince(start)))
-        return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+        if seconds >= 3600 {
+            return String(format: "%d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+        }
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
     private func startRest(seconds: Int) {
         guard seconds > 0 else { return }
-        restTotal = seconds
         restEnd = Date().addingTimeInterval(TimeInterval(seconds))
     }
 
     private func adjustRest(_ seconds: Int) {
         guard let restEnd else { return }
         self.restEnd = restEnd.addingTimeInterval(TimeInterval(seconds))
-        restTotal = max(1, restTotal + seconds)
     }
+}
+
+private enum SetRowLayout {
+    static let badge: CGFloat = 36
+    static let field: CGFloat = 66
+    static let tick: CGFloat = 40
+    static let spacing: CGFloat = 6
 }
 
 private struct ExerciseLogCard: View {
     @Environment(\.profileUnits) private var units
     let exercise: LocalWorkoutExercise
+    let previousSets: [FitnessWorkoutSet]
     @ObservedObject var store: FitnessStore
     let showsRestControls: Bool
     let onCompletedSet: () -> Void
     @State private var showDetails = ProcessInfo.processInfo.arguments.contains("-OpenExerciseDetails")
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(exercise.name)
-                        .font(.headline)
-                    Text(schemaDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.body.weight(.semibold))
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(HealthTheme.secondaryInk)
                 }
                 Spacer()
-                Button {
-                    showDetails = true
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.title3)
-                }
-                .accessibilityLabel("Exercise instructions")
                 Menu {
+                    Button {
+                        showDetails = true
+                    } label: {
+                        Label("Instructions", systemImage: "info.circle")
+                    }
                     Button("Remove exercise", role: .destructive) {
                         store.removeExercise(exercise.id)
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Exercise options")
             }
+            .padding(.leading, 16)
+            .padding(.trailing, 6)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
 
             setHeader
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+
             ForEach(Array(exercise.sets.enumerated()), id: \.element.id) { index, set in
                 SetInputRow(
                     number: index + 1,
                     schema: exercise.measurementSchema,
                     perImplement: exercise.recordsPerImplement,
+                    previous: previousText(index),
                     setType: setBinding(set.id, \.setType, default: "working"),
                     reps: setBinding(set.id, \.reps, default: ""),
                     load: setBinding(set.id, \.load, default: ""),
@@ -272,14 +292,21 @@ private struct ExerciseLogCard: View {
                     canDelete: exercise.sets.count > 1,
                     onDelete: { store.removeSet(set.id, from: exercise.id) }
                 )
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
             }
 
+            Rectangle()
+                .fill(HealthTheme.hairline)
+                .frame(height: 1)
+                .padding(.top, 4)
             HStack {
-                Button {
+                Button("Add set") {
                     store.addSet(to: exercise.id)
-                } label: {
-                    Label("Add set", systemImage: "plus")
                 }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(HealthTheme.ink)
+                .frame(minHeight: 44)
                 Spacer()
                 if showsRestControls {
                     Menu {
@@ -292,41 +319,53 @@ private struct ExerciseLogCard: View {
                             }
                         }
                     } label: {
-                        Label(restLabel(exercise.restSeconds), systemImage: "timer")
-                            .font(.caption.weight(.medium))
+                        Text("Rest \(restClock(exercise.restSeconds))")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(HealthTheme.secondaryInk)
+                            .frame(minHeight: 44)
                     }
+                    .accessibilityLabel("Rest time, \(restLabel(exercise.restSeconds))")
                 }
             }
-            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 16)
         }
-        .padding(16)
         .panelSurface(cornerRadius: 22)
         .sheet(isPresented: $showDetails) {
             ExerciseDetailsView(exercise: exercise)
         }
     }
 
-    @ViewBuilder
     private var setHeader: some View {
-        HStack(spacing: 8) {
-            Text("SET").frame(width: 36)
+        HStack(spacing: SetRowLayout.spacing) {
+            Text("Set").frame(width: SetRowLayout.badge)
+            Text("Prev").frame(maxWidth: .infinity)
             switch exercise.measurementSchema {
-            case "duration", "duration_load":
-                Text("SECONDS").frame(maxWidth: .infinity)
-                if exercise.measurementSchema == "duration_load" {
-                    Text(units.massSymbol.uppercased()).frame(maxWidth: .infinity)
-                }
+            case "duration":
+                Text("Seconds").frame(width: SetRowLayout.field)
+            case "duration_load":
+                Text("Seconds").frame(width: SetRowLayout.field)
+                Text(units.massSymbol).frame(width: SetRowLayout.field)
             case "carry", "cardio":
-                Text(units.shortDistanceSymbol.uppercased()).frame(maxWidth: .infinity)
-                Text("SECONDS").frame(maxWidth: .infinity)
+                Text(units.shortDistanceSymbol).frame(width: SetRowLayout.field)
+                Text("Seconds").frame(width: SetRowLayout.field)
             default:
-                Text(exercise.recordsPerSide ? "REPS/SIDE" : "REPS").frame(maxWidth: .infinity)
-                Text(loadHeader).frame(maxWidth: .infinity)
+                Text(loadHeader).frame(width: SetRowLayout.field)
+                Text(exercise.recordsPerSide ? "Reps/side" : "Reps").frame(width: SetRowLayout.field)
             }
-            Color.clear.frame(width: 36)
+            Color.clear.frame(width: SetRowLayout.tick, height: 1)
         }
-        .font(.caption2.weight(.bold))
-        .foregroundStyle(.secondary)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(HealthTheme.secondaryInk)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .padding(.horizontal, 4)
+    }
+
+    private var subtitle: String {
+        let parts = [exercise.primaryMuscles.first, exercise.equipment]
+            .compactMap { $0?.replacingOccurrences(of: "_", with: " ").capitalized }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? schemaDescription : parts.joined(separator: " · ")
     }
 
     private var schemaDescription: String {
@@ -344,9 +383,28 @@ private struct ExerciseLogCard: View {
     }
 
     private var loadHeader: String {
-        if exercise.measurementSchema == "assisted_reps" { return "ASSIST \(units.massSymbol.uppercased())" }
-        if exercise.recordsPerImplement { return "\(units.massSymbol.uppercased()) EACH" }
-        return units.massSymbol.uppercased()
+        if exercise.measurementSchema == "assisted_reps" { return "Assist \(units.massSymbol)" }
+        if exercise.recordsPerImplement { return "\(units.massSymbol) each" }
+        return units.massSymbol
+    }
+
+    private func previousText(_ index: Int) -> String {
+        guard previousSets.indices.contains(index) else { return "–" }
+        let set = previousSets[index]
+        let load = (set.loadPerImplement ?? set.loadValue ?? set.addedLoadKG ?? set.assistanceKG).map {
+            units.mass($0).formatted(.number.precision(.fractionLength(0...1)))
+        }
+        switch exercise.measurementSchema {
+        case "duration", "duration_load":
+            guard let seconds = set.durationSeconds else { return "–" }
+            return load.map { "\($0) × \(seconds)s" } ?? "\(seconds)s"
+        case "carry", "cardio":
+            guard let meters = set.distanceMeters else { return "–" }
+            return units.distanceText(meters, compact: true)
+        default:
+            guard let reps = set.reps else { return "–" }
+            return load.map { "\($0) × \(reps)" } ?? "\(reps)"
+        }
     }
 
     private func setBinding<Value>(
@@ -378,10 +436,7 @@ private struct ExerciseLogCard: View {
                     draft.exercises[exerciseIndex].sets[setIndex].isCompleted = completed
                     draft.exercises[exerciseIndex].sets[setIndex].completedAt = completed ? Date() : nil
                 }
-                if completed {
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    onCompletedSet()
-                }
+                if completed { onCompletedSet() }
             }
         )
     }
@@ -393,13 +448,19 @@ private struct ExerciseLogCard: View {
     private func restLabel(_ seconds: Int) -> String {
         seconds >= 60 && seconds % 60 == 0 ? "\(seconds / 60) min rest" : "\(seconds)s rest"
     }
+
+    private func restClock(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
 }
 
 private struct SetInputRow: View {
     @Environment(\.profileUnits) private var units
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let number: Int
     let schema: String
     let perImplement: Bool
+    let previous: String
     @Binding var setType: String
     @Binding var reps: String
     @Binding var load: String
@@ -410,43 +471,77 @@ private struct SetInputRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: SetRowLayout.spacing) {
             Menu {
                 Button("Working") { setType = "working" }
                 Button("Warm-up") { setType = "warmup" }
                 Button("Drop") { setType = "drop" }
             } label: {
                 Text(setBadge)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(setType == "working" ? .primary : HealthTheme.color(for: .activity))
-                    .frame(width: 34, height: 34)
-                    .background(.secondary.opacity(0.10), in: Circle())
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundStyle(setType == "working" ? HealthTheme.ink : HealthTheme.secondaryInk)
+                    .frame(width: SetRowLayout.badge, height: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Set \(number), \(setType)")
 
+            Text(previous)
+                .font(.system(.subheadline, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(HealthTheme.secondaryInk)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel(previous == "–" ? "No previous set" : "Previous \(previous)")
+
             switch schema {
             case "duration", "duration_load":
-                numericField("Sec", text: $duration)
-                if schema == "duration_load" { WorkoutMeasurementField(title: units.massSymbol, canonical: $load, units: units, isDistance: false, setNumber: number) }
+                SetNumberField(title: "Seconds", text: $duration, isCompleted: isCompleted)
+                if schema == "duration_load" {
+                    WorkoutMeasurementField(title: units.massSymbol, canonical: $load, units: units, isDistance: false, setNumber: number, isCompleted: isCompleted)
+                }
             case "carry", "cardio":
-                WorkoutMeasurementField(title: units.shortDistanceSymbol, canonical: $distance, units: units, isDistance: true, setNumber: number)
-                numericField("sec", text: $duration)
+                WorkoutMeasurementField(title: units.shortDistanceSymbol, canonical: $distance, units: units, isDistance: true, setNumber: number, isCompleted: isCompleted)
+                SetNumberField(title: "Seconds", text: $duration, isCompleted: isCompleted)
             default:
-                numericField("Reps", text: $reps)
-                WorkoutMeasurementField(title: perImplement ? "\(units.massSymbol) each" : units.massSymbol, canonical: $load, units: units, isDistance: false, setNumber: number)
+                WorkoutMeasurementField(title: perImplement ? "\(units.massSymbol) each" : units.massSymbol, canonical: $load, units: units, isDistance: false, setNumber: number, isCompleted: isCompleted)
+                SetNumberField(title: "Reps", text: $reps, isCompleted: isCompleted)
             }
 
             Button {
-                isCompleted.toggle()
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.2)) {
+                    isCompleted.toggle()
+                }
             } label: {
-                Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(isCompleted ? HealthTheme.color(for: .positive) : .secondary)
-                    .frame(width: 36, height: 36)
+                ZStack {
+                    Circle()
+                        .strokeBorder(HealthTheme.secondaryInk, lineWidth: 2)
+                    if isCompleted {
+                        Image(systemName: "checkmark")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(HealthTheme.inverseInk)
+                            .frame(width: 30, height: 30)
+                            .background(HealthTheme.ink, in: Circle())
+                            .transition(reduceMotion ? .opacity : .scale(scale: 0.9).combined(with: .opacity))
+                    }
+                }
+                .frame(width: 30, height: 30)
+                .frame(width: SetRowLayout.tick, height: 44)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.impact(weight: .light), trigger: isCompleted) { _, completed in completed }
             .accessibilityLabel(isCompleted ? "Mark set incomplete" : "Complete set")
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .frame(minHeight: 46)
+        .background {
+            if isCompleted {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(HealthTheme.track)
+                    .transition(.opacity)
+            }
+        }
         .contextMenu {
             if canDelete {
                 Button("Delete set", role: .destructive, action: onDelete)
@@ -461,21 +556,42 @@ private struct SetInputRow: View {
         default: return "\(number)"
         }
     }
+}
 
-    private func numericField(
-        _ prompt: String,
-        text: Binding<String>,
-        width: CGFloat? = nil,
-        decimal: Bool = false
-    ) -> some View {
-        TextField(prompt, text: text)
-            .keyboardType(decimal ? .decimalPad : .numberPad)
+private struct SetFieldChrome: ViewModifier {
+    let isCompleted: Bool
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
             .multilineTextAlignment(.center)
-            .font(.body.monospacedDigit())
-            .padding(.horizontal, 5)
-            .frame(maxWidth: width == nil ? .infinity : width, minHeight: 36)
-            .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
-            .accessibilityLabel(prompt)
+            .font(.system(.body, design: .rounded, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(HealthTheme.ink)
+            .frame(width: SetRowLayout.field, height: 38)
+            .background {
+                if !isCompleted {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(HealthTheme.card)
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(HealthTheme.ink.opacity(isFocused ? 1 : 0.2), lineWidth: isFocused ? 2 : 1.5)
+                }
+            }
+    }
+}
+
+private struct SetNumberField: View {
+    let title: String
+    @Binding var text: String
+    let isCompleted: Bool
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField("", text: $text)
+            .keyboardType(.numberPad)
+            .focused($isFocused)
+            .modifier(SetFieldChrome(isCompleted: isCompleted, isFocused: isFocused))
+            .accessibilityLabel(title)
     }
 }
 
@@ -485,18 +601,15 @@ private struct WorkoutMeasurementField: View {
     let units: ProfileUnits
     let isDistance: Bool
     let setNumber: Int
+    let isCompleted: Bool
     @State private var text = ""
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        TextField(title, text: $text)
+        TextField("", text: $text)
             .keyboardType(.decimalPad)
             .focused($isFocused)
-            .multilineTextAlignment(.center)
-            .font(.body.monospacedDigit())
-            .padding(.horizontal, 5)
-            .frame(maxWidth: .infinity, minHeight: 36)
-            .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            .modifier(SetFieldChrome(isCompleted: isCompleted, isFocused: isFocused))
             .accessibilityLabel("Set \(setNumber) \(isDistance ? "distance" : "load"), \(title)")
             .onAppear(perform: displayCanonical)
             .onChange(of: units) { _, _ in displayCanonical() }
@@ -519,47 +632,61 @@ private struct WorkoutMeasurementField: View {
 
 private struct RestTimerBar: View {
     let end: Date
-    let total: Int
     let onAdjust: (Int) -> Void
     let onSkip: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let remaining = max(0, Int(end.timeIntervalSince(context.date).rounded(.up)))
-            HStack(spacing: 12) {
-                Button("−15") { onAdjust(-15) }
-                    .buttonStyle(.bordered)
-                VStack(spacing: 2) {
-                    Text("REST")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text(timerText(remaining))
-                        .font(.system(.title3, design: .rounded, weight: .bold))
-                        .monospacedDigit()
-                }
-                .frame(maxWidth: .infinity)
-                Button("+15") { onAdjust(15) }
-                    .buttonStyle(.bordered)
-                Button("Skip", action: onSkip)
+            VStack(spacing: 0) {
+                Text("Rest")
                     .font(.caption.weight(.semibold))
-            }
-            .padding(12)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-            .overlay(alignment: .bottomLeading) {
-                GeometryReader { proxy in
-                    Capsule()
-                        .fill(HealthTheme.color(for: .activity))
-                        .frame(width: proxy.size.width * min(1, CGFloat(remaining) / CGFloat(max(1, total))), height: 3)
+                    .opacity(0.72)
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: 60, height: 1)
+                    HStack(spacing: 12) {
+                        adjustButton("−15", seconds: -15)
+                        Text(timerText(remaining))
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .frame(minWidth: 74)
+                        adjustButton("+15", seconds: 15)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Button("Skip", action: onSkip)
+                        .font(.subheadline.weight(.semibold))
+                        .opacity(0.72)
+                        .frame(width: 60, height: 44)
                 }
-                .frame(height: 3)
             }
+            .foregroundStyle(HealthTheme.inverseInk)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .padding(.horizontal, 8)
+            .background(HealthTheme.ink, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: .black.opacity(0.25), radius: 14, y: 8)
             .onChange(of: remaining) { _, value in
                 if value == 0 {
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     onSkip()
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Rest timer, \(remaining) seconds left")
         }
+    }
+
+    private func adjustButton(_ title: String, seconds: Int) -> some View {
+        Button {
+            onAdjust(seconds)
+        } label: {
+            Text(title)
+                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                .frame(width: 52, height: 44)
+                .background(HealthTheme.inverseInk.opacity(0.14), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.pressScale)
+        .accessibilityLabel(seconds < 0 ? "15 seconds less" : "15 seconds more")
     }
 
     private func timerText(_ seconds: Int) -> String {
@@ -591,7 +718,7 @@ private struct ExerciseDetailsView: View {
                                         }
                                     }
                                     .frame(width: 230, height: 230)
-                                    .background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 20))
+                                    .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 20))
                                     .accessibilityLabel(media.role.replacingOccurrences(of: "_", with: " "))
                                 }
                             }
@@ -681,36 +808,61 @@ private struct FinishWorkoutSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Summary") {
-                    LabeledContent("Exercises", value: "\(store.draft?.exercises.count ?? 0)")
-                    LabeledContent("Completed sets", value: "\(completedSets)")
-                    LabeledContent("Duration", value: duration)
-                }
-                Section("Optional effort") {
-                    TextField("Session RPE (0–10)", text: rpeBinding)
-                        .keyboardType(.decimalPad)
-                    TextField("Workout notes", text: notesBinding, axis: .vertical)
-                        .lineLimit(3...7)
-                }
-                Section {
-                    if let routine = store.sourceRoutine {
-                        Toggle("Update \(routine.name)", isOn: $updateSavedRoutine)
+            ZStack {
+                AppBackground()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        summaryCard
+                        sectionTitle("Optional")
+                        VStack(spacing: 0) {
+                            effortRow
+                            divider
+                            TextField("Workout notes", text: notesBinding, axis: .vertical)
+                                .lineLimit(2...7)
+                                .padding(.vertical, 14)
+                        }
+                        .padding(.horizontal, 16)
+                        .panelSurface(cornerRadius: 22)
+
+                        sectionTitle("Routine")
+                        VStack(spacing: 0) {
+                            if let routine = store.sourceRoutine {
+                                Toggle("Update \(routine.name)", isOn: $updateSavedRoutine)
+                                    .frame(minHeight: 54)
+                                divider
+                            }
+                            Toggle("Save as a new routine", isOn: $saveAsRoutine.animation(.smooth(duration: 0.25)))
+                                .frame(minHeight: 54)
+                            if saveAsRoutine {
+                                divider
+                                TextField("Routine name", text: $routineName)
+                                    .frame(minHeight: 54)
+                                divider
+                                weekdayPicker
+                                    .padding(.vertical, 12)
+                            }
+                        }
+                        .tint(HealthTheme.color(for: .positive))
+                        .padding(.horizontal, 16)
+                        .panelSurface(cornerRadius: 22)
+                        Text("Routines keep this exercise order and your latest sets.")
+                            .font(.footnote)
+                            .foregroundStyle(HealthTheme.secondaryInk)
+                            .padding(.horizontal, 4)
+
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(HealthTheme.color(for: .risk))
+                                .padding(.horizontal, 4)
+                                .padding(.top, 4)
+                        }
                     }
-                    Toggle("Save as a routine", isOn: $saveAsRoutine)
-                    if saveAsRoutine {
-                        TextField("Routine name", text: $routineName)
-                        weekdayPicker
-                    }
-                } footer: {
-                    Text("Saved routines keep this exercise order and your latest set targets.")
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
                 }
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "icloud.slash")
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Review workout")
             .navigationBarTitleDisplayMode(.inline)
@@ -718,40 +870,149 @@ private struct FinishWorkoutSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Back") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task { await finish() }
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(store.isSyncing || (saveAsRoutine && routineName.trimmingCharacters(in: .whitespaces).isEmpty))
+            }
+            .tint(HealthTheme.ink)
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    Task { await finish() }
+                } label: {
+                    PrimaryActionLabel(title: store.isSyncing ? "Saving" : "Save workout")
                 }
+                .buttonStyle(.pressScale)
+                .disabled(cannotSave)
+                .opacity(cannotSave ? 0.4 : 1)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+                .background(HealthTheme.page)
             }
         }
         .interactiveDismissDisabled(store.isSyncing)
     }
 
+    private var cannotSave: Bool {
+        store.isSyncing || (saveAsRoutine && routineName.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(HealthTheme.hairline).frame(height: 1)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(HealthTheme.secondaryInk)
+            .padding(.horizontal, 4)
+            .padding(.top, 8)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var summaryCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.draft?.title ?? "Strength Workout")
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                if let start = store.draft?.startTime {
+                    Text(start.formatted(.dateTime.weekday(.wide).day().month(.wide).hour().minute()))
+                        .font(.subheadline)
+                        .foregroundStyle(HealthTheme.secondaryInk)
+                }
+            }
+            HStack(spacing: 8) {
+                summaryStat(duration, label: "Duration")
+                summaryStat("\(completedSets)", label: "Sets")
+                summaryStat("\(store.draft?.exercises.count ?? 0)", label: "Exercises")
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelSurface(cornerRadius: 24)
+    }
+
+    private func summaryStat(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(HealthTheme.secondaryInk)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var effort: Int? {
+        Double(store.draft?.sessionRPE ?? "").map { Int($0.rounded()) }
+    }
+
+    private var effortRow: some View {
+        HStack(spacing: 10) {
+            Text("Effort")
+            Spacer()
+            effortStep("minus", label: "Lower effort") {
+                guard let effort else { return }
+                rpeBinding.wrappedValue = effort > 0 ? "\(effort - 1)" : ""
+            }
+            Group {
+                if let effort {
+                    Text("\(effort) ").fontWeight(.bold) + Text("of 10").foregroundStyle(HealthTheme.secondaryInk)
+                } else {
+                    Text("Not set").foregroundStyle(HealthTheme.secondaryInk)
+                }
+            }
+            .font(.system(.body, design: .rounded))
+            .monospacedDigit()
+            .frame(minWidth: 66)
+            effortStep("plus", label: "Raise effort") {
+                rpeBinding.wrappedValue = "\(min((effort ?? 4) + 1, 10))"
+            }
+        }
+        .frame(minHeight: 54)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func effortStep(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(HealthTheme.ink)
+                .frame(width: 44, height: 38)
+                .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.pressScale)
+        .accessibilityLabel(label)
+    }
+
     private var weekdayPicker: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Scheduled days")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(HealthTheme.secondaryInk)
             HStack {
                 ForEach(1...7, id: \.self) { day in
+                    let selected = weekdays.contains(day)
                     Button {
-                        if weekdays.contains(day) { weekdays.remove(day) } else { weekdays.insert(day) }
+                        if selected { weekdays.remove(day) } else { weekdays.insert(day) }
                     } label: {
                         Text(dayLetter(day))
-                            .font(.caption.weight(.bold))
-                            .frame(width: 30, height: 30)
-                            .foregroundStyle(weekdays.contains(day) ? .white : .primary)
-                            .background(
-                                weekdays.contains(day) ? HealthTheme.color(for: .activity) : Color.secondary.opacity(0.10),
-                                in: Circle()
-                            )
+                            .font(.subheadline.weight(selected ? .bold : .semibold))
+                            .foregroundStyle(selected ? HealthTheme.inverseInk : HealthTheme.ink)
+                            .frame(width: 40, height: 40)
+                            .background {
+                                if selected {
+                                    Circle().fill(HealthTheme.ink)
+                                } else {
+                                    Circle().strokeBorder(HealthTheme.ink.opacity(0.24), lineWidth: 1.5)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                     .accessibilityLabel(dayName(day))
-                    .accessibilityAddTraits(weekdays.contains(day) ? .isSelected : [])
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
         }

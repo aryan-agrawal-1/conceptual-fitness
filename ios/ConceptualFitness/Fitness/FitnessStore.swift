@@ -16,6 +16,7 @@ final class FitnessStore: ObservableObject {
     @Published private(set) var isSyncing = false
     @Published private(set) var syncMessage: String?
     @Published private(set) var matchSuggestions: [FitnessMatchSuggestion] = []
+    @Published private(set) var previousSets: [String: [FitnessWorkoutSet]] = [:]
 
     let client: FitnessAPIClient
     private let persistenceURL: URL?
@@ -90,6 +91,24 @@ final class FitnessStore: ObservableObject {
         } catch {
             syncMessage = "Saved offline — it will sync when the backend is available."
         }
+    }
+
+    func loadPreviousSets() async {
+        guard let draft else { return }
+        let wanted = Set(draft.exercises.compactMap(\.catalogID)).subtracting(previousSets.keys)
+        guard !wanted.isEmpty else { return }
+        let history = (overview?.recentWorkouts ?? [])
+            .filter { $0.id != draft.serverID && $0.summary.completedSetCount > 0 }
+            .prefix(6)
+        var found: [String: [FitnessWorkoutSet]] = [:]
+        for workout in history where found.count < wanted.count {
+            guard let detail = try? await client.loadWorkout(id: workout.id) else { continue }
+            for exercise in detail.exercises {
+                guard let id = exercise.exerciseID, wanted.contains(id), found[id] == nil else { continue }
+                found[id] = exercise.sets.filter { $0.status == "completed" }.sorted { $0.orderIndex < $1.orderIndex }
+            }
+        }
+        previousSets.merge(found) { current, _ in current }
     }
 
     func repeatWorkout(_ workout: FitnessWorkout) async {
