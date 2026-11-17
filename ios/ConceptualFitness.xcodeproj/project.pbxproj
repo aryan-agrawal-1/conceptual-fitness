@@ -44,6 +44,8 @@
 		01000000000000000000000D /* LocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000000D /* LocationProvider.swift */; };
 		01000000000000000000000E /* WeatherProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000000E /* WeatherProvider.swift */; };
 		01000000000000000000000F /* WeatherBackgroundView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02000000000000000000000F /* WeatherBackgroundView.swift */; };
+		0100000000000000000000A2 /* WeatherLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000000A2 /* WeatherLabView.swift */; };
+		0100000000000000000000A1 /* WeatherSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000000A1 /* WeatherSceneView.swift */; };
 		010000000000000000000010 /* WeatherKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000010 /* WeatherKit.framework */; };
 		010000000000000000000011 /* CoreLocation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000011 /* CoreLocation.framework */; };
 		010000000000000000000012 /* FoundationModels.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 020000000000000000000015 /* FoundationModels.framework */; };
@@ -145,6 +147,8 @@
 		02000000000000000000000D /* LocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationProvider.swift; sourceTree = "<group>"; };
 		02000000000000000000000E /* WeatherProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherProvider.swift; sourceTree = "<group>"; };
 		02000000000000000000000F /* WeatherBackgroundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherBackgroundView.swift; sourceTree = "<group>"; };
+		0200000000000000000000A2 /* WeatherLabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherLabView.swift; sourceTree = "<group>"; };
+		0200000000000000000000A1 /* WeatherSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherSceneView.swift; sourceTree = "<group>"; };
 		020000000000000000000010 /* WeatherKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WeatherKit.framework; path = System/Library/Frameworks/WeatherKit.framework; sourceTree = SDKROOT; };
 		020000000000000000000011 /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
 		020000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -341,6 +345,8 @@
 				02000000000000000000000D /* LocationProvider.swift */,
 				02000000000000000000000E /* WeatherProvider.swift */,
 				02000000000000000000000F /* WeatherBackgroundView.swift */,
+				0200000000000000000000A2 /* WeatherLabView.swift */,
+				0200000000000000000000A1 /* WeatherSceneView.swift */,
 			);
 			path = Weather;
 			sourceTree = "<group>";
@@ -590,6 +596,8 @@
 				01000000000000000000000D /* LocationProvider.swift in Sources */,
 				01000000000000000000000E /* WeatherProvider.swift in Sources */,
 				01000000000000000000000F /* WeatherBackgroundView.swift in Sources */,
+				0100000000000000000000A2 /* WeatherLabView.swift in Sources */,
+				0100000000000000000000A1 /* WeatherSceneView.swift in Sources */,
 				010000000000000000000013 /* Auth.swift in Sources */,
 				010000000000000000000014 /* OnboardingView.swift in Sources */,
 				010000000000000000000015 /* StrainDetailView.swift in Sources */,
