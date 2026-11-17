@@ -23,94 +23,93 @@ struct ProfileView: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 16) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(HealthTheme.color(for: .activity))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(displayName)
-                            .font(.title3.weight(.semibold))
-                        Text(session?.user.email ?? "Email unavailable")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 8)
-                .accessibilityElement(children: .combine)
+                deviceHeader
             }
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
 
             if store.isLoading && store.profile == nil {
                 Section { ProgressView("Loading profile…").accessibilityIdentifier("profile.loading") }
+                    .listRowBackground(HealthTheme.card)
             }
             if let message = store.loadError {
                 Section {
-                    Label("Profile unavailable", systemImage: "wifi.exclamationmark")
                     Text(message)
-                    if store.profile != nil { Text("Showing the last loaded details.").font(.footnote).foregroundStyle(.secondary) }
-                    Button("Try loading profile again") { Task { await store.load() } }
+                    if store.profile != nil {
+                        Text("Showing the last loaded details.").font(.footnote).foregroundStyle(HealthTheme.secondaryInk)
+                    }
+                    Button("Try again") { Task { await store.load() } }
                         .disabled(store.isLoading)
                 }
+                .listRowBackground(HealthTheme.card)
             }
 
             if let profile = store.profile {
-                Section("Personalization") {
+                Section {
                     NavigationLink { ProfileDetailsEditor(store: store, profile: profile, user: session?.user) } label: {
-                        Label("Personal details", systemImage: "person.text.rectangle")
+                        row("Personal details")
                     }
                     NavigationLink { ProfileGoalsEditor(store: store, profile: profile) } label: {
-                        profileLink("Goals and sleep", subtitle: profile.primaryGoal ?? "No primary goal set", icon: "target")
+                        row("Goals and sleep", value: profile.primaryGoal ?? "Not set")
                     }
                     NavigationLink { ProfileConstraintsEditor(store: store, profile: profile) } label: {
-                        Label("Schedule and constraints", systemImage: "slider.horizontal.3")
+                        row("Schedule and constraints")
                     }
                     NavigationLink { ProfileUnitsEditor(store: store, profile: profile) } label: {
-                        profileLink("Units", subtitle: profile.unitSystem.title, icon: "ruler")
+                        row("Units", value: profile.unitSystem.title)
                     }
                     NavigationLink { ProfileBodyEditor(store: store, profile: profile) } label: {
-                        Label("Body measurements and sources", systemImage: "figure.stand")
+                        row("Body measurements")
                     }
                     NavigationLink { ProfileWeatherEditor(store: store, profile: profile) } label: {
-                        profileLink("Location and weather", subtitle: profile.weatherEnabled ? "Weather enabled" : "Weather off", icon: "location")
+                        row("Location and weather", value: profile.weatherEnabled ? "On" : "Off")
                     }
                 }
+                .listRowBackground(HealthTheme.card)
             }
 
-            if let journalReminders { JournalReminderSection(reminders: journalReminders) }
+            if let journalReminders {
+                JournalReminderSection(reminders: journalReminders)
+                    .listRowBackground(HealthTheme.card)
+                    .tint(HealthTheme.color(for: .positive))
+            }
 
-            Section("Data sources") {
+            Section("Data") {
                 NavigationLink { DataSourcesView(authStore: authStore, coordinator: coordinator) } label: {
-                    profileLink(sourceTitle, subtitle: connectionTitle, icon: session?.healthConnection.activeDevice?.systemImage ?? "link")
+                    row("Data sources", value: sourceTitle)
                 }
                 if let connectionError {
-                    Text(connectionError).foregroundStyle(.red)
+                    Text(connectionError).foregroundStyle(HealthTheme.color(for: .risk))
                     Button("Check connection again") { Task { await refreshConnection() } }
                 }
-            }
-
-            Section {
                 NavigationLink {
                     ScrollView { HistoricalBackfillView(coordinator: coordinator, expanded: true).padding() }
                         .navigationTitle("History import")
                         .navigationBarTitleDisplayMode(.inline)
                         .refreshable { await coordinator.checkHistory() }
                 } label: {
-                    profileLink("History import", subtitle: historyTitle, icon: "clock.arrow.circlepath")
+                    row("History import", value: historyTitle)
                 }
             }
+            .listRowBackground(HealthTheme.card)
 
             Section("Privacy and account") {
-                NavigationLink { ProfilePrivacyView() } label: { Label("Privacy and data", systemImage: "hand.raised") }
+                NavigationLink { ProfilePrivacyView() } label: { row("Privacy and data") }
                 NavigationLink { AccountExportView(authStore: authStore, userID: userID) } label: {
-                    Label("Export your data", systemImage: "square.and.arrow.up")
+                    row("Export your data")
                 }
                 .accessibilityHint("Choose categories for a portable account archive")
+                Button { confirmsSignOut = true } label: { row("Sign out") }
                 NavigationLink { AccountDeletionView(authStore: authStore, userID: userID) } label: {
-                    Label("Delete account", systemImage: "trash").foregroundStyle(.red)
+                    Text("Delete account").foregroundStyle(HealthTheme.color(for: .risk))
                 }
                 .accessibilityHint("Review permanent deletion and the 14-day recovery period")
-                Button("Sign out", role: .destructive) { confirmsSignOut = true }
             }
+            .listRowBackground(HealthTheme.card)
         }
+        .scrollContentBackground(.hidden)
+        .background(HealthTheme.page)
+        .tint(HealthTheme.ink)
         .navigationTitle("Profile")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
@@ -131,34 +130,114 @@ struct ProfileView: View {
     }
 
     private var sourceTitle: String {
-        session?.healthConnection.activeDevice?.title ?? "Connect a source"
+        session?.healthConnection.activeDevice?.shortName ?? "Connect a source"
     }
 
-    private var connectionTitle: String {
+    private var historyTitle: String {
+        if coordinator.historyError != nil { return "Unavailable" }
+        guard let history = coordinator.history else { return coordinator.historyLoaded ? "Not started" : "Checking" }
+        if history.coverageState == "untracked" { return "Available" }
+        if history.status == "failed" { return "Needs attention" }
+        return history.status == "complete" ? "Complete" : "\(history.completedSources) of \(history.totalSources)"
+    }
+
+    private func row(_ title: String, value: String? = nil) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .foregroundStyle(HealthTheme.ink)
+            Spacer(minLength: 8)
+            if let value {
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundStyle(HealthTheme.secondaryInk)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var deviceHeader: some View {
+        let device = session?.healthConnection.activeDevice
+        return ZStack(alignment: .topLeading) {
+            LinearGradient(
+                colors: [Color(hex: 0x232A3D), Color(hex: 0x141824), Color(hex: 0x0C0E15)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            ZStack {
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [Color(hex: 0x9FB2E8).opacity(0.30), Color(hex: 0x9FB2E8).opacity(0)],
+                        center: .center, startRadius: 0, endRadius: 110
+                    ))
+                    .frame(width: 220, height: 220)
+                    .offset(y: -6)
+                Ellipse()
+                    .fill(RadialGradient(
+                        colors: [.black.opacity(0.55), .black.opacity(0)],
+                        center: .center, startRadius: 0, endRadius: 58
+                    ))
+                    .frame(width: 116, height: 18)
+                    .offset(y: 70)
+                if let device, let still = UIImage(named: "DeviceStill-\(device.rawValue)") {
+                    Image(uiImage: still)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 124, height: 132)
+                } else {
+                    Image(systemName: "applewatch")
+                        .font(.system(size: 72, weight: .light))
+                        .foregroundStyle(.white.opacity(0.86))
+                }
+            }
+            .frame(width: 150)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            .padding(.trailing, 14)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(displayName)
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 0)
+                Text(deviceLine)
+                    .font(.subheadline.weight(.medium))
+                    .opacity(0.82)
+                Text(statusTitle)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(statusColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(statusColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            .foregroundStyle(.white)
+            .padding(20)
+            .frame(maxWidth: 220, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(height: 176)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var deviceLine: String {
+        guard session?.healthConnection.status == .connected, let synced = coordinator.lastSyncAt else { return sourceTitle }
+        return "\(sourceTitle) · Synced \(synced.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private var statusTitle: String {
         switch session?.healthConnection.status {
-        case .connected:
-            coordinator.lastSyncAt.map { "Last synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Connected"
+        case .connected: "Connected"
         case .errored: "Needs attention"
-        case .disconnected: "No device connected"
+        case .disconnected: "Not connected"
         case nil: "Status unavailable"
         }
     }
 
-    private var historyTitle: String {
-        if coordinator.historyError != nil { return "Progress unavailable — check again" }
-        guard let history = coordinator.history else { return coordinator.historyLoaded ? "Not started yet" : "Checking progress…" }
-        if history.coverageState == "untracked" { return "Saved history available" }
-        if history.status == "failed" { return "Import needs attention" }
-        return history.status == "complete" ? "Import complete" : "\(history.completedSources) of \(history.totalSources) data types complete"
-    }
-
-    private func profileLink(_ title: String, subtitle: String, icon: String) -> some View {
-        Label {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
-            }
-        } icon: { Image(systemName: icon) }
+    private var statusColor: Color {
+        switch session?.healthConnection.status {
+        case .connected: Color(hex: 0x6FE0A2)
+        case .errored: Color(hex: 0xF0A840)
+        default: Color(hex: 0xA4A9B4)
+        }
     }
 
     @MainActor private func refreshConnection() async {

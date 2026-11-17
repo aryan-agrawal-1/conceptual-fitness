@@ -28,6 +28,8 @@
 		010000000000000000B00006 /* EarthLand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00006 /* EarthLand.swift */; };
 		010000000000000000B00007 /* AppleWatch.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00007 /* AppleWatch.usdz */; };
 		010000000000000000B00008 /* Devices.reality in Resources */ = {isa = PBXBuildFile; fileRef = 020000000000000000B00008 /* Devices.reality */; };
+		0100000000000000000F0071 /* DeviceStill-google_health.png in Resources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000F0071 /* DeviceStill-google_health.png */; };
+		0100000000000000000F0070 /* DeviceStill-apple_health.png in Resources */ = {isa = PBXBuildFile; fileRef = 0200000000000000000F0070 /* DeviceStill-apple_health.png */; };
 		010000000000000000000002 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000002 /* AppRoute.swift */; };
 		010000000000000000000003 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000003 /* AppShellView.swift */; };
 		010000000000000000000004 /* PlaceholderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020000000000000000000004 /* PlaceholderViews.swift */; };
@@ -126,6 +128,8 @@
 		020000000000000000B00006 /* EarthLand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EarthLand.swift; sourceTree = "<group>"; };
 		020000000000000000B00007 /* AppleWatch.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = AppleWatch.usdz; sourceTree = "<group>"; };
 		020000000000000000B00008 /* Devices.reality */ = {isa = PBXFileReference; lastKnownFileType = file; path = Devices.reality; sourceTree = "<group>"; };
+		0200000000000000000F0071 /* DeviceStill-google_health.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "DeviceStill-google_health.png"; sourceTree = "<group>"; };
+		0200000000000000000F0070 /* DeviceStill-apple_health.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "DeviceStill-apple_health.png"; sourceTree = "<group>"; };
 		020000000000000000000002 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
 		020000000000000000000003 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		020000000000000000000004 /* PlaceholderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderViews.swift; sourceTree = "<group>"; };
@@ -284,6 +288,8 @@
 				020000000000000000B00006 /* EarthLand.swift */,
 				020000000000000000B00007 /* AppleWatch.usdz */,
 				020000000000000000B00008 /* Devices.reality */,
+				0200000000000000000F0071 /* DeviceStill-google_health.png */,
+				0200000000000000000F0070 /* DeviceStill-apple_health.png */,
 				020000000000000000000002 /* AppRoute.swift */,
 				020000000000000000000003 /* AppShellView.swift */,
 				020000000000000000000041 /* AccountExportView.swift */,
@@ -497,6 +503,8 @@
 				010000000000000000000034 /* bodyPaths.json in Resources */,
 				010000000000000000B00007 /* AppleWatch.usdz in Resources */,
 				010000000000000000B00008 /* Devices.reality in Resources */,
+				0100000000000000000F0071 /* DeviceStill-google_health.png in Resources */,
+				0100000000000000000F0070 /* DeviceStill-apple_health.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

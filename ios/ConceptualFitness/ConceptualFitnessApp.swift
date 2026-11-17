@@ -36,7 +36,9 @@ struct ConceptualFitnessApp: App {
     @ViewBuilder
     private var rootView: some View {
         #if DEBUG
-        if let accountDeletionPreview = AccountDeletionPreviewState.current {
+        if let deviceStill = DeviceStillPreview.current {
+            deviceStill
+        } else if let accountDeletionPreview = AccountDeletionPreviewState.current {
             accountDeletionPreview.view
         } else if let accountExportPreview = AccountExportPreviewState.current {
             accountExportPreview.view

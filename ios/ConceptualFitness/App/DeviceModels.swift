@@ -694,3 +694,44 @@ private struct DeviceStageView: View {
         .onChange(of: showing) { appeared = Date() }
     }
 }
+
+#if DEBUG
+struct DeviceStillPreview: View {
+    let device: DataSourceDevice
+    let isWhite: Bool
+    let yaw: Float
+
+    static var current: DeviceStillPreview? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-DeviceStill"), arguments.indices.contains(index + 1),
+              let device = DataSourceDevice(rawValue: arguments[index + 1]) else { return nil }
+        let yaw = arguments.firstIndex(of: "-DeviceStillYaw").flatMap { arguments.indices.contains($0 + 1) ? Float(arguments[$0 + 1]) : nil }
+        return DeviceStillPreview(device: device, isWhite: arguments.contains("-DeviceStillWhite"), yaw: yaw ?? -0.55)
+    }
+
+    var body: some View {
+        ZStack {
+            (isWhite ? Color.white : Color.black).ignoresSafeArea()
+            RealityView { content in
+                content.camera = .virtual
+                let camera = PerspectiveCamera()
+                camera.camera.fieldOfViewInDegrees = 15
+                camera.position = [0, 0, 1]
+                content.add(camera)
+                let stage = await DeviceModels.stage()
+                for other in DataSourceDevice.allCases where other != device {
+                    stage.findEntity(named: other.rawValue)?.isEnabled = false
+                }
+                if let pivot = stage.findEntity(named: device.rawValue), let reach = pivot.components[DeviceReach.self] {
+                    let visibleHeight = 2 * tan(Float(15) * .pi / 360)
+                    pivot.scale = SIMD3(repeating: visibleHeight * 0.44 / reach.value)
+                    pivot.orientation = simd_quatf(angle: 0.18, axis: [1, 0, 0]) * simd_quatf(angle: yaw, axis: [0, 1, 0])
+                }
+                content.add(stage)
+            }
+            .frame(width: 360, height: 360)
+        }
+        .statusBarHidden()
+    }
+}
+#endif
