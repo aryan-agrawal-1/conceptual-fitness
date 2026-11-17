@@ -49,7 +49,6 @@ private struct SleepSummaryPanel: View {
                 caption: detail.timeframe == "day" ? "score" : "avg score",
                 progress: scoreProgress,
                 tint: HealthTheme.sleep,
-                overflowTint: nil,
                 accessibilityLabel: "Sleep score \(detail.summary.primaryValue?.clean ?? "no score")"
             ),
             accessibilityLabel: "Sleep \(primarySleepText)"
@@ -105,10 +104,10 @@ private struct SleepSummaryPanel: View {
         if let band = detail.summary.sleepBand {
             return (sleepBandTitle(band), sleepColor(band))
         }
-        if let quality = detail.summary.dataQuality {
+        if let quality = detail.summary.dataQuality, quality != "missing" {
             return ("\(quality.displayTitle) quality", quality == "strong" ? .green : .orange)
         }
-        if let status = detail.summary.status {
+        if let status = detail.summary.status, status != "missing_data" {
             return (status.displayTitle, .secondary)
         }
         return nil
@@ -318,7 +317,7 @@ private struct StageLaneTimelineChart: View {
             .overlay {
                 if isSelected {
                     RoundedRectangle(cornerRadius: height / 2.6, style: .continuous)
-                        .stroke(.white.opacity(0.95), lineWidth: 2)
+                        .stroke(HealthTheme.card, lineWidth: 2)
                 }
             }
             .shadow(color: stageColor(stage).opacity(isSelected ? 0.35 : 0.16), radius: isSelected ? 8 : 4, y: 2)
@@ -597,12 +596,13 @@ private struct WeeklySleepPatternChart: View {
                             Text(point.label(for: .week))
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 24, alignment: .leading)
+                                .lineLimit(1)
+                                .frame(width: 34, alignment: .leading)
 
                             GeometryReader { railProxy in
                                 ZStack(alignment: .leading) {
                                     Capsule()
-                                        .fill(.white.opacity(0.45))
+                                        .fill(HealthTheme.track)
                                         .frame(height: 10)
                                     if let start = point.sleepStartMinute, let end = point.sleepEndMinute {
                                         Button {
@@ -635,7 +635,7 @@ private struct WeeklySleepPatternChart: View {
                     }
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .padding(.leading, 34)
+                    .padding(.leading, 44)
                 }
             }
         }
@@ -731,7 +731,7 @@ private struct SleepDailyBarChart: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(.white.opacity(0.72), in: Capsule())
+                            .background(HealthTheme.card, in: Capsule())
                             .position(x: proxy.size.width - 24, y: max(10, y - 10))
                     }
 
@@ -856,7 +856,7 @@ private struct SleepMonthlyBarChart: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
-                            .background(.white.opacity(0.72), in: Capsule())
+                            .background(HealthTheme.card, in: Capsule())
                             .position(x: proxy.size.width - 24, y: max(10, y - 10))
                     }
 
@@ -952,7 +952,7 @@ private struct SleepDriverPanel: View {
     }
 
     var body: some View {
-        SleepSection(title: timeframe == .day ? "Drivers" : "Average Drivers", systemImage: "slider.horizontal.3") {
+        SleepSection(title: timeframe == .day ? "Drivers" : "Average drivers", systemImage: "slider.horizontal.3") {
             if displayedItems.isEmpty {
                 Text("Sleep drivers will appear when enough score data is available.")
                     .font(.subheadline)
@@ -983,7 +983,7 @@ private struct SleepComponentScoreChart: View {
                     GeometryReader { proxy in
                         ZStack(alignment: .leading) {
                             Capsule()
-                                .fill(.white.opacity(0.5))
+                                .fill(HealthTheme.track)
                             Capsule()
                                 .fill(componentColor(item.key).gradient)
                                 .frame(width: proxy.size.width * CGFloat(min(max(item.score / 100, 0), 1)))
@@ -1010,7 +1010,7 @@ private struct SleepContextPanel: View {
     let timeframe: ScoreTimeframe
 
     var body: some View {
-        SleepSection(title: "Sleep Context", systemImage: "moon.zzz.fill") {
+        SleepSection(title: "Sleep context", systemImage: "moon.zzz.fill") {
             VStack(spacing: 10) {
                 SleepContextRow(title: "Sleep target", value: minutesText(context.adjustedSleepNeedMinutes))
                 SleepContextRow(title: sleepDebtTitle, value: debtText(context.sleepDebtMinutes))

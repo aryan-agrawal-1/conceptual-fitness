@@ -168,7 +168,7 @@ private struct RespiratoryBaselineChart: View {
         guard let minValue = values.min(), let maxValue = values.max() else { return 8...24 }
         let span = max(maxValue - minValue, 4)
         let padding = span * 0.22
-        return (minValue - padding)...(maxValue + padding)
+        return ((minValue - padding)...(maxValue + padding)).roundedOutward(to: 1)
     }
 
     private var tickValues: [Double] {
@@ -202,6 +202,8 @@ private struct RespiratoryBaselineChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     Rectangle()
@@ -233,7 +235,7 @@ private struct RespiratoryBaselineChart: View {
                         .position(x: x, y: plot.midY)
                     if let value = selectedPoint.value {
                         Circle()
-                            .fill(Color.white)
+                            .fill(HealthTheme.card)
                             .frame(width: 13, height: 13)
                             .overlay(
                                 Circle().stroke(respiratoryRelationColor(selectedPoint.comparison), lineWidth: 3)
@@ -394,7 +396,7 @@ private struct RespiratoryContextPanel: View {
     }
 
     var body: some View {
-        RespiratorySection(title: "Breathing Context", systemImage: "wind") {
+        RespiratorySection(title: "Breathing context", systemImage: "wind") {
             VStack(spacing: 10) {
                 RespiratoryContextRow(title: "Interpretation", value: interpretationText)
                 RespiratoryContextRow(title: elevatedTitle, value: countText(elevatedCount))

@@ -163,7 +163,7 @@ private struct SkinTempBaselineChart: View {
         guard let minValue = values.min(), let maxValue = values.max() else { return -0.5...0.5 }
         let span = max(maxValue - minValue, 1.0)
         let padding = span * 0.18
-        return (minValue - padding)...(maxValue + padding)
+        return ((minValue - padding)...(maxValue + padding)).roundedOutward(to: 0.5)
     }
 
     private var tickValues: [Double] {
@@ -197,6 +197,8 @@ private struct SkinTempBaselineChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     Rectangle()
@@ -235,7 +237,7 @@ private struct SkinTempBaselineChart: View {
                         .position(x: x, y: plot.midY)
                     if let value = selectedPoint.value {
                         Circle()
-                            .fill(Color.white)
+                            .fill(HealthTheme.card)
                             .frame(width: 13, height: 13)
                             .overlay(
                                 Circle().stroke(skinTempRelationColor(selectedPoint.resolvedComparison), lineWidth: 3)
@@ -389,7 +391,7 @@ private struct SkinTempContextPanel: View {
     }
 
     var body: some View {
-        SkinTempSection(title: "Temperature Context", systemImage: "thermometer.medium") {
+        SkinTempSection(title: "Temperature context", systemImage: "thermometer.medium") {
             VStack(spacing: 10) {
                 SkinTempContextRow(title: "Interpretation", value: interpretationText)
                 if timeframe == .year {

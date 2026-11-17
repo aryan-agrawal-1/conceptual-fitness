@@ -160,7 +160,7 @@ private struct RHRBaselineChart: View {
         guard let minValue = values.min(), let maxValue = values.max() else { return 0...1 }
         let span = max(maxValue - minValue, 8)
         let padding = span * 0.18
-        return (minValue - padding)...(maxValue + padding)
+        return ((minValue - padding)...(maxValue + padding)).roundedOutward(to: 2)
     }
 
     private var tickValues: [Double] {
@@ -177,7 +177,7 @@ private struct RHRBaselineChart: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let yAxisWidth: CGFloat = 34
+            let yAxisWidth: CGFloat = 38
             let xAxisHeight: CGFloat = 28
             let plot = CGRect(
                 x: yAxisWidth,
@@ -194,6 +194,8 @@ private struct RHRBaselineChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     Rectangle()
@@ -225,7 +227,7 @@ private struct RHRBaselineChart: View {
                         .position(x: x, y: plot.midY)
                     if let value = selectedPoint.value {
                         Circle()
-                            .fill(Color.white)
+                            .fill(HealthTheme.card)
                             .frame(width: 13, height: 13)
                             .overlay(
                                 Circle().stroke(rhrLineColor, lineWidth: 3)
@@ -382,7 +384,7 @@ private struct RHRContextPanel: View {
     let timeframe: ScoreTimeframe
 
     var body: some View {
-        RHRSection(title: "Recovery Context", systemImage: "waveform.path.ecg") {
+        RHRSection(title: "Recovery context", systemImage: "waveform.path.ecg") {
             VStack(spacing: 10) {
                 RHRContextRow(title: "Interpretation", value: interpretationText)
                 RHRContextRow(title: "Elevated days", value: countText(detail.distribution.aboveCount))

@@ -78,9 +78,9 @@ private struct CaloriesSummaryPanel: View {
         MetricHeroPanel(
             eyebrow: "Energy burn",
             headline: statusTitle,
-            value: caloriesText(selectedTotal),
-            unit: timeframe == .day ? "kcal" : "total",
-            caption: timeframe == .day ? "today" : "period",
+            value: caloriesText(selectedTotal).replacingOccurrences(of: " kcal", with: ""),
+            unit: "kcal",
+            caption: timeframe == .day ? "today" : "period total",
             accent: HealthTheme.calories,
             stats: [
                 MetricHeroStat(title: primaryRowTitle, value: primaryRowValue, tint: HealthTheme.calories),
@@ -248,6 +248,8 @@ private struct CaloriesHourlyBarChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     if tick > 0 {
@@ -367,6 +369,8 @@ private struct CaloriesDailyBarChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     if tick > 0 {

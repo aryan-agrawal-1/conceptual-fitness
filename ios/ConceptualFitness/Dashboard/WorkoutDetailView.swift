@@ -173,7 +173,7 @@ private struct WorkoutStrengthDetailSection: View {
     private func availableContent(_ session: FitnessWorkout) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Strength Session")
+                Text("Strength session")
                     .font(.headline)
                 Spacer()
                 Text(session.strengthSummary(units: units))
@@ -268,7 +268,7 @@ private struct WorkoutStrengthExerciseCard: View {
             }
         }
         .padding(14)
-        .background(.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 }
@@ -363,7 +363,7 @@ private struct WorkoutSummaryMetricsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Workout Summary")
+            Text("Workout summary")
                 .font(.headline)
 
             LazyVGrid(columns: columns, spacing: 12) {
@@ -402,7 +402,7 @@ private struct WorkoutMetricTile: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-        .background(.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(HealthTheme.track, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -621,7 +621,7 @@ private struct WorkoutHeartRateChart: View {
                 path.move(to: CGPoint(x: 0, y: top))
                 path.addLine(to: CGPoint(x: plotWidth, y: top))
             }
-            .stroke(.white.opacity(0.42), lineWidth: 1)
+            .stroke(HealthTheme.card, lineWidth: 1)
 
             Text(band.shortLabel)
                 .font(.caption2.weight(.bold))
@@ -897,11 +897,11 @@ private extension WorkoutDetail {
         }
 
         if let activeCalories {
-            tiles.append(WorkoutMetricTileData(id: "calories", title: "Active Calories", value: "\(activeCalories.clean) kcal", systemImage: "flame.fill", tint: .orange))
+            tiles.append(WorkoutMetricTileData(id: "calories", title: "Active calories", value: "\(activeCalories.clean) kcal", systemImage: "flame.fill", tint: .orange))
         }
 
         if let strainLoadPoints {
-            tiles.append(WorkoutMetricTileData(id: "strain", title: "Strain Load", value: strainLoadPoints.clean, systemImage: "bolt.heart.fill", tint: .red))
+            tiles.append(WorkoutMetricTileData(id: "strain", title: "Strain load", value: strainLoadPoints.clean, systemImage: "bolt.heart.fill", tint: .red))
         } else if let average = heartRate?.averageBPM {
             tiles.append(WorkoutMetricTileData(id: "heart_rate", title: "Average HR", value: "\(average.clean) bpm", systemImage: "heart.fill", tint: .red))
         }

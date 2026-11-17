@@ -232,7 +232,7 @@ private struct VO2EstimateContextPanel: View {
     }
 
     var body: some View {
-        VO2Section(title: "Estimate Context", systemImage: "waveform.path.ecg.rectangle") {
+        VO2Section(title: "Estimate context", systemImage: "waveform.path.ecg.rectangle") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(contextText)
                     .font(.subheadline)
@@ -361,6 +361,8 @@ private struct VO2EstimateChart: View {
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .frame(width: yAxisWidth - 6, alignment: .trailing)
                         .position(x: (yAxisWidth - 6) / 2, y: y)
                     Rectangle()
@@ -377,7 +379,7 @@ private struct VO2EstimateChart: View {
                 ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
                     if let value = point.value {
                         Circle()
-                            .fill(point.id == selectedPoint?.id ? Color.white : Color.green)
+                            .fill(point.id == selectedPoint?.id ? HealthTheme.card : Color.green)
                             .frame(width: point.id == selectedPoint?.id ? 13 : 8, height: point.id == selectedPoint?.id ? 13 : 8)
                             .overlay(
                                 Circle().stroke(Color.green, lineWidth: point.id == selectedPoint?.id ? 3 : 0)
