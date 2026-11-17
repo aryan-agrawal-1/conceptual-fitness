@@ -15,7 +15,7 @@ struct DashboardView: View {
     private let greetingOverride: String?
 
     @State private var loadState: DashboardLoadState = .loading
-    @State private var weather = WeatherData.fallback
+    @State private var weather = WeatherData.labOverride ?? .fallback
     @State private var weatherStatus = "Weather preview"
     @State private var showsLocation = false
     @State private var dashboardFailureMessage: String?
@@ -212,7 +212,10 @@ struct DashboardView: View {
     private var hero: some View {
         ZStack(alignment: .top) {
             if usesWeatherBackground {
-                WeatherBackgroundView(weather: weather)
+                WeatherBackgroundView(
+                    weather: weather,
+                    debugOptions: WeatherData.labOverride == nil ? .live : WeatherDebugOptions(useWeatherDateForTime: true)
+                )
                     .frame(height: heroHeight + Self.skyOverscroll)
                     .offset(y: -Self.skyOverscroll)
                     .frame(height: heroHeight, alignment: .top)
@@ -434,7 +437,7 @@ struct DashboardView: View {
     @MainActor
     private func reloadWeather() async {
         let next = await weatherProvider.weather(for: locationProvider.location, locationName: locationProvider.locationName)
-        weather = next
+        weather = WeatherData.labOverride ?? next
         weatherStatus = next.locationName ?? "Weather preview"
     }
 

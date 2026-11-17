@@ -44,6 +44,8 @@ struct ConceptualFitnessApp: App {
             accountExportPreview.view
         } else if let historyPreview = HistoryPreviewState.current {
             historyPreview.view
+        } else if ProcessInfo.processInfo.arguments.contains("-WeatherLab") {
+            WeatherBackgroundDebugControlsView()
         } else if ProcessInfo.processInfo.arguments.contains("-FoundationModelsSmokeTest") {
             FoundationModelsSmokeTestView()
         } else if ProcessInfo.processInfo.arguments.contains("-VO2MaxDetailPreview") {
