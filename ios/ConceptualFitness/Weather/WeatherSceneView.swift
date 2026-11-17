@@ -69,7 +69,7 @@ final class WeatherSceneHostView: UIView {
     private let fogGroup = CALayer()
     private let precipitationGroup = CALayer()
     private var builtKeys: [ObjectIdentifier: AnyHashable] = [:]
-    private var builtSize = CGSize.zero
+    private var builtFrame = CGRect.zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -81,6 +81,11 @@ final class WeatherSceneHostView: UIView {
         }
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        setNeedsLayout()
+    }
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -88,9 +93,11 @@ final class WeatherSceneHostView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard let spec, bounds.width > 1, bounds.height > 1 else { return }
-        let size = bounds.size
-        let resized = size != builtSize
-        builtSize = size
+        let visibleTop = window == nil ? 0 : min(max(0, -convert(CGPoint.zero, to: nil).y), bounds.height * 0.8)
+        let sceneFrame = CGRect(x: 0, y: visibleTop, width: bounds.width, height: bounds.height - visibleTop)
+        let size = sceneFrame.size
+        let resized = sceneFrame != builtFrame
+        builtFrame = sceneFrame
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -98,12 +105,12 @@ final class WeatherSceneHostView: UIView {
             layer.speed = Float(spec.speed)
         }
         for group in [starGroup, sunGroup, cloudGroup, fogGroup, precipitationGroup] {
-            group.frame = bounds
+            group.frame = sceneFrame
         }
         rebuild(starGroup, key: [spec.isNight ? spec.stars : 0], resized: resized) {
             WeatherSceneBuilder.stars(in: $0, size: size, spec: spec)
         }
-        rebuild(sunGroup, key: [spec.isNight ? 0 : spec.sunVisibility, spec.golden, spec.sunProgress], resized: resized) {
+        rebuild(sunGroup, key: [spec.isNight ? 1 : 0, spec.sunVisibility, spec.golden, spec.sunProgress], resized: resized) {
             WeatherSceneBuilder.sun(in: $0, size: size, spec: spec)
         }
         rebuild(cloudGroup, key: [spec.cloudCover, spec.wind, Double(spec.cloudTone.rawValue)], resized: resized) {
@@ -183,7 +190,11 @@ enum WeatherSceneBuilder {
     }
 
     static func sun(in group: CALayer, size: CGSize, spec: WeatherSceneSpec) {
-        guard !spec.isNight, spec.sunVisibility > 0.05 else { return }
+        if spec.isNight {
+            moon(in: group, size: size, spec: spec)
+            return
+        }
+        guard spec.sunVisibility > 0.05 else { return }
         let unit = size.width / 402
         let center = WeatherRenderState.celestialPoint(progress: spec.sunProgress, golden: spec.golden, isNight: false, in: size)
         let warm = RGBColor(1.0, 0.95, 0.80).blended(with: RGBColor(1.0, 0.58, 0.28), amount: spec.golden)
@@ -258,6 +269,27 @@ enum WeatherSceneBuilder {
         }
         flare.add(loop(keyframes("opacity", [flare.opacity * 0.6, flare.opacity, flare.opacity * 0.75, flare.opacity * 0.6]), duration: 6.5), forKey: "breathe")
         group.addSublayer(flare)
+    }
+
+    private static func moon(in group: CALayer, size: CGSize, spec: WeatherSceneSpec) {
+        let center = WeatherRenderState.celestialPoint(progress: spec.sunProgress, golden: 0, isNight: true, in: size)
+        let base = min(size.width, size.height)
+        group.opacity = Float(0.25 + spec.sunVisibility.clamped(to: 0...1) * 0.75)
+        let glow = RGBColor(0.74, 0.84, 0.98)
+        let halo = radial(colors: [(glow, 0.22), (glow, 0.06), (glow, 0)], locations: [0, 0.4, 1])
+        let haloRadius = base * 0.36
+        halo.frame = CGRect(x: center.x - haloRadius, y: center.y - haloRadius, width: haloRadius * 2, height: haloRadius * 2)
+        group.addSublayer(halo)
+        let disc = CALayer()
+        let diameter = max(26, base * 0.075)
+        disc.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+        disc.position = center
+        disc.contents = WeatherSprites.moon
+        disc.shadowColor = UIColor(red: 0.80, green: 0.88, blue: 1, alpha: 1).cgColor
+        disc.shadowOpacity = 0.55
+        disc.shadowRadius = diameter * 0.35
+        disc.shadowOffset = .zero
+        group.addSublayer(disc)
     }
 
     static func clouds(in group: CALayer, size: CGSize, spec: WeatherSceneSpec) {
@@ -602,6 +634,20 @@ enum WeatherSprites {
             ])
             context.setFillColor(UIColor.white.cgColor)
             context.fillEllipse(in: CGRect(x: center.x - 1.1, y: center.y - 1.1, width: 2.2, height: 2.2))
+        }
+    }
+
+    static var moon: CGImage {
+        cached("moon", size: CGSize(width: 60, height: 60), scale: screenScale) { context, size in
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
+            context.addEllipse(in: rect)
+            context.clip()
+            let light = CGPoint(x: size.width * 0.35, y: size.height * 0.35)
+            context.drawRadialGradient(gradient([(UIColor(red: 0.99, green: 0.99, blue: 0.96, alpha: 1), 0), (UIColor(red: 0.86, green: 0.89, blue: 0.95, alpha: 1), 1)]), startCenter: light, startRadius: 0, endCenter: light, endRadius: size.width * 0.75, options: [.drawsAfterEndLocation])
+            let maria = UIColor(red: 0.36, green: 0.42, blue: 0.56, alpha: 1)
+            for (x, y, r, a) in [(0.38, 0.40, 0.17, 0.14), (0.66, 0.56, 0.12, 0.11), (0.46, 0.72, 0.09, 0.13)] {
+                blob(context, center: CGPoint(x: size.width * x, y: size.height * y), radius: size.width * r, stops: [(maria.withAlphaComponent(a), 0), (maria.withAlphaComponent(a * 0.6), 0.5), (maria.withAlphaComponent(0), 1)])
+            }
         }
     }
 

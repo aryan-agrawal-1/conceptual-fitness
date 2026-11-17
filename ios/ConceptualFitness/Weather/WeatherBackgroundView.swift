@@ -3,7 +3,6 @@ import SwiftUI
 struct WeatherBackgroundView: View {
     var weather: WeatherData
     var debugOptions: WeatherDebugOptions = .live
-    var hiddenTop: CGFloat = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,20 +15,12 @@ struct WeatherBackgroundView: View {
             }
 
             TimelineView(.periodic(from: .now, by: 30)) { timeline in
-                let current = renderState(at: timeline.date)
-                ZStack {
-                    WeatherSceneView(spec: WeatherSceneSpec(state: current))
-                    if current.isNight {
-                        MoonLayer(state: current)
-                    }
-                }
-                .padding(.top, hiddenTop)
+                WeatherSceneView(spec: WeatherSceneSpec(state: renderState(at: timeline.date)))
             }
 
             if state.stormIntensity > 0.05, !reduceMotion {
                 TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
                     LightningLayer(state: state, date: timeline.date)
-                        .padding(.top, hiddenTop)
                 }
             }
         }
@@ -66,31 +57,6 @@ struct WeatherDebugOptions: Equatable {
     var useWeatherDateForTime = false
 
     static let live = WeatherDebugOptions()
-}
-
-private struct MoonLayer: View {
-    let state: WeatherRenderState
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            let center = state.sunMoonPosition(in: size)
-            let base = min(size.width, size.height)
-            let visibility = 0.25 + state.sunVisibility.clamped(to: 0...1) * 0.75
-            let glow = state.sunMoonColor.color
-
-            ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [glow.opacity(0.22 * visibility), glow.opacity(0.06 * visibility), .clear], center: .center, startRadius: 0, endRadius: base * 0.36))
-                    .frame(width: base * 0.72, height: base * 0.72)
-                    .position(center)
-                MoonDisc(diameter: base * 0.075)
-                    .position(center)
-                    .opacity(visibility)
-            }
-            .allowsHitTesting(false)
-        }
-    }
 }
 
 private struct SkyLayer: View {
@@ -148,45 +114,6 @@ private struct SkyLayer: View {
             SIMD2<Float>(0.49 + drift, 1),
             SIMD2<Float>(1, 1)
         ]
-    }
-}
-
-private struct MoonDisc: View {
-    let diameter: CGFloat
-
-    var body: some View {
-        let maria = Color(red: 0.36, green: 0.42, blue: 0.56)
-
-        ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color(red: 0.99, green: 0.99, blue: 0.96), Color(red: 0.86, green: 0.89, blue: 0.95)],
-                        center: UnitPoint(x: 0.35, y: 0.35),
-                        startRadius: 0,
-                        endRadius: diameter * 0.7
-                    )
-                )
-            Ellipse()
-                .fill(maria.opacity(0.13))
-                .frame(width: diameter * 0.34, height: diameter * 0.26)
-                .offset(x: -diameter * 0.12, y: -diameter * 0.10)
-                .blur(radius: diameter * 0.05)
-            Ellipse()
-                .fill(maria.opacity(0.10))
-                .frame(width: diameter * 0.24, height: diameter * 0.20)
-                .offset(x: diameter * 0.16, y: diameter * 0.06)
-                .blur(radius: diameter * 0.05)
-            Ellipse()
-                .fill(maria.opacity(0.12))
-                .frame(width: diameter * 0.18, height: diameter * 0.14)
-                .offset(x: -diameter * 0.04, y: diameter * 0.22)
-                .blur(radius: diameter * 0.05)
-        }
-        .blur(radius: diameter * 0.012)
-        .frame(width: diameter, height: diameter)
-        .clipShape(Circle())
-        .shadow(color: Color(red: 0.80, green: 0.88, blue: 1.0).opacity(0.55), radius: diameter * 0.35)
     }
 }
 
