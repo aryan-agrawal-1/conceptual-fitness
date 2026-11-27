@@ -61,7 +61,7 @@ class ProfileConstraintsUpdate(BaseModel):
 
 
 class FieldProvenance(BaseModel):
-    preference: Literal["google", "manual"]
+    preference: Literal["device", "manual"]
     active_source: str | None
     updated_at: datetime | None
 
@@ -101,8 +101,8 @@ class ProfileUpdate(BaseModel):
     location_permission_status: (
         Literal["not_determined", "authorized", "denied", "restricted", "manual"] | None
     ) = None
-    height_source_preference: Literal["google", "manual"] | None = None
-    weight_source_preference: Literal["google", "manual"] | None = None
+    height_source_preference: Literal["device", "manual"] | None = None
+    weight_source_preference: Literal["device", "manual"] | None = None
     fitness_goal: str | None = Field(default=None, max_length=80)
     primary_goal: str | None = Field(default=None, max_length=80)
     secondary_goals: list[str] | None = Field(default=None, max_length=10)
