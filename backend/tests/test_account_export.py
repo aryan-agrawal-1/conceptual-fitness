@@ -18,6 +18,7 @@ from app.models import (
     ConnectionStatus,
     DailyContext,
     DailyScore,
+    DeviceSyncProgress,
     HealthConnection,
     OAuthState,
     RawHealthRecord,
@@ -208,6 +209,29 @@ def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_he
             content_hash="hash",
         )
     )
+    apple_connection = HealthConnection(
+        user_id=owner.id,
+        provider="apple_health",
+        status=ConnectionStatus.disconnected,
+    )
+    session.add_all([
+        apple_connection,
+        SignInIdentity(
+            user_id=owner.id,
+            provider="apple",
+            subject="owner-apple-subject",
+            encrypted_refresh_token="must-not-export",
+        ),
+    ])
+    session.commit()
+    session.add(
+        DeviceSyncProgress(
+            connection_id=apple_connection.id,
+            data_type="HKQuantityTypeIdentifierHeartRate",
+            phase="current",
+            anchor="must-not-export",
+        )
+    )
     session.commit()
 
     headers = auth_headers(owner)
@@ -264,6 +288,13 @@ def test_export_is_selectable_scoped_documented_and_secret_free(session, auth_he
         personalization = archive.read("personalization.json").decode()
         assert "owner-health-id" in personalization
         assert "other-health-id" not in personalization
+        tables = json.loads(personalization)["tables"]
+        assert {item["provider"] for item in tables["health_connections"]} == {
+            "google_health",
+            "apple_health",
+        }
+        assert "owner-apple-subject" in {item["subject"] for item in tables["sign_in_identities"]}
+        assert tables["device_sync_progress"][0]["data_type"] == "HKQuantityTypeIdentifierHeartRate"
         assert "must-not-export" not in personalization
 
 

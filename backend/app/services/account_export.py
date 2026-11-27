@@ -21,6 +21,7 @@ from app.models import (
     DailyContext,
     DailyScore,
     DailySummary,
+    DeviceSyncProgress,
     ExerciseCatalogItem,
     ExerciseFavorite,
     HealthConnection,
@@ -189,7 +190,11 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
         return (
             TableExport(User, lambda user_id: select(User).where(User.id == user_id)),
             TableExport(UserProfile, by_user(UserProfile)),
-            TableExport(SignInIdentity, by_user(SignInIdentity)),
+            TableExport(
+                SignInIdentity,
+                by_user(SignInIdentity),
+                frozenset({"encrypted_refresh_token"}),
+            ),
             TableExport(
                 HealthConnection,
                 by_user(HealthConnection),
@@ -210,6 +215,14 @@ def category_specs(category: str) -> tuple[TableExport, ...]:
                 .where(HealthConnection.user_id == user_id)
                 .order_by(HistoricalBackfill.id),
                 frozenset({"last_page_token", "last_error"}),
+            ),
+            TableExport(
+                DeviceSyncProgress,
+                lambda user_id: select(DeviceSyncProgress)
+                .join(HealthConnection, DeviceSyncProgress.connection_id == HealthConnection.id)
+                .where(HealthConnection.user_id == user_id)
+                .order_by(DeviceSyncProgress.id),
+                frozenset({"anchor"}),
             ),
         )
     if category == "journal":

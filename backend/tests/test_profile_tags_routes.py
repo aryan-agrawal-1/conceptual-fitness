@@ -39,13 +39,13 @@ def test_profile_get_creates_default_profile(session, auth_headers) -> None:
     }
     assert payload["unit_system"] == "metric"
     assert payload["height_provenance"] == {
-        "preference": "google",
+        "preference": "device",
         "active_source": None,
         "updated_at": None,
     }
     assert payload["weather_enabled"] is False
-    assert payload["height_source_preference"] == "google"
-    assert payload["weight_source_preference"] == "google"
+    assert payload["height_source_preference"] == "device"
+    assert payload["weight_source_preference"] == "device"
     assert payload["onboarding_completed_at"] is None
     assert session.scalar(select(UserProfile).where(UserProfile.user_id == user.id)) is not None
 
@@ -211,7 +211,7 @@ def test_profile_reports_preferred_body_metric_provenance(session, auth_headers)
     assert provider.status_code == manual.status_code == 200
     assert provider.json()["weight_kg"] == 80
     assert provider.json()["weight_provenance"] == {
-        "preference": "google",
+        "preference": "device",
         "active_source": "FITBIT",
         "updated_at": "2026-06-20T09:00:00",
     }

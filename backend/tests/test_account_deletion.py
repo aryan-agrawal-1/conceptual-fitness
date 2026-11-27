@@ -20,6 +20,7 @@ from app.models import (
     MetricSample,
     RawHealthRecord,
     SensitiveActionGrant,
+    SignInIdentity,
     User,
     UserProfile,
     Workout,
@@ -453,6 +454,77 @@ async def test_provider_failure_does_not_delay_local_erasure(session) -> None:
     assert result == {"purged": 1, "failed": 0, "revocation_failed": 1}
     assert session.get(User, user.id) is None
 
+
+
+def test_recovery_restores_the_apple_health_connection_it_paused(session) -> None:
+    now = utcnow()
+    user = User()
+    session.add(user)
+    session.flush()
+    earlier = HealthConnection(
+        user_id=user.id,
+        provider="google_health",
+        status=ConnectionStatus.disconnected,
+        encrypted_refresh_token=encrypt_secret("old-provider-token"),
+        connected_at=now - timedelta(days=30),
+        disconnected_at=now - timedelta(days=10),
+    )
+    apple = HealthConnection(
+        user_id=user.id,
+        provider="apple_health",
+        status=ConnectionStatus.connected,
+        connected_at=now - timedelta(days=9),
+    )
+    session.add_all([earlier, apple])
+    session.commit()
+
+    schedule_account_deletion(session, user, now=now)
+    session.refresh(earlier)
+    assert earlier.disconnected_at == (now - timedelta(days=10)).replace(tzinfo=None)
+    assert apple.status == ConnectionStatus.disconnected
+
+    recover_account(session, user, now=now + timedelta(days=2))
+
+    session.refresh(apple)
+    session.refresh(earlier)
+    assert apple.status == ConnectionStatus.connected
+    assert earlier.status == ConnectionStatus.disconnected
+
+
+@pytest.mark.asyncio
+async def test_purge_revokes_every_sign_in_provider_token(session) -> None:
+    now = utcnow()
+    user = User(deletion_requested_at=now - DELETION_GRACE_PERIOD, deletion_scheduled_for=now)
+    session.add(user)
+    session.flush()
+    session.add_all([
+        HealthConnection(
+            user_id=user.id,
+            status=ConnectionStatus.disconnected,
+            encrypted_refresh_token=encrypt_secret("health-token"),
+        ),
+        SignInIdentity(
+            user_id=user.id,
+            provider="google",
+            subject="google-subject",
+            encrypted_refresh_token=encrypt_secret("google-sign-in-token"),
+        ),
+        SignInIdentity(
+            user_id=user.id,
+            provider="apple",
+            subject="apple-subject",
+            encrypted_refresh_token=encrypt_secret("apple-sign-in-token"),
+        ),
+    ])
+    session.commit()
+    google = StubGoogleClient()
+    apple = StubGoogleClient()
+
+    result = await purge_due_accounts(session, now=now, google_client=google, apple_client=apple)
+
+    assert result == {"purged": 1, "failed": 0, "revocation_failed": 0}
+    assert sorted(google.revoked) == ["google-sign-in-token", "health-token"]
+    assert apple.revoked == ["apple-sign-in-token"]
 
 class StubGoogleClient:
     def __init__(self) -> None:

@@ -37,14 +37,15 @@ struct AccountDeletionView: View {
             Section {
                 Label("14-day recovery period", systemImage: "clock.arrow.circlepath")
                     .font(.headline)
-                Text("Scheduling deletion signs you out on every device and stops Google Health syncing immediately. During the next 14 days, your account stays suspended and inaccessible.")
+                Text("Scheduling deletion signs you out everywhere and stops syncing immediately. During the next 14 days, your account stays suspended and inaccessible.")
                 Text("You can restore it during that period by choosing Restore account and signing in the same way on any device.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
             Section("What will be deleted") {
-                Text("At the deadline, all data currently stored for your account is permanently erased from the app: imported health records, workouts, journal and tags, scores and baselines, profile and preferences, sessions, and Google connection credentials.")
+                Text("At the deadline, all data currently stored for your account is permanently erased from the app: imported health records, workouts, journal and tags, scores and baselines, profile and preferences, sessions, and sign-in and device connection credentials.")
+                Text("Data stored in Apple Health or your Google account isn’t touched.")
                 Text("The app has no retention exceptions. Infrastructure backups are managed separately and their retention policy is not available in the app.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

@@ -39,14 +39,14 @@ struct ProfileBodyEditor: View {
         Section(title) {
             LabeledContent("Current value", value: value ?? "Not set")
             Picker("Preferred source", selection: preference) {
-                Text("Google Health").tag("google")
+                Text("Connected device").tag("device")
                 Text("Manual").tag("manual")
             }
             .accessibilityLabel("\(title) preferred source")
             LabeledContent("Active source", value: provenance.activeSource?.displayTitle ?? "No matching source record")
             LabeledContent("Measured", value: DashboardFormatters.parseBackendDateTime(provenance.updatedAt)?.formatted(date: .abbreviated, time: .shortened) ?? "Timestamp unavailable")
             if provenance.activeSource == nil {
-                Text(value == nil ? "Add a manual value or sync a measurement from Google Health." : "This is a saved profile value. The selected source has no matching measurement yet.")
+                Text(value == nil ? "Add a manual value or sync a measurement from your connected device." : "This is a saved profile value. The selected source has no matching measurement yet.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }

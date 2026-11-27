@@ -11,6 +11,7 @@ from app.core.security import decrypt_secret, token_digest, utcnow
 from app.google_health.client import GoogleHealthClient
 from app.models import AppSession, ConnectionStatus, HealthConnection, SignInIdentity, User
 from app.services.app_auth import revoke_session
+from app.services.oauth import APPLE_SIGN_IN_PROVIDER
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,10 @@ def schedule_account_deletion(
         revoke_session(session, app_session)
 
     for account in session.scalars(
-        select(HealthConnection).where(HealthConnection.user_id == user.id)
+        select(HealthConnection).where(
+            HealthConnection.user_id == user.id,
+            HealthConnection.status != ConnectionStatus.disconnected,
+        )
     ):
         account.status = ConnectionStatus.disconnected
         account.disconnected_at = requested_at
@@ -80,28 +84,31 @@ async def purge_due_accounts(
                 session.rollback()
                 continue
             revocations = [
-                (client, account.encrypted_refresh_token)
+                (client, account.provider, account.encrypted_refresh_token)
                 for account in session.scalars(
                     select(HealthConnection).where(HealthConnection.user_id == user.id)
                 )
                 if account.encrypted_refresh_token
             ] + [
-                (apple, identity.encrypted_refresh_token)
+                (
+                    apple if identity.provider == APPLE_SIGN_IN_PROVIDER else client,
+                    identity.provider,
+                    identity.encrypted_refresh_token,
+                )
                 for identity in session.scalars(
-                    select(SignInIdentity).where(
-                        SignInIdentity.user_id == user.id, SignInIdentity.provider == "apple"
-                    )
+                    select(SignInIdentity).where(SignInIdentity.user_id == user.id)
                 )
                 if identity.encrypted_refresh_token
             ]
-            for provider_client, encrypted_token in revocations:
+            for provider_client, provider, encrypted_token in revocations:
                 try:
                     await provider_client.revoke_token(decrypt_secret(encrypted_token))
                 except Exception as exc:
                     revocation_failed += 1
                     logger.warning(
-                        "Provider credential revocation failed before account purge user=%s (%s)",
+                        "Provider credential revocation failed before account purge user=%s provider=%s (%s)",
                         token_digest(user.id)[:12],
+                        provider,
                         type(exc).__name__,
                     )
             session.delete(user)
