@@ -20,6 +20,7 @@ from app.models import (
     MetricSample,
     RawHealthRecord,
     SensitiveActionGrant,
+    SignInIdentity,
     User,
     UserProfile,
     Workout,
@@ -453,6 +454,42 @@ async def test_provider_failure_does_not_delay_local_erasure(session) -> None:
     assert result == {"purged": 1, "failed": 0, "revocation_failed": 1}
     assert session.get(User, user.id) is None
 
+
+
+@pytest.mark.asyncio
+async def test_purge_revokes_every_sign_in_provider_token(session) -> None:
+    now = utcnow()
+    user = User(deletion_requested_at=now - DELETION_GRACE_PERIOD, deletion_scheduled_for=now)
+    session.add(user)
+    session.flush()
+    session.add_all([
+        HealthConnection(
+            user_id=user.id,
+            status=ConnectionStatus.disconnected,
+            encrypted_refresh_token=encrypt_secret("health-token"),
+        ),
+        SignInIdentity(
+            user_id=user.id,
+            provider="google",
+            subject="google-subject",
+            encrypted_refresh_token=encrypt_secret("google-sign-in-token"),
+        ),
+        SignInIdentity(
+            user_id=user.id,
+            provider="apple",
+            subject="apple-subject",
+            encrypted_refresh_token=encrypt_secret("apple-sign-in-token"),
+        ),
+    ])
+    session.commit()
+    google = StubGoogleClient()
+    apple = StubGoogleClient()
+
+    result = await purge_due_accounts(session, now=now, google_client=google, apple_client=apple)
+
+    assert result == {"purged": 1, "failed": 0, "revocation_failed": 0}
+    assert sorted(google.revoked) == ["google-sign-in-token", "health-token"]
+    assert apple.revoked == ["apple-sign-in-token"]
 
 class StubGoogleClient:
     def __init__(self) -> None:
