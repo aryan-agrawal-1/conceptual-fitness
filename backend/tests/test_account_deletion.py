@@ -456,6 +456,41 @@ async def test_provider_failure_does_not_delay_local_erasure(session) -> None:
 
 
 
+def test_recovery_restores_the_apple_health_connection_it_paused(session) -> None:
+    now = utcnow()
+    user = User()
+    session.add(user)
+    session.flush()
+    earlier = HealthConnection(
+        user_id=user.id,
+        provider="google_health",
+        status=ConnectionStatus.disconnected,
+        encrypted_refresh_token=encrypt_secret("old-provider-token"),
+        connected_at=now - timedelta(days=30),
+        disconnected_at=now - timedelta(days=10),
+    )
+    apple = HealthConnection(
+        user_id=user.id,
+        provider="apple_health",
+        status=ConnectionStatus.connected,
+        connected_at=now - timedelta(days=9),
+    )
+    session.add_all([earlier, apple])
+    session.commit()
+
+    schedule_account_deletion(session, user, now=now)
+    session.refresh(earlier)
+    assert earlier.disconnected_at == (now - timedelta(days=10)).replace(tzinfo=None)
+    assert apple.status == ConnectionStatus.disconnected
+
+    recover_account(session, user, now=now + timedelta(days=2))
+
+    session.refresh(apple)
+    session.refresh(earlier)
+    assert apple.status == ConnectionStatus.connected
+    assert earlier.status == ConnectionStatus.disconnected
+
+
 @pytest.mark.asyncio
 async def test_purge_revokes_every_sign_in_provider_token(session) -> None:
     now = utcnow()

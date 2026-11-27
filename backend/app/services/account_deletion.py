@@ -37,7 +37,10 @@ def schedule_account_deletion(
         revoke_session(session, app_session)
 
     for account in session.scalars(
-        select(HealthConnection).where(HealthConnection.user_id == user.id)
+        select(HealthConnection).where(
+            HealthConnection.user_id == user.id,
+            HealthConnection.status != ConnectionStatus.disconnected,
+        )
     ):
         account.status = ConnectionStatus.disconnected
         account.disconnected_at = requested_at
